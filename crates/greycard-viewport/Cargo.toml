@@ -27,6 +27,8 @@ bytemuck.workspace = true
 half = { workspace = true, features = ["bytemuck"] }
 lcms2.workspace = true
 image.workspace = true
+# A picture past the device's textures reduced to fit, a row each.
+rayon.workspace = true
 tracing.workspace = true
 # The test device of `testing`, for the window's tests too.
 pollster = { workspace = true, optional = true }
@@ -43,7 +45,6 @@ testing = ["dep:pollster"]
 naga.workspace = true
 # For a device of our own in the shader's tests.
 pollster.workspace = true
-rayon.workspace = true
 # The render crate's test helpers (a camera profile, a scratch
 # folder's removal) and the CPU references the shader is held to.
 greycard-render = { path = "../greycard-render", features = ["testing"] }

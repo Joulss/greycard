@@ -239,14 +239,7 @@ impl Renderer {
         } else {
             Through::Tap(tap)
         };
-        self.draw_source(
-            encoder,
-            target,
-            v,
-            self.source.as_ref(),
-            through,
-            Part::WHOLE,
-        );
+        self.draw_source(encoder, target, v, self.shown(), through, Part::WHOLE);
     }
 
     /// [`Self::draw`], of `layer` alone.
@@ -267,31 +260,51 @@ impl Renderer {
             encoder,
             target,
             v,
-            self.source.as_ref(),
+            self.shown(),
             through,
             Part { rect: None, layer },
         );
     }
 
+    /// The source with the size the view takes it at: its own full
+    /// size, whatever the texture holds.
+    fn shown(&self) -> Option<(&gpu::Texture, (u32, u32))> {
+        self.source.as_ref().map(|s| (s, self.full))
+    }
+
+    /// The whole factor `texture` holds a picture of `full` reduced
+    /// by: 1 where it holds it whole, else the one [`Self::upload`]
+    /// and [`Self::encoded_texture`] reduce by on this device.
+    pub(super) fn factor_of(&self, texture: &gpu::Texture, full: (u32, u32)) -> u32 {
+        if (texture.width(), texture.height()) == full {
+            1
+        } else {
+            reduce::factor(full.0, full.1, self.most_side)
+        }
+    }
+
     /// Draw the view of `source` into `target`, or into the part of it
     /// `part` says. An encoded source is sRGB bytes already and skips
-    /// the look.
+    /// the look. The source comes with its full size, which the view's
+    /// geometry is in; the shader reads the texture, reduced or not,
+    /// where those pixels land in it.
     fn draw_source(
         &self,
         encoder: &mut gpu::CommandEncoder,
         target: &gpu::Texture,
         v: &View,
-        source: Option<&gpu::Texture>,
+        source: Option<(&gpu::Texture, (u32, u32))>,
         through: Through,
         part: Part,
     ) {
         let Part { rect, layer } = part;
         let encoded = through == Through::Encoded;
-        // The source the view is in: the texture's, stood on end by
+        // The source the view is in: its full size, stood on end by
         // an odd turn the texture has not caught up with.
+        let k = source.map_or(1, |(s, full)| self.factor_of(s, full));
         let image = source
-            .map(|s| {
-                let (w, h) = (s.width() as f32, s.height() as f32);
+            .map(|(_, (w, h))| {
+                let (w, h) = (w as f32, h as f32);
                 if v.source_turn % 2 == 1 {
                     [h, w]
                 } else {
@@ -454,7 +467,7 @@ impl Renderer {
             range_sample: [if self.has_sample() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             minify: [
                 minify::taps_at_most(v.zoom, self.most_taps) as f32,
-                0.0,
+                k as f32,
                 0.0,
                 0.0,
             ],
@@ -467,6 +480,7 @@ impl Renderer {
         };
         // The output sharpen on the developed picture drawn whole: not
         // on the camera's JPEG, nor a compare view's tile.
+        let source = source.map(|(s, _)| s);
         let taps = source
             .filter(|_| !encoded && rect.is_none())
             .and_then(|_| osharp::Taps::of(v));
@@ -498,7 +512,7 @@ impl Renderer {
             tables: local_tables,
             shapes,
             ..
-        } = locals_gpu(&v.locals);
+        } = locals_gpu(&v.locals, self.most_side);
         let storage = |label: &str, bytes: &[u8]| {
             let buffer = self.device.create_buffer(&gpu::BufferDescriptor {
                 label: Some(label),
@@ -698,8 +712,28 @@ impl Renderer {
     }
 
     /// Show a developed picture that is on the GPU already: an
-    /// engine op's texture, the sharpen's mask in its alpha.
+    /// engine op's texture, the sharpen's mask in its alpha, at the
+    /// texture's own size.
     pub fn set_source(&mut self, texture: gpu::Texture) {
+        let full = (texture.width(), texture.height());
+        self.set_source_sized(texture, full);
+    }
+
+    /// The developed picture's own size as its texture stands, which
+    /// the view's geometry is in: the texture's, or more for a picture
+    /// that went up reduced. Handed back with the texture to
+    /// [`Self::set_source_sized`], the two show as they did.
+    pub fn developed_size(&self) -> Option<(u32, u32)> {
+        self.developed().map(|_| self.full)
+    }
+
+    /// [`Self::set_source`] of a texture that stands for a picture of
+    /// `full`: one [`Self::developed`] gave back, reduced from it.
+    pub fn set_source_sized(&mut self, texture: gpu::Texture, full: (u32, u32)) {
+        self.full = full;
+        if (texture.width(), texture.height()) == full {
+            self.reduced_said = None;
+        }
         self.source = Some(texture);
         self.encoded = false;
         // A new picture, perhaps of another shape: the readout under
@@ -712,8 +746,20 @@ impl Renderer {
 
     /// A picture of encoded sRGB bytes, RGBA, on the GPU: the camera's
     /// JPEG for the culling loupe. Shown through the monitor's table
-    /// and nothing else of the shader.
+    /// and nothing else of the shader. One past the device's textures
+    /// goes up reduced to fit ([`reduce`]); its [`Tile`] names the
+    /// size it was before, and the view stays in that.
     pub fn encoded_texture(&self, width: u32, height: u32, rgba: &[u8]) -> gpu::Texture {
+        let k = reduce::factor(width, height, self.most_side);
+        if k > 1 {
+            let (rw, rh) = reduce::reduced_size(width, height, k);
+            tracing::info!(
+                "viewport: a {width}x{height} preview is past the device's {} a side; shown {k} times smaller, {rw}x{rh}",
+                self.most_side
+            );
+            let reduced = reduce::bytes::<4>(rgba, width as usize, height as usize, k as usize);
+            return self.encoded_texture(rw, rh, &reduced);
+        }
         let texture = self.device.create_texture(&gpu::TextureDescriptor {
             label: Some("camera preview"),
             size: gpu::Extent3d {
@@ -795,7 +841,7 @@ impl Renderer {
                 &mut encoder,
                 &target,
                 &tile.view,
-                Some(tile.texture),
+                Some((tile.texture, tile.full)),
                 Through::Encoded,
                 Part {
                     rect: Some(tile.rect),
@@ -831,11 +877,33 @@ impl Renderer {
         peaking.encode(&device, &self.queue, encoder, target, rects, color);
     }
 
-    /// Put a developed image on the GPU.
+    /// Put a developed image on the GPU: as it is, or, past the
+    /// device's textures, reduced by the smallest whole factor that
+    /// fits ([`reduce`]). The view stays in the picture's own pixels;
+    /// 1:1 then shows the reduced picture magnified.
     pub fn upload(&mut self, image: &Halves) {
         self.redraw = true;
-        let (w, h) = (image.width, image.height);
-        let halves = &image.pixels;
+        let full = (image.width, image.height);
+        let k = reduce::factor(full.0, full.1, self.most_side);
+        let reduced;
+        let (w, h, halves) = if k > 1 {
+            let (w, h) = reduce::reduced_size(full.0, full.1, k);
+            if self.reduced_said != Some((full, k)) {
+                tracing::info!(
+                    "viewport: the {}x{} picture is past the device's {} a side; shown {k} times smaller, {w}x{h}, its geometry in its own pixels",
+                    full.0,
+                    full.1,
+                    self.most_side
+                );
+                self.reduced_said = Some((full, k));
+            }
+            reduced =
+                reduce::halves::<4>(&image.pixels, full.0 as usize, full.1 as usize, k as usize);
+            (w, h, &reduced)
+        } else {
+            self.reduced_said = None;
+            (full.0, full.1, &image.pixels)
+        };
         let texture = self.device.create_texture(&gpu::TextureDescriptor {
             label: Some("developed"),
             size: gpu::Extent3d {
@@ -872,6 +940,7 @@ impl Renderer {
             },
         );
         self.source = Some(texture);
+        self.full = full;
         self.encoded = false;
         // A new picture, perhaps of another shape: the readout under
         // the pointer reads nothing until its own analysis is back,
@@ -879,6 +948,15 @@ impl Renderer {
         self.scopes.pixels = None;
         self.scopes.new_source();
         self.redraw = true;
+    }
+
+    /// The whole factor the source went up reduced by: 1 for one that
+    /// fit the device as it is.
+    pub fn reduced_by(&self) -> u32 {
+        match &self.source {
+            Some(s) if !self.encoded => self.factor_of(s, self.full),
+            _ => 1,
+        }
     }
 
     /// Draw the view: `width` by `height` display pixels, `zoom` display
@@ -942,7 +1020,7 @@ impl Renderer {
         }
         self.redraw = false;
         self.drawn = Some((width, height, v.clone()));
-        let locals = locals_gpu(&v.locals);
+        let locals = locals_gpu(&v.locals, self.most_side);
         self.brushes
             .sync(&self.device, &self.queue, &locals.rasters);
         self.wide.sync(&self.device, &self.queue, &locals.wide);

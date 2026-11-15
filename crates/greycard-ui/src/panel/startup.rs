@@ -345,6 +345,16 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The select came back: past where a driver killed a start, so the
     // marker comes off here and not at the first frame.
     crate::gpu_marker::selected();
+    // A launch that died opening the frame this one would restore
+    // left a note; that frame is not opened again (`open_note`). The
+    // restored frame is noted before anything opens it. After the
+    // select, so a start that dies in the select is the GPU marker's
+    // alone, and the two never both count one death.
+    let restoring = match &select {
+        crate::roots::Select::Last(Some(file)) => Some(file.as_path()),
+        _ => None,
+    };
+    let not_reopened = crate::open_note::start(restoring, crate::open_note::scripted(&cli));
     // The event loop is built now and not yet running: the moment to
     // hear the Finder, whose launch event comes as the loop starts.
     #[cfg(target_os = "macos")]
@@ -737,6 +747,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         let awaiting_index = !facets_wanted.is_empty();
         let mut st = State::empty(Vec::new(), &app);
         st.launch.tweak_at_start = tweak_at_start;
+        st.launch.not_reopened = not_reopened;
         st.launch.show_mask = show_mask;
         st.launch.show_patch = show_patch;
         st.launch.screenshot = screenshot;
@@ -1775,6 +1786,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         app.set_texture(
                             slint::Image::try_from(texture).expect("the texture imports"),
                         );
+                        // A picture put up since the last frame is drawn.
+                        crate::open_note::drawn();
                     }
                     if let Some((tap, b)) = fresh {
                         bins_read(st, &app, tap, b);
@@ -1932,6 +1945,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // An event loop that ended before any frame, on DX12 we chose, is
     // the device refused there (`gpu_marker`).
     crate::gpu_marker::run_ended();
+    // The window closed as it closes: no open died.
+    crate::open_note::quit();
     if let Err(e) = &ran {
         tracing::error!("the window's event loop: {e}");
     }
@@ -2751,6 +2766,9 @@ pub(crate) fn remember_last_file(st: &State) {
     };
     // Every develop lands here; the file only writes when the file
     // open has changed.
+    // Noted before its picture goes up, should putting it up be what
+    // ends the process (`open_note`); not for a develop of it again.
+    crate::open_note::opening(&path);
     let path = path.to_string_lossy().into_owned();
     settings::Settings::change(|s| s.shared.last_file = path);
 }

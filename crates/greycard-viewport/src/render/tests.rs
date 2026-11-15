@@ -943,7 +943,7 @@ fn the_shaders_refined_masks_are_the_cpus() {
         l.refine(&picture, aspect, -0.3, 0.5);
         assert!(l.refined.is_some(), "local {k} refined");
     }
-    let packed = super::locals::locals_gpu(&locals);
+    let packed = super::locals::locals_gpu(&locals, 8192);
     assert_eq!(packed.shapes.len(), locals.len(), "one raster a mask");
     assert_eq!(packed.rasters.len(), locals.len());
     let Some((device, queue)) = device("the refined masks' GPU check") else {
@@ -1005,7 +1005,7 @@ fn wide_rasters_beside_narrow_ones_are_the_cpus() {
         with(Shape::Subject {}, &subject),
         with(Shape::Sky { picks: Vec::new() }, &other_sky),
     ];
-    let gpu_locals = super::locals::locals_gpu(&locals);
+    let gpu_locals = super::locals::locals_gpu(&locals, 8192);
     assert_eq!(gpu_locals.rasters.len(), 2);
     assert_eq!(gpu_locals.wide.len(), 2);
     assert_eq!(
@@ -1063,7 +1063,7 @@ fn a_brushs_cut_is_the_cpus() {
         l
     };
     let locals = vec![with(Mode::Add), with(Mode::Intersect)];
-    let packed = super::locals::locals_gpu(&locals);
+    let packed = super::locals::locals_gpu(&locals, 8192);
     assert_eq!(packed.rasters.len(), 3, "two layers and one");
     assert!(packed.rasters[1].cut && !packed.rasters[2].cut);
     // The cut takes the mask away where the gradient gave it.
@@ -5222,11 +5222,13 @@ fn peaking_measures_each_compare_tile_on_its_own() {
     let tiles = [
         Tile {
             texture: &loud,
+            full: (w, h),
             view: view.clone(),
             rect: (0, 0, w, h),
         },
         Tile {
             texture: &soft,
+            full: (w, h),
             view: view.clone(),
             rect: (w, 0, w, h),
         },

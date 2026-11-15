@@ -73,6 +73,10 @@ pub(crate) struct Launch {
     /// develop then runs where every later one does, so a screenshot
     /// or an export shows the same path a session would.
     pub(crate) select_at_start: Option<usize>,
+    /// The file the last launch died opening, which this one was to
+    /// open again (`open_note`): its folder opens in the Library with
+    /// no frame open, once.
+    pub(crate) not_reopened: Option<PathBuf>,
     /// `--develop-temperature` and `--exposure`: laid over the first
     /// file's edit on the panel when it is opened, not over its
     /// sidecar's. See [`panel::startup::Overrides`].

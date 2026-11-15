@@ -44,16 +44,22 @@ impl Renderer {
     /// The developed picture's mean over the square of `reach` pixels
     /// each way about (`x`, `y`), in the working space at the white
     /// it was developed at, read back from the GPU; `None` with no
-    /// picture, or the point off it.
+    /// picture, or the point off it. The point and the reach are in
+    /// the picture's own pixels; a picture that went up reduced is
+    /// read at the texel they land in, the reach reduced with it.
     pub fn sample(&self, x: i64, y: i64, reach: u32) -> Result<Option<[f32; 3]>> {
         let Some(source) = &self.source else {
             return Ok(None);
         };
-        let (w, h) = (source.width() as i64, source.height() as i64);
-        if x < 0 || y < 0 || x >= w || y >= h {
+        let (fw, fh) = (i64::from(self.full.0), i64::from(self.full.1));
+        if x < 0 || y < 0 || x >= fw || y >= fh {
             return Ok(None);
         }
-        let reach = reach as i64;
+        let (w, h) = (source.width() as i64, source.height() as i64);
+        // A reduced texture's texel i holds pixels [k i, k i + k), as
+        // the shader reads it (`to_texture`).
+        let k = i64::from(self.factor_of(source, self.full));
+        let (x, y, reach) = (x / k, y / k, (reach as i64 + k / 2) / k);
         let (x0, y0) = ((x - reach).max(0), (y - reach).max(0));
         let (x1, y1) = ((x + reach + 1).min(w), (y + reach + 1).min(h));
         let (cw, ch) = ((x1 - x0) as u32, (y1 - y0) as u32);

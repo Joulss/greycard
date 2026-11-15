@@ -1652,6 +1652,9 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
             flip,
             ..Geometry::default()
         };
+        // The copy's own size, which the view is in whatever the GPU
+        // holds of it (`Renderer::encoded_texture` reduces one past the
+        // device's textures, and the tile says the size it stands for).
         let (tw, th) = (preview.width as f32, preview.height as f32);
         let source = stand_in.filter(|_| file == c).unwrap_or(preview.source);
         let (fw, fh) = (source.0 as f32, source.1 as f32);
@@ -1692,6 +1695,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
         };
         tiles.push((
             file,
+            (preview.width, preview.height),
             View {
                 zoom: zoom / scale,
                 center: (center.0 * scale, center.1 * scale),
@@ -1726,8 +1730,9 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
     }
     let drawn: Vec<render::Tile> = tiles
         .iter()
-        .map(|(file, view, rect)| render::Tile {
+        .map(|(file, full, view, rect)| render::Tile {
             texture: &cull.textures[file].1,
+            full: *full,
             view: view.clone(),
             rect: *rect,
         })
@@ -1751,7 +1756,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
         app.set_zoom_text(label);
     }
     app.set_nav_partial(false);
-    let shown_now = tiles.iter().any(|(f, _, _)| *f == c);
+    let shown_now = tiles.iter().any(|(f, _, _, _)| *f == c);
     // The camera's picture standing in for a develop says what it is
     // here as well as when it came in hand: the frame may have been
     // turned since, and then the size in the line is the other way
@@ -1907,6 +1912,11 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
         ready && !holding,
     );
     app.set_texture(slint::Image::try_from(texture).expect("the texture imports"));
+    // The open frame's picture drawn in the loupe: past what the open
+    // note guards (`open_note::shown`).
+    if shown_now {
+        crate::open_note::shown();
+    }
 }
 
 /// `thumb_turns` without the state, for a frame with the state's
@@ -3161,6 +3171,57 @@ mod tests {
                 false,
             )),
         }
+    }
+
+    /// A launch in Cull: the restored frame noted at the start
+    /// (`open_note`) comes off once the loupe has drawn its picture,
+    /// through the window's own frame (`land_pending`, `cull_frame`),
+    /// with no develop drawn. Skipped without a GPU.
+    #[test]
+    fn a_launch_in_cull_takes_the_open_note_off_once_the_loupe_draws() {
+        let Some((device, queue)) = greycard_viewport::testing::device("the open note in Cull")
+        else {
+            return;
+        };
+        let dir = crate::testing::scratch_dir("open-note-cull");
+        let app = window(4);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 800.0));
+        let (state, _worker) = state_for(&app, folder(4));
+        struct Unload(Rc<Shared>, std::path::PathBuf);
+        impl Drop for Unload {
+            fn drop(&mut self) {
+                if let Ok(mut st) = self.0.try_borrow_mut() {
+                    st.develop.renderer = None;
+                }
+                crate::open_note::forget();
+                crate::testing::remove_dir_retry(&self.1);
+            }
+        }
+        let _unload = Unload(state.clone(), dir.clone());
+        let restored = state.borrow().path_of(1).clone();
+        assert_eq!(crate::open_note::start_in(&dir, Some(&restored)), None);
+        let note = dir.join("opening");
+        assert!(note.exists(), "the restored frame noted");
+        {
+            let mut st = state.borrow_mut();
+            st.develop.renderer = Some(crate::render::Renderer::new(&device, &queue));
+            st.current = Some(1);
+            enter_cull(&mut st, &app, 1);
+        }
+        let frame = |state: &Rc<Shared>| {
+            let mut st = state.borrow_mut();
+            if crate::panel::startup::land_pending(&mut st, &app).loupe {
+                cull_frame(&mut st, &app, state);
+            }
+        };
+        // Nothing of it in hand yet: drawn, but not the frame.
+        frame(&state);
+        assert!(note.exists(), "the loupe has not drawn it yet");
+        let picture = camera_picture(&state.borrow(), 1, (8, 6));
+        deliver_preview(&app, picture);
+        frame(&state);
+        assert!(!note.exists(), "the loupe drew it");
     }
 
     /// A frame's local preview and its file land in either order, on

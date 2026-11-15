@@ -79,9 +79,10 @@ struct Params {
     vibrance: f32,
     // Quarter turns clockwise the source texture stands behind the
     // source the view is in: a frame turned whose develop at the new
-    // turn is still on the way. `image` is the view's source's size;
-    // the texture is read through `texel_at`. Also keeps m0 16-byte
-    // aligned.
+    // turn is still on the way. `image` is the view's source's size,
+    // its own full size even where the texture holds it reduced (a
+    // picture past the device's textures); the texture is read through
+    // `texel_at`, then `to_texture`. Also keeps m0 16-byte aligned.
     source_turn: f32,
     m0: vec4<f32>,
     m1: vec4<f32>,
@@ -195,7 +196,9 @@ struct Params {
     range_sample: vec4<f32>,
     // In x the taps a side `footprint_mean` averages over a target
     // pixel below 1:1 (`minify::taps`); one, the single tap at the
-    // pixel's center, at 1:1 and above.
+    // pixel's center, at 1:1 and above. In y the whole factor the
+    // source went up reduced by, past the device's textures; one for
+    // a picture that went up whole (`to_texture`).
     minify: vec4<f32>,
     // In x the midtones, stops of shift by the guide plane's
     // luminance as the highlights and shadows are; `finish.rs` says
@@ -436,7 +439,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // The picture, and in its alpha the sharpen's blend mask. The
     // texture is read where it holds this source position; everything
     // else, the masks among it, is in the source's own positions.
-    let tex_at = texel_at(at);
+    // In the texture's own texels for the picture and the planes of
+    // its size; the guide plane reads the source's full pixels.
+    let full_at = texel_at(at);
+    let tex_at = to_texture(full_at);
     var t4: vec4<f32>;
     if (minified) {
         t4 = footprint_mean(src, pos.xy, taps);
@@ -676,7 +682,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var g = 0.0;
     let has_guide = p.guide.z > 0.5;
     if (has_guide) {
-        g = look.contrast * (guide_at(tex_at) + look.exposure);
+        g = look.contrast * (guide_at(full_at) + look.exposure);
     }
     // The frame's range at the picture's own exposure and contrast,
     // not this pixel's, as `finish_pixel_with` has it.
@@ -1342,6 +1348,21 @@ fn texel_at(at: vec2<f32>) -> vec2<f32> {
     return at;
 }
 
+// A position of the texture at the source's full size, in the
+// texels the texture holds. A picture that went up whole is read
+// where it was, with no arithmetic on the way, so it draws as it
+// always did. One reduced by `k` (`reduce::plane`) holds pixels
+// [k i, k i + k) in texel i, the last box padded with the edge: its
+// texel centers are at the box centers, so the position is divided
+// by k and nothing else.
+fn to_texture(s: vec2<f32>) -> vec2<f32> {
+    let k = p.minify.y;
+    if (k > 1.5) {
+        return s / k;
+    }
+    return s;
+}
+
 // The frame pixel under a target position, as `to_source` in the edit
 // crate begins.
 fn frame_at(pt: vec2<f32>) -> vec2<f32> {
@@ -1374,7 +1395,7 @@ fn footprint_mean(tex: texture_2d<f32>, pt: vec2<f32>, n: u32) -> vec4<f32> {
         for (var i = 0u; i < n; i = i + 1u) {
             let off = (vec2<f32>(f32(i), f32(j)) + 0.5) * cell - 0.5;
             let s = texel_at(source_of(frame_at(pt + off)));
-            acc = acc + textureSampleLevel(tex, samp, s / size, 0.0);
+            acc = acc + textureSampleLevel(tex, samp, to_texture(s) / size, 0.0);
         }
     }
     return acc / f32(n * n);

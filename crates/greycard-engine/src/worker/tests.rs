@@ -1703,6 +1703,66 @@ fn a_gpu_error_in_the_dehaze_takes_the_session_to_the_cpu() {
     drop(ctx);
 }
 
+/// An export of a picture larger than the device's textures, wider
+/// than them or taller, is the full picture, and the export a run
+/// without a device makes, to the bit: every op the device cannot
+/// hold it for runs on the CPU, nothing made of its size reaches the
+/// device (whose uncaptured handler panics), and the context is kept.
+#[test]
+fn an_export_past_the_devices_textures_is_the_cpus_at_full_size() {
+    use greycard_render::export::Pixels;
+    let mut edit = Edit::default();
+    edit.sharpen.enabled = true;
+    edit.detail.clarity = 0.4;
+    edit.detail.dehaze = 0.3;
+    let settings = greycard_render::export::Settings::default();
+    for (w, h) in [(400usize, 120usize), (120, 400)] {
+        let Some(ctx) = context_with(greycard_gpu::wgpu::Limits {
+            max_texture_dimension_2d: 256,
+            ..greycard_gpu::wgpu::Limits::default()
+        }) else {
+            skipped("the export past the device's textures");
+            return;
+        };
+        let input = Input::Raw(Arc::new(aberrated_frame(w, h)));
+        let deliver: Deliver = Arc::new(|_| {});
+        let mut ai = Ai::new();
+        let mut export = |gpu: &mut Option<greycard_gpu::Context>| {
+            super::export::render_open(
+                &edit,
+                0,
+                &input,
+                None,
+                &mut WorkerModels::new(&mut ai, None, &deliver, 0),
+                None,
+                gpu,
+                &settings,
+            )
+            .expect("exported")
+            .0
+        };
+        let mut gpu = Some(ctx);
+        let on_device = export(&mut gpu);
+        assert!(gpu.is_some(), "{w}x{h}: the context is kept");
+        let reference = export(&mut None);
+        assert_eq!(
+            (on_device.width, on_device.height),
+            (reference.width, reference.height),
+            "{w}x{h}"
+        );
+        assert!(
+            on_device.width.max(on_device.height) > 256,
+            "{w}x{h}: the full picture, past the device"
+        );
+        let same = match (&on_device.pixels, &reference.pixels) {
+            (Pixels::Eight(a), Pixels::Eight(b)) => a == b,
+            (Pixels::Sixteen(a), Pixels::Sixteen(b)) => a == b,
+            _ => false,
+        };
+        assert!(same, "{w}x{h}: the export is the CPU's");
+    }
+}
+
 /// A picture larger than the device's textures, with a Detail
 /// slider set, is the CPU's for that develop, with the sharpen off
 /// and on, and the context is kept: the next picture that fits is

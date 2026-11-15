@@ -36,6 +36,7 @@ mod library;
 mod lightbox;
 #[cfg(test)]
 mod name_tips;
+mod open_note;
 mod owners;
 mod panel;
 mod panes;
@@ -784,6 +785,7 @@ impl State {
                 awaiting_index: false,
                 last_folder: None,
                 select_at_start: None,
+                not_reopened: None,
                 overrides_at_start: None,
                 overridden: None,
                 setup_ran: false,

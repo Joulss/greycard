@@ -321,6 +321,13 @@ design note behind it.
 - `greycard rawtherapee --write` puts a new sidecar where the
   editor's setting says, in the folder's `.greycard` when that is
   on; it always wrote beside the raw.
+- A picture wider or taller than the graphics card's largest texture
+  (16,384 pixels on every Mac) crashed the window, and every launch
+  after it, since the last picture is opened again at the start.
+  Such a picture now opens, shown reduced on screen and exported
+  whole, and greycard no longer goes back to a picture that the
+  last launch died opening (issue 152,
+  [§683](https://github.com/jessolmstead/greycard/blob/master/docs/notes/683-a-picture-past-the-cards-textures.md)).
 
 ## 0.11.0, 2026-11-09
 

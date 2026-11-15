@@ -373,8 +373,10 @@ impl Renderer {
         {
             return;
         }
-        let (w, h) = (sample.width as u32, sample.height as u32);
+        // At the source's size, so reduced as it was where it was past
+        // the device's textures.
         let halves = Halves::from_image(&sample, None);
+        let (w, h, pixels) = self.fitted::<4>(halves.width, halves.height, &halves.pixels);
         self.sample = Self::sample_texture(&self.device, w, h);
         self.queue.write_texture(
             gpu::TexelCopyTextureInfo {
@@ -383,7 +385,7 @@ impl Renderer {
                 origin: gpu::Origin3d::ZERO,
                 aspect: gpu::TextureAspect::All,
             },
-            bytemuck::cast_slice(&halves.pixels),
+            bytemuck::cast_slice(&pixels),
             gpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(w * 8),
@@ -449,16 +451,18 @@ impl Renderer {
             return;
         };
         // The shader reads them only at the source's size; another
-        // size is a bug in whoever carried them, said here.
-        if let Some(source) = &self.source {
+        // size is a bug in whoever carried them, said here. The full
+        // size: past the device's textures both go up reduced alike.
+        if self.source.is_some() {
             greycard_render::detail::fits(
                 (planes.width, planes.height),
-                source.width() as usize,
-                source.height() as usize,
+                self.full.0 as usize,
+                self.full.1 as usize,
                 "the viewport",
             );
         }
-        let (w, h) = (planes.width as u32, planes.height as u32);
+        let (pw, ph) = (planes.width as u32, planes.height as u32);
+        let (w, h) = reduce::reduced_size(pw, ph, reduce::factor(pw, ph, self.most_side));
         let extent = gpu::Extent3d {
             width: w,
             height: h,
@@ -467,6 +471,7 @@ impl Renderer {
         // The sharpen's delta, a lane of its own beside the four.
         match &planes.sharpen {
             Some(delta) => {
+                let (_, _, delta) = self.fitted::<1>(pw, ph, delta);
                 self.sharpen = Self::sharpen_texture(&self.device, w, h);
                 self.queue.write_texture(
                     gpu::TexelCopyTextureInfo {
@@ -475,7 +480,7 @@ impl Renderer {
                         origin: gpu::Origin3d::ZERO,
                         aspect: gpu::TextureAspect::All,
                     },
-                    bytemuck::cast_slice(delta),
+                    bytemuck::cast_slice(&delta),
                     gpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(w * 2),
@@ -511,6 +516,7 @@ impl Renderer {
             self.detail_meta = [a[0], a[1], a[2], 0.0];
             return;
         }
+        let (_, _, bands) = self.fitted::<4>(pw, ph, &planes.data);
         self.detail = Self::detail_texture(&self.device, w, h);
         self.queue.write_texture(
             gpu::TexelCopyTextureInfo {
@@ -519,7 +525,7 @@ impl Renderer {
                 origin: gpu::Origin3d::ZERO,
                 aspect: gpu::TextureAspect::All,
             },
-            bytemuck::cast_slice(&planes.data),
+            bytemuck::cast_slice(&bands),
             gpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(w * 8),
@@ -532,5 +538,24 @@ impl Renderer {
             },
         );
         self.detail_meta = [a[0], a[1], a[2], 1.0];
+    }
+
+    /// A plane of half floats at the source's size, `C` a texel, as it
+    /// goes on the device: itself where it fits, reduced by the
+    /// factor the source was ([`reduce`]) where it is past the
+    /// device's textures; with the size it goes up at.
+    fn fitted<'a, const C: usize>(
+        &self,
+        width: u32,
+        height: u32,
+        data: &'a [half::f16],
+    ) -> (u32, u32, std::borrow::Cow<'a, [half::f16]>) {
+        let k = reduce::factor(width, height, self.most_side);
+        if k == 1 {
+            return (width, height, data.into());
+        }
+        let (w, h) = reduce::reduced_size(width, height, k);
+        let reduced = reduce::halves::<C>(data, width as usize, height as usize, k as usize);
+        (w, h, reduced.into())
     }
 }

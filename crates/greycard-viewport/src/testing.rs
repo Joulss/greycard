@@ -38,6 +38,12 @@ pub fn colors(w: usize, h: usize) -> Vec<[f32; 3]> {
 /// A device of our own, off any window; none without an adapter,
 /// and the test says so rather than passing in silence.
 pub fn device(what: &str) -> Option<(gpu::Device, gpu::Queue)> {
+    device_with(what, gpu::Limits::default())
+}
+
+/// [`device`] holding to `limits`: a small `max_texture_dimension_2d`
+/// stands in for a GPU whose textures a large picture is past.
+pub fn device_with(what: &str, limits: gpu::Limits) -> Option<(gpu::Device, gpu::Queue)> {
     let instance = greycard_gpu::instance();
     let got = pollster::block_on(instance.request_adapter(&gpu::RequestAdapterOptions {
         power_preference: gpu::PowerPreference::HighPerformance,
@@ -55,6 +61,7 @@ pub fn device(what: &str) -> Option<(gpu::Device, gpu::Queue)> {
         });
         pollster::block_on(adapter.request_device(&gpu::DeviceDescriptor {
             label: Some("viewport test"),
+            required_limits: limits,
             ..Default::default()
         }))
         .ok()

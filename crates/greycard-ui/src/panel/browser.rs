@@ -2116,8 +2116,24 @@ pub(crate) fn open_loaded(
     let listed = started.elapsed();
     // The file to open, its own cell, as a row of the list; hidden by
     // the filter, the nearest one shown.
+    // The file the last launch died opening, which this list was to
+    // open again (`open_note`): not opened, its folder shown in the
+    // Library and the frame left for a click. Once: the note is gone.
+    let not_reopened = st.launch.not_reopened.take().filter(|died| {
+        st.files
+            .get(select)
+            .is_some_and(|f| crate::open_note::same_file(f, died))
+    });
     let select = st.file_cell(select).unwrap_or(select);
     let mut row = row_of(&st, select).or_else(|| cull::nearest_row(&st.views.shown, select));
+    if let Some(died) = &not_reopened {
+        tracing::warn!(
+            "not opening {}, which the last launch died opening: its folder in the Library",
+            died.display()
+        );
+        row = None;
+        app.set_grid_open(true);
+    }
     // A list that arrives before the window has its device (the
     // all-roots view asked for on the command line, read in less time
     // than the window takes to come up) opens its frame from the
@@ -2126,8 +2142,10 @@ pub(crate) fn open_loaded(
     // A frame the setup was to open belongs to the list just
     // replaced, and goes with it.
     let deferred = !st.launch.setup_ran && !files.is_empty();
-    st.launch.select_at_start = deferred.then_some(select);
-    let seed = row;
+    st.launch.select_at_start = deferred
+        .then_some(select)
+        .filter(|_| not_reopened.is_none());
+    let seed = row.or_else(|| not_reopened.as_ref().and_then(|_| row_of(&st, select)));
     if deferred {
         row = None;
     }
@@ -2155,9 +2173,14 @@ pub(crate) fn open_loaded(
         listed.as_secs_f64() * 1e3,
         started.elapsed().as_secs_f64() * 1e3
     );
+    // The Library's grid or lightbox shows thumbnails, never a frame's
+    // full picture: nothing the open note guards goes up for it.
+    if app.get_grid_open() {
+        crate::open_note::shown();
+    }
     if let Some(row) = row {
         open_at_start(state, app, row);
-    } else if !files.is_empty() && !deferred {
+    } else if !files.is_empty() && !deferred && not_reopened.is_none() {
         tracing::warn!("no frames pass the filter");
         app.set_status(filter::nothing_shown().into());
         // A batch run would wait for a picture that never comes.
@@ -2381,6 +2404,10 @@ pub(crate) fn time_select(
 /// reading its sidecar), only from the next open sent.
 pub(crate) fn current_moved(st: &mut State) {
     let file = st.current.and_then(|c| st.path_at(c)).cloned();
+    // Another frame than the one noted opening: the user moved on.
+    if let Some(file) = &file {
+        crate::open_note::moved_to(file);
+    }
     st.culling.tags.opened(file.as_deref());
     if st.develop.open_sent.as_ref().map(|(_, frame)| frame)
         != crate::panel::edit::develop_of(st).as_ref()

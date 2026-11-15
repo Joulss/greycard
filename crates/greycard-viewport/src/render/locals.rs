@@ -80,6 +80,7 @@ impl ShapeGpu {
         raster: Option<&RasterRef>,
         layer: u32,
         wide: bool,
+        most: u32,
     ) -> Self {
         if let Some(r) = raster
             && cuts(c, r)
@@ -90,7 +91,7 @@ impl ShapeGpu {
                 layer,
                 wide: wide as u32,
                 a: [0.0; 4],
-                b: [r.0.aspect, r.0.width as f32, r.0.height as f32, 0.0],
+                b: raster_b(r, most),
             };
         }
         let flags = c.mode as u32 | ((c.invert as u32) << 2);
@@ -169,7 +170,7 @@ impl ShapeGpu {
                     layer,
                     wide: wide as u32,
                     a: [0.0; 4],
-                    b: [r.0.aspect, r.0.width as f32, r.0.height as f32, 0.0],
+                    b: raster_b(r, most),
                 },
                 None => Self {
                     kind: 3,
@@ -184,6 +185,26 @@ impl ShapeGpu {
     }
 }
 
+/// A raster's size as it goes on a device whose textures stop at
+/// `most` a side: its own where it fits, as it always went up, else
+/// reduced by the least whole factor that fits. A raster is
+/// `RASTER_WIDTH` wide (or the wide one's) and as tall as the
+/// picture's shape makes it, so a frame tall enough asks past the
+/// device. A reduced one covers the picture edge to edge as its source
+/// does ([`reduce::bytes_spread`](super::reduce::bytes_spread)), which
+/// is how the shader reads a raster (`raster_at`).
+pub(super) fn raster_size(raster: &greycard_edit::brush::Raster, most: u32) -> (u32, u32) {
+    let (w, h) = (raster.width as u32, raster.height as u32);
+    super::reduce::reduced_size(w, h, super::reduce::factor(w, h, most))
+}
+
+/// A raster shape's `b`: its picture's aspect and its layer's size on
+/// the device, which the shader reads it within.
+fn raster_b(r: &RasterRef, most: u32) -> [f32; 4] {
+    let (w, h) = raster_size(&r.0, most);
+    [r.0.aspect, w as f32, h as f32, 0.0]
+}
+
 /// Whether `c`, with its raster `r`, is a brush the shader joins by
 /// its paint and its cut: one that paints on the mask and has cut.
 fn cuts(c: &greycard_edit::mask::Component, r: &RasterRef) -> bool {
@@ -195,21 +216,32 @@ fn cuts(c: &greycard_edit::mask::Component, r: &RasterRef) -> bool {
 pub(super) struct Layer {
     pub(super) raster: RasterRef,
     pub(super) cut: bool,
+    /// Its size on the device ([`raster_size`]).
+    pub(super) size: (u32, u32),
 }
 
 impl Layer {
-    fn paint(raster: &RasterRef) -> Self {
+    fn paint(raster: &RasterRef, most: u32) -> Self {
         Self {
             raster: raster.clone(),
             cut: false,
+            size: raster_size(&raster.0, most),
         }
     }
 
-    /// Its texels, row by row.
-    fn data(&self) -> &[u8] {
-        match (self.cut, self.raster.0.cut()) {
+    /// Its texels, row by row, as they go on the device: the raster's
+    /// own, or spread to [`Self::size`] where that is less.
+    fn data(&self) -> std::borrow::Cow<'_, [u8]> {
+        let r = &self.raster.0;
+        let data = match (self.cut, r.cut()) {
             (true, Some(cut)) => cut,
-            _ => self.raster.0.data(),
+            _ => r.data(),
+        };
+        let (w, h) = (self.size.0 as usize, self.size.1 as usize);
+        if (w, h) == (r.width, r.height) {
+            data.into()
+        } else {
+            super::reduce::bytes_spread(data, r.width, r.height, w, h).into()
         }
     }
 }
@@ -231,7 +263,9 @@ pub(super) struct LocalsGpu {
 /// shapes, never empty since a storage buffer cannot be; and their
 /// rasters, a layer each, the narrow ones in one array and the wide ones
 /// (wider than `RASTER_WIDTH`) in another.
-pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
+/// `most`: the device's largest texture side, which no raster's layer
+/// passes ([`raster_size`]).
+pub(super) fn locals_gpu(locals: &[Local], most: u32) -> LocalsGpu {
     let mut params = Vec::new();
     let mut tables = Vec::new();
     let mut shapes = Vec::new();
@@ -254,28 +288,29 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
                 layer: layer as u32,
                 wide: is_wide as u32,
                 a: [0.0; 4],
-                b: [r.0.aspect, r.0.width as f32, r.0.height as f32, 0.0],
+                b: raster_b(r, most),
             });
             if is_wide {
-                wide.push(Layer::paint(r));
+                wide.push(Layer::paint(r, most));
             } else {
-                rasters.push(Layer::paint(r));
+                rasters.push(Layer::paint(r, most));
             }
         }
         for (i, c) in local.mask.live().filter(|_| local.refined.is_none()) {
             let raster = local.rasters.get(i).and_then(|r| r.as_ref());
             let is_wide = raster.is_some_and(|r| is_wide(&r.0));
             let layer = if is_wide { wide.len() } else { rasters.len() };
-            shapes.push(ShapeGpu::of(c, raster, layer as u32, is_wide));
+            shapes.push(ShapeGpu::of(c, raster, layer as u32, is_wide, most));
             if c.shape.is_raster()
                 && let Some(r) = raster
             {
                 let array = if is_wide { &mut wide } else { &mut rasters };
-                array.push(Layer::paint(r));
+                array.push(Layer::paint(r, most));
                 if cuts(c, r) {
                     array.push(Layer {
                         raster: r.clone(),
                         cut: true,
+                        size: raster_size(&r.0, most),
                     });
                 }
             }
@@ -442,7 +477,7 @@ impl Brushes {
             if self.layers[i] == key {
                 continue;
             }
-            let (rw, rh) = (r.0.width as u32, r.0.height as u32);
+            let (rw, rh) = layer.size;
             queue.write_texture(
                 gpu::TexelCopyTextureInfo {
                     texture: &self.texture,
@@ -454,7 +489,7 @@ impl Brushes {
                     },
                     aspect: gpu::TextureAspect::All,
                 },
-                layer.data(),
+                &layer.data(),
                 gpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(rw),
@@ -473,10 +508,8 @@ impl Brushes {
     /// The array's size for `rasters`: the widest and the tallest.
     pub(super) fn size(rasters: &[Layer]) -> (u32, u32) {
         rasters.iter().fold((1, 1), |(w, h), l| {
-            (
-                w.max(l.raster.0.width as u32),
-                h.max(l.raster.0.height as u32),
-            )
+            let (rw, rh) = l.size;
+            (w.max(rw), h.max(rh))
         })
     }
 }
@@ -526,7 +559,7 @@ mod tests {
             invert: false,
             ..Default::default()
         });
-        let (a, b) = (locals_gpu(&[off]), locals_gpu(&[without]));
+        let (a, b) = (locals_gpu(&[off], 8192), locals_gpu(&[without], 8192));
         assert_eq!(a.params[0].shapes_count, 2);
         assert_eq!(a.params[0].shapes_count, b.params[0].shapes_count);
         assert_eq!(a.params[0].shapes_start, b.params[0].shapes_start);
@@ -571,7 +604,7 @@ mod tests {
                 opacity: 1.0,
             })
             .collect();
-        let gpu = locals_gpu(&locals);
+        let gpu = locals_gpu(&locals, 8192);
         assert_eq!(
             (gpu.params[0].shapes_start, gpu.params[0].shapes_count),
             (0, 1)
@@ -614,7 +647,7 @@ mod tests {
             refined: None,
             opacity: 1.0,
         };
-        let gpu = locals_gpu(&[local]);
+        let gpu = locals_gpu(&[local], 8192);
         assert_eq!(gpu.params[0].shapes_count, 2);
         // Kind 3 is nothing and holds no layer, which is what
         // `Local::weight` reads a missing raster as; its mode and its

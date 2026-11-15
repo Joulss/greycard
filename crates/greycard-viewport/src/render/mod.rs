@@ -25,6 +25,9 @@ mod locals;
 pub(crate) mod minify;
 mod osharp;
 mod peaking;
+pub mod reduce;
+#[cfg(test)]
+mod reduced_tests;
 mod sample;
 mod scopes;
 #[cfg(test)]
@@ -187,6 +190,9 @@ struct LookTable {
 /// it, and the rectangle of the target it is drawn into.
 pub struct Tile<'a> {
     pub texture: &'a gpu::Texture,
+    /// The picture's size the view is in: the texture's, or more where
+    /// [`Renderer::encoded_texture`] made it smaller to fit the device.
+    pub full: (u32, u32),
     pub view: View,
     pub rect: (u32, u32, u32, u32),
 }
@@ -259,6 +265,18 @@ pub struct Renderer {
     layout: gpu::BindGroupLayout,
     sampler: gpu::Sampler,
     source: Option<gpu::Texture>,
+    /// The source's own size, as its texture stands (not turned by
+    /// `View::source_turn`): the texture's, unless the picture was past
+    /// the device's textures and went up reduced ([`reduce`]). The view
+    /// is in these pixels whatever the texture holds.
+    full: (u32, u32),
+    /// The device's largest texture side, which nothing made from a
+    /// picture's size may pass.
+    most_side: u32,
+    /// The last reduced picture said in the log, its size and factor,
+    /// so a develop of the same frame again is not said again; none
+    /// once a picture that fits went up.
+    reduced_said: Option<((u32, u32), u32)>,
     /// The source holds encoded sRGB bytes rather than the engine's
     /// linear picture: the camera's JPEG, shown through the monitor's
     /// table alone.
@@ -375,9 +393,15 @@ struct Scopes {
 
 impl Renderer {
     pub fn new(device: &gpu::Device, queue: &gpu::Queue) -> Self {
+        Self::with_shader(device, queue, include_str!("../viewport.wgsl"))
+    }
+
+    /// [`Self::new`] drawing through `wgsl` in the viewport shader's
+    /// place: for the tests, which hold the shader to a variant of it.
+    pub(crate) fn with_shader(device: &gpu::Device, queue: &gpu::Queue, wgsl: &str) -> Self {
         let shader = device.create_shader_module(gpu::ShaderModuleDescriptor {
             label: Some("viewport"),
-            source: gpu::ShaderSource::Wgsl(include_str!("../viewport.wgsl").into()),
+            source: gpu::ShaderSource::Wgsl(wgsl.into()),
         });
         let layout = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
             label: Some("viewport"),
@@ -650,6 +674,9 @@ impl Renderer {
             layout,
             sampler,
             source: None,
+            full: (1, 1),
+            most_side: device.limits().max_texture_dimension_2d.max(1),
+            reduced_said: None,
             encoded: false,
             target: None,
             lut,

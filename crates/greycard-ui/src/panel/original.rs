@@ -52,6 +52,9 @@ pub(crate) struct Original {
 /// none of the texture without a GPU, and then it cannot go up again.
 struct Shown {
     texture: Option<greycard_gpu::wgpu::Texture>,
+    /// The picture's own size as the texture stands, which a texture
+    /// that went up reduced to fit the device is not.
+    texture_size: Option<(u32, u32)>,
     kind: finish::Source,
     guide: Arc<finish::Guide>,
     planes: Option<Arc<crate::detail::DetailPlanes>>,
@@ -64,9 +67,11 @@ impl Shown {
     /// The picture on the GPU now, when there is a GPU and it is a
     /// develop: what went up with it, as it went up.
     fn on_screen(st: &State) -> Option<Self> {
-        let texture = st.develop.renderer.as_ref()?.developed()?.clone();
+        let renderer = st.develop.renderer.as_ref()?;
+        let texture = renderer.developed()?.clone();
         Some(Self {
             texture: Some(texture),
+            texture_size: renderer.developed_size(),
             kind: st.develop.drawn_kind,
             guide: st.develop.drawn_guide.clone(),
             planes: st.develop.drawn_planes.clone(),
@@ -79,13 +84,10 @@ impl Shown {
     /// `landed`, just gone up on the GPU at `turn`: its own white,
     /// guide, and planes, and the texture the renderer made of it.
     fn landed(st: &State, landed: &Landed, turn: u8) -> Self {
+        let renderer = st.develop.renderer.as_ref();
         Self {
-            texture: st
-                .develop
-                .renderer
-                .as_ref()
-                .and_then(|r| r.developed())
-                .cloned(),
+            texture: renderer.and_then(|r| r.developed()).cloned(),
+            texture_size: renderer.and_then(|r| r.developed_size()),
             kind: landed.kind,
             guide: landed.guide.clone(),
             planes: landed.planes.clone(),
@@ -112,6 +114,7 @@ impl Shown {
             planes: self.planes.clone(),
             white: self.white,
             generation,
+            full: self.texture_size,
         });
         true
     }

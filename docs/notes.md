@@ -694,3 +694,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§680. A profile's own tone curve, behind a switch](notes/680-a-profiles-own-tone-curve-behind-a-switch.md) (2026-11-14)
 - [§681. A frame opens at the camera's aspect](notes/681-a-frame-opens-at-the-cameras-aspect.md) (2026-11-14)
 - [§682. Wheel holds that follow the keys, and their guide](notes/682-wheel-holds-that-follow-the-keys-and-their-guide.md) (2026-11-14)
+- [§683. A picture past the card's textures](notes/683-a-picture-past-the-cards-textures.md) (2026-11-15)

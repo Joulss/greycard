@@ -50,6 +50,10 @@ pub(crate) struct Landed {
     /// The white balance it was developed at.
     pub(crate) white: WhiteBase,
     pub(crate) generation: u64,
+    /// For a texture that went up before, reduced to fit the device's
+    /// textures (`Renderer::developed_size`): the picture's own size,
+    /// which its texture's is not. None for a develop just landed.
+    pub(crate) full: Option<(u32, u32)>,
 }
 
 /// A tool's hint on the status line, remembered so that putting the
@@ -914,6 +918,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 planes,
                 white,
                 generation,
+                full: None,
             });
             remember_last_file(&st);
             app.set_busy(false);

@@ -94,6 +94,31 @@ impl EditKey {
 /// Width of the image the scopes are taken from.
 pub(super) const ANALYSIS_WIDTH: u32 = 512;
 
+/// The scopes' image of a frame of `frame` (width, height) on a device
+/// whose textures stop at `most` a side: [`ANALYSIS_WIDTH`] wide (or
+/// the device's side, on one smaller) and as tall as the frame's shape
+/// makes it, as it always was, or, for a frame that would make it
+/// taller than the device takes, that tall and as narrow as its
+/// shape makes it.
+/// In whole 64s across, so a row is still the 256 bytes' multiple a
+/// copy wants: 64 at the least, the bottom of a frame past 128 to 1
+/// left out.
+pub(super) fn analysis_size(frame: (f32, f32), most: u32) -> (u32, u32) {
+    let (iw, ih) = (
+        u64::from(frame.0.max(1.0) as u32),
+        u64::from(frame.1.max(1.0) as u32),
+    );
+    let tallest = u64::from(most.max(1));
+    let widest = u64::from(ANALYSIS_WIDTH.min(most / 64 * 64).max(64));
+    let height = (widest * ih / iw).max(1);
+    if height <= tallest {
+        return (widest as u32, height as u32);
+    }
+    let width = (tallest * iw / ih / 64 * 64).clamp(64, widest);
+    let height = (width * ih / iw).clamp(1, tallest);
+    (width as u32, height as u32)
+}
+
 /// Where in the look a histogram is taken short of its end, the
 /// export space's encoded values the scopes bin: where the curves
 /// take the picture in, the encoded working-space values, before the
@@ -446,17 +471,17 @@ impl Renderer {
             && self.source.is_some()
         {
             self.scopes.source_changed = false;
-            let whole = whole_frame(v, weigh_by);
+            let whole = whole_frame(v, weigh_by, self.most_side);
             let (mut encoder, analysis) = self.bin_frame(Slot::Scopes, &whole, &taken);
             // The scopes and the readout read the export space's own
             // values, what the file will hold; the navigator is what
             // the viewport shows, through the monitor's table and the
             // proof, and the picture whole, unweighed.
-            let height = analysis.height();
+            let (width, height) = (analysis.width(), analysis.height());
             let navigator = match &self.scopes.navigator {
-                Some(t) if t.height() == height => t.clone(),
+                Some(t) if t.height() == height && t.width() == width => t.clone(),
                 _ => {
-                    let t = self.make_target("navigator", ANALYSIS_WIDTH, height);
+                    let t = self.make_target("navigator", width, height);
                     self.scopes.navigator = Some(t.clone());
                     t
                 }
@@ -472,9 +497,9 @@ impl Renderer {
             );
             // The pictures too, the analysis for the readout and the
             // navigator's, one after the other. Their rows are 2048
-            // bytes, a multiple of the 256 a copy wants, so they land
-            // packed.
-            let picture_bytes = (ANALYSIS_WIDTH * 4 * height) as u64;
+            // bytes (a multiple of 256 at any width `analysis_size`
+            // gives), the multiple a copy wants, so they land packed.
+            let picture_bytes = u64::from(width * 4 * height);
             let picture_staging = match &self.scopes.picture_staging {
                 Some(b) if b.size() == 2 * picture_bytes => b.clone(),
                 _ => {
@@ -500,12 +525,12 @@ impl Renderer {
                         buffer: &picture_staging,
                         layout: gpu::TexelCopyBufferLayout {
                             offset: k as u64 * picture_bytes,
-                            bytes_per_row: Some(ANALYSIS_WIDTH * 4),
+                            bytes_per_row: Some(width * 4),
                             rows_per_image: Some(height),
                         },
                     },
                     gpu::Extent3d {
-                        width: ANALYSIS_WIDTH,
+                        width,
                         height,
                         depth_or_array_layers: 1,
                     },
@@ -594,7 +619,7 @@ impl Renderer {
             && self.source.is_some()
             && self.scopes.source_picture == open
         {
-            let whole = whole_frame(&before, weigh_by);
+            let whole = whole_frame(&before, weigh_by, self.most_side);
             let (encoder, _) = self.bin_frame(Slot::Tap, &whole, &taken);
             self.queue.submit(Some(encoder.finish()));
             self.scopes.tap.sent(taken);
@@ -635,15 +660,11 @@ impl Renderer {
         whole: &View,
         taken: &Taken,
     ) -> (gpu::CommandEncoder, gpu::Texture) {
-        let (iw, ih) = (
-            whole.frame_size.0.max(1.0) as u32,
-            whole.frame_size.1.max(1.0) as u32,
-        );
-        let height = (ANALYSIS_WIDTH * ih / iw).max(1);
+        let (width, height) = analysis_size(whole.frame_size, self.most_side);
         let target = match &self.scopes.slot(slot).target {
-            Some(t) if t.height() == height => t.clone(),
+            Some(t) if t.height() == height && t.width() == width => t.clone(),
             _ => {
-                let t = self.make_target("analysis", ANALYSIS_WIDTH, height);
+                let t = self.make_target("analysis", width, height);
                 self.scopes.slot_mut(slot).target = Some(t.clone());
                 t
             }
@@ -700,7 +721,7 @@ impl Renderer {
             });
             pass.set_pipeline(&self.scopes.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(ANALYSIS_WIDTH.div_ceil(16), height.div_ceil(16), 1);
+            pass.dispatch_workgroups(width.div_ceil(16), height.div_ceil(16), 1);
         }
         encoder.copy_buffer_to_buffer(&readback.bins, 0, &readback.staging, 0, bytes);
         (encoder, target)
@@ -733,13 +754,14 @@ impl Renderer {
     }
 }
 
-/// `v`'s whole frame drawn [`ANALYSIS_WIDTH`] wide for an analysis,
+/// `v`'s whole frame drawn [`analysis_size`] wide for an analysis,
 /// weighed by `weigh_by`, with none of the overlays the viewport
 /// paints over it.
-fn whole_frame(v: &View, weigh_by: Option<usize>) -> View {
+fn whole_frame(v: &View, weigh_by: Option<usize>, most: u32) -> View {
     let (iw, ih) = (v.frame_size.0.max(1.0), v.frame_size.1.max(1.0));
+    let (width, _) = analysis_size(v.frame_size, most);
     View {
-        zoom: ANALYSIS_WIDTH as f32 / iw.floor(),
+        zoom: width as f32 / iw.floor(),
         center: (iw.floor() / 2.0, ih.floor() / 2.0),
         show_mask: None,
         show_sharpen: false,

@@ -76,8 +76,12 @@ pub(crate) fn picture_up(develop: &mut owners::Develop, landed: &crate::panel::d
     };
     match &landed.image {
         Developed::Halves(halves) => renderer.upload(halves),
-        Developed::Texture(texture) => renderer.set_source(texture.clone()),
+        Developed::Texture(texture) => match landed.full {
+            Some(full) => renderer.set_source_sized(texture.clone(), full),
+            None => renderer.set_source(texture.clone()),
+        },
     }
+    crate::open_note::put_up();
     renderer.set_guide(&landed.guide);
     renderer.set_detail(landed.planes.as_ref());
 }
