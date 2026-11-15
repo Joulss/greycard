@@ -27,6 +27,11 @@ design note behind it.
 
 ### Window
 
+- A pane's sections go in the order you drag them: drag a section's
+  title up or down, Esc to cancel. Develop and Masks share one order,
+  and **Reset section order** in Settings, Interface puts every pane
+  back. Thanks to Joulss (PR 156,
+  [§689](https://github.com/jessolmstead/greycard/blob/master/docs/notes/689-sections-keep-the-order-they-are-dragged-into.md)).
 - The Navigator stays in sight above the left pane's lists however
   far they scroll, and grows with the pane up to a fixed height.
   Folders, Presets, Snapshots, and History lose their inner frames

@@ -71,6 +71,17 @@ pub struct Settings {
     /// The panel's sections folded away, by the names the panel
     /// keeps them under.
     pub collapsed: Vec<String>,
+    /// Each view's sections in the order the user dragged them into, by
+    /// the names `panel::order` gives them: only a view whose order is
+    /// not its first. Read leniently: a view's order that is no list of
+    /// names is that view's first order, and a map that is no map none.
+    /// None moved, the file says nothing of them.
+    #[serde(
+        default,
+        deserialize_with = "orders_leniently",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    pub section_orders: std::collections::BTreeMap<String, Vec<String>>,
     /// The left pane's lists' weights in sharing its height, by
     /// section name, as the gaps between them were last dragged; a
     /// list not named weighs one. Read leniently: a weight that is no
@@ -526,6 +537,40 @@ where
     }
 }
 
+/// Each view's order of sections by its name, a view whose order is
+/// no list of names left out (so it shows its first order) and a
+/// `section_orders` that is no map read as none, so a hand edit never
+/// sets the whole file aside.
+fn orders_leniently<'de, D>(
+    d: D,
+) -> Result<std::collections::BTreeMap<String, Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Object(map) => Ok(map
+            .into_iter()
+            .filter_map(|(view, v)| {
+                let names = v.as_array().and_then(|names| {
+                    names
+                        .iter()
+                        .map(|n| n.as_str().map(String::from))
+                        .collect::<Option<Vec<_>>>()
+                });
+                if names.is_none() {
+                    tracing::warn!("settings: section_orders: {view} is {v}, not a list of names; its first order");
+                }
+                names.map(|names| (view, names))
+            })
+            .collect()),
+        serde_json::Value::Null => Ok(Default::default()),
+        other => {
+            tracing::warn!("settings: section_orders is {other}, not a map of orders; none");
+            Ok(Default::default())
+        }
+    }
+}
+
 fn windows_leniently<'de, D>(d: D) -> Result<crate::window_fit::kept::Windows, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -744,6 +789,7 @@ impl Default for Settings {
             canvas_color: crate::render::CANVAS_NAMES[0].into(),
             mat: false,
             collapsed: Vec::new(),
+            section_orders: Default::default(),
             shares: Default::default(),
             one_section: false,
             grid_cell: crate::grid::CELL,
@@ -1169,6 +1215,7 @@ mod tests {
             canvas_color: "Mid grey".into(),
             mat: true,
             collapsed: vec!["grain".into(), "demosaic".into()],
+            section_orders: Default::default(),
             shares: [("presets".to_string(), 1.5), ("history".to_string(), 0.5)].into(),
             one_section: true,
             grid_cell: 256.0,
@@ -1597,6 +1644,69 @@ mod tests {
             assert_eq!(read.ui_scale, 150, "{text}");
             assert!(read.shares.is_empty(), "{text}");
         }
+    }
+
+    /// A file whose sections were never moved says nothing of them,
+    /// whatever else it holds; a moved one says so.
+    #[test]
+    fn no_moved_section_writes_no_orders() {
+        let text = |s: &Settings| serde_json::to_string(s).unwrap();
+        assert!(!text(&Settings::default()).contains("section_orders"));
+        let other = Settings {
+            ui_scale: 150,
+            ..Settings::default()
+        };
+        assert!(!text(&other).contains("section_orders"));
+        let moved = Settings {
+            section_orders: [("crop".to_string(), vec!["rotate".to_string()])].into(),
+            ..Settings::default()
+        };
+        assert!(text(&moved).contains("section_orders"));
+    }
+
+    /// A hand-edited view's order that is no list of names is left out,
+    /// so the view shows its first order, and a `section_orders` that is
+    /// no map is none; the rest of the file stands, the other views'
+    /// orders with it. A file from before the orders has none.
+    #[test]
+    fn the_section_orders_are_read_leniently() {
+        let read: Settings = serde_json::from_str(
+            r#"{"ui_scale": 150, "section_orders": {"develop": "look", "crop": ["rotate", "crop"], "cull": [1, "culling"], "loupe": null}}"#,
+        )
+        .unwrap();
+        assert_eq!(read.ui_scale, 150);
+        assert_eq!(
+            read.section_orders,
+            [(
+                "crop".to_string(),
+                vec!["rotate".to_string(), "crop".to_string()]
+            )]
+            .into()
+        );
+        for text in [
+            r#"{"ui_scale": 150, "section_orders": ["develop"]}"#,
+            r#"{"ui_scale": 150, "section_orders": null}"#,
+            r#"{"ui_scale": 150, "section_orders": 3}"#,
+            r#"{"ui_scale": 150}"#,
+        ] {
+            let read: Settings = serde_json::from_str(text).expect(text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert!(read.section_orders.is_empty(), "{text}");
+        }
+        // Through the file, as the start reads it: not set aside.
+        let dir = std::env::temp_dir().join(format!("greycard-orders-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{"ui_scale": 150, "section_orders": {"develop": "look"}}"#,
+        )
+        .unwrap();
+        let (read, set_aside) = Settings::read(&path, true);
+        assert!(!set_aside);
+        assert_eq!(read.ui_scale, 150);
+        assert!(!dir.join("settings.json.bad").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The frames a launch opens: the chosen folder's while it is

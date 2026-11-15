@@ -75,6 +75,12 @@ pane's sections are not touched. Turning it on folds nothing until the
 next section opens. A section you open by its title is scrolled into
 view as the others fold: all of it if it fits, else from its title.
 
+### Reset section order
+
+Puts the sections of every tab and of the left pane back in their first
+order, after you have dragged them around. It can be pressed once
+something has moved.
+
 ## Library
 
 ### Start in

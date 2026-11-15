@@ -50,6 +50,12 @@ impl SideButtons {
                 self.held = [false; 2];
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                // Not ours, but the section drags': a left release ends
+                // any that no header in hand will end (app.slint,
+                // `section-release-seen`). It goes on to Slint as ever.
+                if *button == MouseButton::Left && *state == ElementState::Released {
+                    app.invoke_section_release_seen();
+                }
                 let i = match button {
                     MouseButton::Back => 0,
                     MouseButton::Forward => 1,

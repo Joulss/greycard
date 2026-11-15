@@ -22,3 +22,8 @@ camera-profile
 "Download the Subject model?"
 "312 MB from the model registry.\nLicense: Apache-2.0.\nKept in the models folder."
 "Sample text: this sheet was opened for a snapshot."
+
+# The panes' section stacks (§689): the tokens of the view on show,
+# and a stack's view name, compared and never shown.
+section-stacks
+view

@@ -9,7 +9,7 @@ import { Palette } from "std-widgets.slint";
 import { Theme, ScrollBars, LabelColumn } from "theme.slint";
 // The theme's name and the label column are read on the Rust side's tests.
 export { Theme, ScrollBars, LabelColumn } from "theme.slint";
-import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge, HeldKeys } from "controls.slint";
+import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge, HeldKeys, SectionStack, SectionSlot, SectionDrag } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys, ButtonKeys } from "controls.slint";
 import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, WheelGuide, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, ProfileRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
@@ -1203,6 +1203,26 @@ export component App inherits Window {
     /// The tab whose sections the panel shows: none of the develop
     /// tabs' over a frozen frame, Cull's as ever.
     out property <string> shown-tab: root.frozen && root.panel-tab != "Cull" ? "" : root.panel-tab;
+    /// Each view's sections by name, in the order the user has dragged
+    /// them into: the names and their first order are Rust's
+    /// (`panel::order`), and the panel lays out whatever it is given.
+    /// Develop's order is the Masks tab's too. Display only: the develop
+    /// runs its ops in its own order whatever the panel shows.
+    /// The left pane's model holds Library's sections and the Loupe's,
+    /// each in its own order and FOLDERS, theirs both, once: one
+    /// instance across a switch between them (`panel::order::pane_order`).
+    in property <[string]> left-order;
+    in property <[string]> cull-order;
+    in property <[string]> develop-order;
+    in property <[string]> crop-order;
+    in property <[string]> retouch-order;
+    /// A section of `view` dragged from its index to before the one at
+    /// the second (the order's length for the end).
+    callback section-moved(string, int, int, int);
+    /// Whether any view's order is not its first, for the Settings
+    /// sheet's Reset section order, and that button's press.
+    in property <bool> section-order-moved;
+    callback section-order-reset();
     // A tab chosen, by the bar or by a tool's key.
     function tab-chosen(t: string) {
         root.panel-tab = t;
@@ -1227,10 +1247,44 @@ export component App inherits Window {
         root.crop-toggled();
     }
     // New mask, by its button or by M: its name and shapes are in the
-    // first section, so the sections go back to their top for it.
+    // MASK section, so the panel brings that section into view for it,
+    // wherever the order has put it, once it is laid out (its slot's
+    // Timer in the Develop and Masks stack).
+    // At the most masks none is made, and nothing is to be brought in.
+    // Nor where the Masks tab is not on show (a frozen frame shows none
+    // of the develop tabs): the reveal is for the mask just made, whose
+    // name takes the keys now, never for MASK when it next shows.
     function mask-new() {
-        root.panel-scroll = 0px;
+        let before = root.adjustment-names.length;
+        root.mask-reveal-wanted = true;
         root.new-mask();
+        if (root.adjustment-names.length <= before || root.shown-tab != "Masks") {
+            root.mask-reveal-wanted = false;
+        }
+    }
+    property <bool> mask-reveal-wanted: false;
+    // A change of what the panes show under a drag (another tab, the
+    // grid, culling, the folder tree, a pane put away, the lightbox)
+    // cancels it, as Esc does: a stack or a section taken away hears no
+    // release, and one that stays commits nothing at it; Esc is the
+    // window's again.
+    property <string> section-stacks: root.shown-tab + (root.grid-open ? "/grid" : "")
+        + (root.cull-mode ? "/cull" : "") + (root.frozen ? "/frozen" : "")
+        + (root.folder-tree-shown ? "/tree" : "") + (root.left-hidden ? "/no-left" : "")
+        + (root.right-hidden ? "/no-right" : "") + (root.lightbox ? "/lightbox" : "");
+    changed section-stacks => {
+        if (SectionDrag.active) {
+            SectionDrag.active = false;
+            SectionDrag.cancels += 1;
+        }
+    }
+    // A left release the window saw (`panel::side_buttons`), before the
+    // window hands it on: whatever else took the header in hand away
+    // under its drag (a mask deleted from under MASK, say), the drag is
+    // over, and Esc is the window's again. A header still in hand hears
+    // the release next and drops as ever: its drop does not ask this.
+    public function section-release-seen() {
+        SectionDrag.active = false;
     }
     property <bool> mask-name-wanted: false;
     // One section open at a time is a tab's, over its folds, and a
@@ -1440,6 +1494,56 @@ export component App inherits Window {
     in-out property <float> share-presets: 1;
     in-out property <float> share-snapshots: 1;
     in-out property <float> share-history: 1;
+    pure function share-index(name: string) -> int {
+        return name == "folders" ? 0 : name == "collections" ? 1
+            : name == "presets" ? 2 : name == "snapshots" ? 3
+            : name == "history" ? 4 : -1;
+    }
+    pure function share-open(name: string) -> bool {
+        return name == "folders" ? root.folder-tree-shown && !root.collapsed-folders
+            : name == "collections" ? !root.collapsed-collections
+            : name == "presets" ? !root.collapsed-presets
+            : name == "snapshots" ? !root.collapsed-snapshots
+            : name == "history" ? !root.collapsed-history : false;
+    }
+    // The left pane's stack: Library's sections and the Loupe's in one
+    // model. A list is on show by the view (Library's with the grid, the
+    // Loupe's without, the folders by the open root's tree, the presets,
+    // snapshots, and history not in culling), as its slot's `if` says;
+    // the one on show above another is what the gap between them sits
+    // under, and moves room with. Looked back six places and counted
+    // over seven, the model's length (`panel::order`'s test holds it
+    // to that).
+    pure function left-name(i: int) -> string {
+        return root.left-order[i];
+    }
+    pure function left-shown(name: string) -> bool {
+        return name == "folders" ? root.folder-tree-shown
+            : name == "roots" || name == "collections" || name == "metadata" ? root.grid-open
+            : name == "presets" || name == "snapshots" || name == "history"
+                ? !root.grid-open && !root.cull-mode && !root.frozen
+            : false;
+    }
+    pure function left-before(i: int) -> string {
+        return i >= 1 && root.left-shown(root.left-name(i - 1)) ? root.left-name(i - 1)
+            : i >= 2 && root.left-shown(root.left-name(i - 2)) ? root.left-name(i - 2)
+            : i >= 3 && root.left-shown(root.left-name(i - 3)) ? root.left-name(i - 3)
+            : i >= 4 && root.left-shown(root.left-name(i - 4)) ? root.left-name(i - 4)
+            : i >= 5 && root.left-shown(root.left-name(i - 5)) ? root.left-name(i - 5)
+            : i >= 6 && root.left-shown(root.left-name(i - 6)) ? root.left-name(i - 6)
+            : "";
+    }
+    pure function left-shown-count() -> int {
+        return (root.left-shown(root.left-name(0)) ? 1 : 0) + (root.left-shown(root.left-name(1)) ? 1 : 0)
+            + (root.left-shown(root.left-name(2)) ? 1 : 0) + (root.left-shown(root.left-name(3)) ? 1 : 0)
+            + (root.left-shown(root.left-name(4)) ? 1 : 0) + (root.left-shown(root.left-name(5)) ? 1 : 0)
+            + (root.left-shown(root.left-name(6)) ? 1 : 0);
+    }
+    // Two lists on show at least, or a drag would only move one past
+    // lists the view hides.
+    pure function left-movable() -> bool {
+        return root.left-shown-count() > 1;
+    }
     // As laid out now, by list (folders 0, collections 1, presets 2,
     // snapshots 3, history 4): how far each has grown past its floor,
     // and how much further its list would let it.
@@ -3126,6 +3230,12 @@ export component App inherits Window {
             let chord = root.key-chord(e.text, e.modifiers.control, e.modifiers.shift,
                 e.modifiers.alt, e.modifiers.meta);
             if (chord == "") { return reject; }
+            // A section's header in hand put back where it was.
+            if (chord == "Esc" && SectionDrag.active) {
+                SectionDrag.active = false;
+                SectionDrag.cancels += 1;
+                return accept;
+            }
             // Any key but its own turns the Original back to the edit,
             // and goes on to do what it does. Not under a sheet, whose
             // keys leave the picture behind it alone.
@@ -3901,8 +4011,10 @@ export component App inherits Window {
                         if (!root.sheet-open()) { root.sync-quick-asked(); }
                     }
                 }
-                // The panel in the order a photo is developed; the
-                // masks and the retouch on tabs of their own. The bar
+                // The panel in the order a photo is developed, until the
+                // user drags its sections into another, which moves
+                // nothing in the develop's own; the masks and the retouch
+                // on tabs of their own. The bar
                 // stays put above the sections, so it is always within
                 // reach however far a tab has scrolled.
                 // The Loupe's two modes, Cull first and Develop's four
@@ -4083,669 +4195,893 @@ export component App inherits Window {
                         // Clear of the scroll bar's band, however wide it is.
                         padding-right: max(Theme.space-1, ScrollBars.band + 2px);
                         padding-top: Theme.space-1;
-                        // Culling: what the mode is, the browser's
-                        // filter, the compare view, and the two ways
-                        // out of it, one of them for the rejects.
-                        if root.shown-tab == "Cull": CullSection {
-                            queue-view: root.frozen;
-                            one-of-panel: !root.grid-open;
-                            developed: root.cull-developed;
-                            source-asked(d) => { root.cull-source-asked(d); }
-                            frame-turned(a) => { root.frame-turned(a); }
-                            grid-open <=> root.grid-open;
-                            cull-leave => { root.cull-leave(); }
-                            compare-text <=> root.compare-text;
-                            compare-changed(a) => { root.compare-changed(a); }
-                            move-on <=> root.cull-move-on;
-                            move-on-changed => { root.cull-move-on-changed(); }
-                            filter-stars <=> root.filter-stars;
-                            filter-flags <=> root.filter-flags;
-                            filter-labels <=> root.filter-labels;
-                            filter-exact <=> root.filter-exact;
-                            filter-text <=> root.filter-text;
-                            filter-shown <=> root.filter-shown;
-                            filter-total <=> root.filter-total;
-                            filter-on <=> root.filter-on;
-                            filter-bar: root.filter-bar;
-                            filter-focus <=> root.filter-focus;
-                            filter-facets: root.filter-facets;
-                            filter-facet-note: root.filter-facet-note;
-                            filter-facet-toggled(a, b, x) => { root.filter-facet-toggled(a, b, x); }
-                            collapsed-culling <=> root.collapsed-culling;
-                            filter-star-picked(a) => { root.filter-star-picked(a); }
-                            filter-flag-toggled(a, x) => { root.filter-flag-toggled(a, x); }
-                            filter-label-toggled(a, x) => { root.filter-label-toggled(a, x); }
-                            filter-exact-toggled => { root.filter-exact-toggled(); }
-                            filter-text-edited(a) => { root.filter-text-edited(a); }
-                            filter-cleared => { root.filter-cleared(); }
-                            sort-menu: root.sort-menu;
-                            sort-picked(a) => { root.sort-picked(a); }
-                            sort-turned(a) => { root.sort-turned(a); }
-                            reject-count: root.reject-count;
-                            rejects-asked => { root.rejects-asked(); }
-                            back-count: root.back-count;
-                            back-to: root.back-to;
-                            move-back => { root.move-back-asked(); }
-                            delete-asked(w) => { root.delete-asked(w); }
-                            archive-rejects-choices: root.archive-rejects-choices;
-                            archive-rejects-asked(i) => { root.archive-rejects-asked(i); }
-                            focus-keys => { keys.focus(); }
-                        }
-                        // The selection's title and keywords, under
-                        // CULLING, whose keys and buttons keep their
-                        // place at the top.
-                        if root.shown-tab == "Cull": MetaSection {
-                            one-of-panel: !root.grid-open;
-                            frame-meta-on: root.frame-meta-on;
-                            frame-title: root.frame-title;
-                            frame-title-mixed: root.frame-title-mixed;
-                            title-text <=> root.title-text;
-                            title-dirty <=> root.title-dirty;
-                            frame-keywords: root.frame-keywords;
-                            keyword-text <=> root.keyword-text;
-                            keyword-completions <=> root.keyword-completions;
-                            keyword-pick <=> root.keyword-pick;
-                            set-count: root.set-count;
-                            collapsed-metadata <=> root.collapsed-metadata;
-                            opened-alone => { root.alone-with-cull(); }
-                            title-edited(t) => { root.title-edited(t); }
-                            keyword-typed(t) => { root.keyword-typed(t); }
-                            keyword-added(t) => { root.keyword-added(t); }
-                            keyword-removed(t) => { root.keyword-removed(t); }
-                            keyword-focused => { root.keyword-focused(); }
-                            focus-keys => { keys.focus(); }
-                        }
-                        if root.shown-tab == "Masks" && root.target > 0: mask-section := AdjustmentsSection {
-                            one-of-panel: !root.grid-open;
-                            adjustment-names <=> root.adjustment-names;
-                            target <=> root.target;
-                            mask-invert <=> root.mask-invert;
-                            mask-refine <=> root.mask-refine;
-                            mask-opacity <=> root.mask-opacity;
-                            has-feather <=> root.has-feather;
-                            mask-feather <=> root.mask-feather;
-                            lum-low <=> root.lum-low;
-                            lum-high <=> root.lum-high;
-                            lum-low-feather <=> root.lum-low-feather;
-                            lum-high-feather <=> root.lum-high-feather;
-                            range-hue <=> root.range-hue;
-                            range-width <=> root.range-width;
-                            range-hue-feather <=> root.range-hue-feather;
-                            range-chroma <=> root.range-chroma;
-                            range-chroma-feather <=> root.range-chroma-feather;
-                            hue-circle: root.hue-circle;
-                            picking <=> root.picking;
-                            range-sample <=> root.range-sample;
-                            pick-started(a) => { root.pick-started(a); }
-                            show-mask <=> root.show-mask;
-                            show-mask-toggled => { root.show-mask-toggled(); }
-                            collapsed-mask <=> root.collapsed-mask;
-                            placing <=> root.placing;
-                            adjustment-name <=> root.adjustment-name;
-                            name-wanted <=> root.mask-name-wanted;
-                            component-names <=> root.component-names;
-                            component-on <=> root.component-on;
-                            shape-invert <=> root.shape-invert;
-                            component <=> root.component;
-                            shape-mode <=> root.shape-mode;
-                            placing-into <=> root.placing-into;
-                            component-kind <=> root.component-kind;
-                            component-heading: root.component-heading;
-                            brush-size <=> root.brush-size;
-                            brush-feather <=> root.brush-feather;
-                            brush-flow <=> root.brush-flow;
-                            brush-op <=> root.brush-op;
-                            add-shape(a, b) => { root.add-shape(a, b); }
-                            // As Fit's menu: the keys before People's or
-                            // Landscape's opens, and back to them after a
-                            // pick.
-                            menu-opening => { keys.focus(); }
-                            add-part(a, b) => { root.add-part(a, b); root.menu-done(); }
-                            parts-menu-shown <=> root.parts-menu-shown;
-                            find-landscape(a) => { root.find-landscape(a); }
-                            add-landscape(a) => { root.add-landscape(a); root.menu-done(); }
-                            landscape-offers <=> root.landscape-offers;
-                            landscape-kinds <=> root.landscape-kinds;
-                            landscape-menu-shown <=> root.landscape-menu-shown;
-                            people-offer: root.people-offer;
-                            people-offer-mask: root.people-offer-mask;
-                            people-offer-used => { root.people-offer-used(); }
-                            people-offer-dismissed => { root.people-offer-dismissed(); }
-                            delete-shape-at(a) => { root.delete-shape-at(a); }
-                            shape-toggled(a) => { root.shape-toggled(a); }
-                            invert-shape-toggled(a) => { root.invert-shape-toggled(a); }
-                            component-changed(a) => { root.handles-down = false; root.component-changed(a); }
-                            renamed => { root.renamed(); }
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": LookSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-look <=> root.collapsed-look;
-                            look-name <=> root.look-name;
-                            look-strength <=> root.look-strength;
-                            look-rows: root.look-rows;
-                            look-mismatch: root.look-mismatch;
-                            look-refit: root.look-refit;
-                            look-refit-asked => { root.look-refit-asked(); }
-                            look-group-toggled(key) => { root.look-group-toggled(key); }
-                            look-note: root.look-note;
-                            look-warning: root.look-warning;
-                            look-fitted: root.look-fitted;
-                            look-picked => { root.look-picked(); }
-                            look-hovered(name, on) => { root.look-hovered(name, on); }
-                            look-removable: root.look-removable;
-                            look-remove-asked => { root.look-remove-asked(); }
-                            look-renamable: root.look-renamable;
-                            look-rename-asked => { root.look-rename-asked(); }
-                            match-asked => { root.match-asked(); }
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": WhiteBalanceSection {
-                            one-of-panel: !root.grid-open;
-                            as-shot <=> root.as-shot;
-                            collapsed-wb <=> root.collapsed-wb;
-                            opened-alone => { root.alone-with-masks(); }
-                            picking <=> root.picking;
-                            pick-started(a) => { root.pick-started(a); }
-                            wb-auto => { root.wb-auto(); }
-                            // As Fit's menu: the keys before it opens,
-                            // and back to them after a pick.
-                            menu-opening => { keys.focus(); }
-                            wb-preset(p) => { root.wb-preset(p); root.menu-done(); }
-                            presets-shown <=> root.wb-presets-shown;
-                            temperature <=> root.temperature;
-                            tint <=> root.tint;
-                            raw-input: root.raw-input;
-                            picture: root.picture-open;
-                            monochrome: root.monochrome-open;
-                            mired-min: root.picture-mired-min;
-                            mired-max: root.picture-mired-max;
-                            tint-min: root.picture-tint-min;
-                            tint-max: root.picture-tint-max;
-                            develop-changed => { root.develop-changed(); }
-                            as-shot-toggled => { root.as-shot-toggled(); }
-                            wb-slider-reset(w) => { root.wb-slider-reset(w); }
-                        }
-                        // The chosen mask's own white balance: the light
-                        // under it, where that is not the light under the
-                        // rest. Off until switched on.
-                        if root.shown-tab == "Masks" && root.target > 0: WhiteBalanceSection {
-                            one-of-panel: !root.grid-open;
-                            local: true;
-                            owner: root.target-name;
-                            switchable: true;
-                            on <=> root.local-wb-on;
-                            switched => { root.local-wb-toggled(); }
-                            relative <=> root.local-wb-relative;
-                            relative-toggled => { root.local-wb-relative-toggled(); }
-                            local-reset => { root.local-wb-reset(); }
-                            collapsed-wb <=> root.collapsed-wb;
-                            opened-alone => { root.alone-with-masks(); }
-                            picking <=> root.picking;
-                            pick-started(a) => { root.pick-started(a); }
-                            temperature <=> root.local-temperature;
-                            tint <=> root.local-tint;
-                            raw-input: root.raw-input;
-                            picture: root.picture-open;
-                            monochrome: root.monochrome-open;
-                            develop-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": CameraSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-camera <=> root.collapsed-camera;
-                            raw-input: root.raw-input;
-                            source-note: root.source-note;
-                            camera-profile <=> root.camera-profile;
-                            camera-profile-rows: root.camera-profile-rows;
-                            camera-profile-note: root.camera-profile-note;
-                            camera-profile-warning: root.camera-profile-warning;
-                            camera-profiles-any: root.camera-profiles-any;
-                            camera-profiles-all <=> root.camera-profiles-all;
-                            camera-profile-has-curve: root.camera-profile-has-curve;
-                            camera-tone-curve <=> root.camera-tone-curve;
-                            view-changed => { root.view-changed(); }
-                            camera-profile-picked => { root.camera-profile-picked(); }
-                            camera-profile-group-toggled(key) => { root.camera-profile-group-toggled(key); }
-                            camera-profiles-all-changed => { root.camera-profiles-all-changed(); }
-                        }
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): LightSection {
-                            one-of-panel: !root.grid-open;
-                            exposure <=> root.exposure;
-                            contrast <=> root.contrast;
-                            highlights <=> root.highlights;
-                            midtones <=> root.midtones;
-                            shadows <=> root.shadows;
-                            whites <=> root.whites;
-                            blacks <=> root.blacks;
-                            light-enabled <=> root.light-enabled;
-                            display-curve <=> root.display-curve;
-                            show-display-curve: root.target == 0 && root.raw-input;
-                            display-curve-inert: root.camera-tone-curve && root.camera-profile-has-curve;
-                            collapsed-light <=> root.collapsed-light;
-                            opened-alone => { root.alone-with-masks(); }
-                            target-name <=> root.target-name;
-                            raw-input: root.raw-input;
-                            auto-shown: root.target == 0;
-                            light-auto => { root.light-auto(); }
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): ColorSection {
-                            one-of-panel: !root.grid-open;
-                            color-enabled <=> root.color-enabled;
-                            saturation <=> root.saturation;
-                            vibrance <=> root.vibrance;
-                            collapsed-color <=> root.collapsed-color;
-                            opened-alone => { root.alone-with-masks(); }
-                            target-name <=> root.target-name;
-                            band-colors: root.band-colors;
-                            dull: root.dull;
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): CurvesSection {
-                            one-of-panel: !root.grid-open;
-                            curves-enabled <=> root.curves-enabled;
-                            curve-mode <=> root.curve-mode;
-                            para-highlights <=> root.para-highlights;
-                            para-lights <=> root.para-lights;
-                            para-darks <=> root.para-darks;
-                            para-shadows <=> root.para-shadows;
-                            curve-channel <=> root.curve-channel;
-                            curve-image: root.curve-image;
-                            collapsed-curves <=> root.collapsed-curves;
-                            opened-alone => { root.alone-with-masks(); }
-                            picking <=> root.picking;
-                            pick-started(a) => { root.pick-started(a); }
-                            target-name <=> root.target-name;
-                            curve-press(a, b) => { root.curve-press(a, b); }
-                            curve-move(a, b) => { root.curve-move(a, b); }
-                            curve-release => { root.curve-release(); }
-                            curve-double(a, b) => { root.curve-double(a, b); }
-                            curve-selected: root.curve-selected;
-                            curve-point-in: root.curve-point-in;
-                            curve-point-out: root.curve-point-out;
-                            curve-typed(a, b) => { root.curve-typed(a, b); }
-                            curve-reset => { root.curve-reset(); }
-                            curve-channel-changed => { root.curve-channel-changed(); }
-                            curve-mode-changed => { root.curve-mode-changed(); }
-                            curve-resized(w) => {
-                                if (w != root.curve-side) {
-                                    root.curve-side = w;
-                                    root.curve-resized();
+                        if root.shown-tab == "Cull": cull-stack := SectionStack {
+                            view: "cull";
+                            count: root.cull-order.length;
+                            movable: root.cull-order.length > 1;
+                            viewport-x: panel-view.absolute-position.x;
+                            viewport-y: panel-view.absolute-position.y;
+                            viewport-width: panel-view.width;
+                            viewport-height: panel-view.visible-height;
+                            started => { keys.focus(); }
+                            moved-section(v, from, to, next) => { root.section-moved(v, from, to, next); }
+                            scroll-by(d) => {
+                                root.panel-scroll = clamp(root.panel-scroll + d,
+                                    min(0px, panel-view.visible-height - panel-view.content-height), 0px);
+                            }
+                            for section[i] in root.cull-order: SectionSlot {
+                                index: i;
+                                drag: cull-stack.state;
+                                consider(at, top) => { cull-stack.consider(at, top); }
+                                // Culling: what the mode is, the browser's
+                                // filter, the compare view, and the two ways
+                                // out of it, one of them for the rejects.
+                                if section == "culling": CullSection {
+                                    reorderable: cull-stack.movable;
+                                    reorder-started => { cull-stack.start(i); }
+                                    reorder-moved(x, y) => { cull-stack.move(x, y); }
+                                    reorder-ended(commit) => { return cull-stack.end(commit); }
+                                    queue-view: root.frozen;
+                                    one-of-panel: !root.grid-open;
+                                    developed: root.cull-developed;
+                                    source-asked(d) => { root.cull-source-asked(d); }
+                                    frame-turned(a) => { root.frame-turned(a); }
+                                    grid-open <=> root.grid-open;
+                                    cull-leave => { root.cull-leave(); }
+                                    compare-text <=> root.compare-text;
+                                    compare-changed(a) => { root.compare-changed(a); }
+                                    move-on <=> root.cull-move-on;
+                                    move-on-changed => { root.cull-move-on-changed(); }
+                                    filter-stars <=> root.filter-stars;
+                                    filter-flags <=> root.filter-flags;
+                                    filter-labels <=> root.filter-labels;
+                                    filter-exact <=> root.filter-exact;
+                                    filter-text <=> root.filter-text;
+                                    filter-shown <=> root.filter-shown;
+                                    filter-total <=> root.filter-total;
+                                    filter-on <=> root.filter-on;
+                                    filter-bar: root.filter-bar;
+                                    filter-focus <=> root.filter-focus;
+                                    filter-facets: root.filter-facets;
+                                    filter-facet-note: root.filter-facet-note;
+                                    filter-facet-toggled(a, b, x) => { root.filter-facet-toggled(a, b, x); }
+                                    collapsed-culling <=> root.collapsed-culling;
+                                    filter-star-picked(a) => { root.filter-star-picked(a); }
+                                    filter-flag-toggled(a, x) => { root.filter-flag-toggled(a, x); }
+                                    filter-label-toggled(a, x) => { root.filter-label-toggled(a, x); }
+                                    filter-exact-toggled => { root.filter-exact-toggled(); }
+                                    filter-text-edited(a) => { root.filter-text-edited(a); }
+                                    filter-cleared => { root.filter-cleared(); }
+                                    sort-menu: root.sort-menu;
+                                    sort-picked(a) => { root.sort-picked(a); }
+                                    sort-turned(a) => { root.sort-turned(a); }
+                                    reject-count: root.reject-count;
+                                    rejects-asked => { root.rejects-asked(); }
+                                    back-count: root.back-count;
+                                    back-to: root.back-to;
+                                    move-back => { root.move-back-asked(); }
+                                    delete-asked(w) => { root.delete-asked(w); }
+                                    archive-rejects-choices: root.archive-rejects-choices;
+                                    archive-rejects-asked(i) => { root.archive-rejects-asked(i); }
+                                    focus-keys => { keys.focus(); }
+                                }
+                                // The selection's title and keywords, first
+                                // under CULLING, whose keys and buttons keep
+                                // their place at the top until the user moves
+                                // them.
+                                if section == "metadata": MetaSection {
+                                    reorderable: cull-stack.movable;
+                                    reorder-started => { cull-stack.start(i); }
+                                    reorder-moved(x, y) => { cull-stack.move(x, y); }
+                                    reorder-ended(commit) => { return cull-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    frame-meta-on: root.frame-meta-on;
+                                    frame-title: root.frame-title;
+                                    frame-title-mixed: root.frame-title-mixed;
+                                    title-text <=> root.title-text;
+                                    title-dirty <=> root.title-dirty;
+                                    frame-keywords: root.frame-keywords;
+                                    keyword-text <=> root.keyword-text;
+                                    keyword-completions <=> root.keyword-completions;
+                                    keyword-pick <=> root.keyword-pick;
+                                    set-count: root.set-count;
+                                    collapsed-metadata <=> root.collapsed-metadata;
+                                    opened-alone => { root.alone-with-cull(); }
+                                    title-edited(t) => { root.title-edited(t); }
+                                    keyword-typed(t) => { root.keyword-typed(t); }
+                                    keyword-added(t) => { root.keyword-added(t); }
+                                    keyword-removed(t) => { root.keyword-removed(t); }
+                                    keyword-focused => { root.keyword-focused(); }
+                                    focus-keys => { keys.focus(); }
                                 }
                             }
-                            parametric-changed => { root.parametric-changed(); }
-                            view-changed => { root.view-changed(); }
                         }
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): MixerSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-mixer <=> root.collapsed-mixer;
-                            opened-alone => { root.alone-with-masks(); }
-                            picking <=> root.picking;
-                            pick-started(a) => { root.pick-started(a); }
-                            target-name <=> root.target-name;
-                            band-colors: root.band-colors;
-                            mixer-enabled <=> root.mixer-enabled;
-                            mixer-band <=> root.mixer-band;
-                            mixer-hue <=> root.mixer-hue;
-                            mixer-saturation <=> root.mixer-saturation;
-                            mixer-luminance <=> root.mixer-luminance;
-                            mixer-band-changed => { root.mixer-band-changed(); }
-                            mixer-changed => { root.mixer-changed(); }
-                            mixer-reset => { root.mixer-reset(); }
-                            bw-enabled <=> root.bw-enabled;
-                            target <=> root.target;
-                            view-changed => { root.view-changed(); }
+                        // Develop's sections and a mask's, in one order (`panel::order`):
+                        // the six a mask edits too, Light through Tint, are made once for
+                        // both tabs and keep their place, their folds, and their fields'
+                        // state across a switch between them. A section of one tab only
+                        // holds nothing on the other and takes no room there.
+                        if root.shown-tab == "Develop" || root.shown-tab == "Masks": develop-stack := SectionStack {
+                            view: "develop";
+                            count: root.develop-order.length;
+                            movable: true;
+                            viewport-x: panel-view.absolute-position.x;
+                            viewport-y: panel-view.absolute-position.y;
+                            viewport-width: panel-view.width;
+                            viewport-height: panel-view.visible-height;
+                            started => { keys.focus(); }
+                            moved-section(v, from, to, next) => { root.section-moved(v, from, to, next); }
+                            scroll-by(d) => {
+                                root.panel-scroll = clamp(root.panel-scroll + d,
+                                    min(0px, panel-view.visible-height - panel-view.content-height), 0px);
+                            }
+                            for section[i] in root.develop-order: slot := SectionSlot {
+                                index: i;
+                                drag: develop-stack.state;
+                                consider(at, top) => { develop-stack.consider(at, top); }
+                                // New mask's section brought into view, wherever the order
+                                // put it, once it is laid out: its name takes the keys.
+                                Timer {
+                                    interval: 1ms;
+                                    running: section == "mask" && root.mask-reveal-wanted
+                                        && root.shown-tab == "Masks" && root.target > 0;
+                                    // Its top to the view's, by its place in the
+                                    // sections and not in the window: the list
+                                    // pinned above them grows by the new mask's
+                                    // row as this runs.
+                                    triggered => {
+                                        root.mask-reveal-wanted = false;
+                                        let at = slot.absolute-position.y - panel-sections.absolute-position.y;
+                                        root.panel-scroll = clamp(Theme.space-1 - at,
+                                            min(0px, panel-view.visible-height - panel-view.content-height), 0px);
+                                    }
+                                }
+                                if section == "mask" && root.shown-tab == "Masks" && root.target > 0: mask-section := AdjustmentsSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    adjustment-names <=> root.adjustment-names;
+                                    target <=> root.target;
+                                    mask-invert <=> root.mask-invert;
+                                    mask-refine <=> root.mask-refine;
+                                    mask-opacity <=> root.mask-opacity;
+                                    has-feather <=> root.has-feather;
+                                    mask-feather <=> root.mask-feather;
+                                    lum-low <=> root.lum-low;
+                                    lum-high <=> root.lum-high;
+                                    lum-low-feather <=> root.lum-low-feather;
+                                    lum-high-feather <=> root.lum-high-feather;
+                                    range-hue <=> root.range-hue;
+                                    range-width <=> root.range-width;
+                                    range-hue-feather <=> root.range-hue-feather;
+                                    range-chroma <=> root.range-chroma;
+                                    range-chroma-feather <=> root.range-chroma-feather;
+                                    hue-circle: root.hue-circle;
+                                    picking <=> root.picking;
+                                    range-sample <=> root.range-sample;
+                                    pick-started(a) => { root.pick-started(a); }
+                                    show-mask <=> root.show-mask;
+                                    show-mask-toggled => { root.show-mask-toggled(); }
+                                    collapsed-mask <=> root.collapsed-mask;
+                                    placing <=> root.placing;
+                                    adjustment-name <=> root.adjustment-name;
+                                    name-wanted <=> root.mask-name-wanted;
+                                    component-names <=> root.component-names;
+                                    component-on <=> root.component-on;
+                                    shape-invert <=> root.shape-invert;
+                                    component <=> root.component;
+                                    shape-mode <=> root.shape-mode;
+                                    placing-into <=> root.placing-into;
+                                    component-kind <=> root.component-kind;
+                                    component-heading: root.component-heading;
+                                    brush-size <=> root.brush-size;
+                                    brush-feather <=> root.brush-feather;
+                                    brush-flow <=> root.brush-flow;
+                                    brush-op <=> root.brush-op;
+                                    add-shape(a, b) => { root.add-shape(a, b); }
+                                    // As Fit's menu: the keys before People's or
+                                    // Landscape's opens, and back to them after a
+                                    // pick.
+                                    menu-opening => { keys.focus(); }
+                                    add-part(a, b) => { root.add-part(a, b); root.menu-done(); }
+                                    parts-menu-shown <=> root.parts-menu-shown;
+                                    find-landscape(a) => { root.find-landscape(a); }
+                                    add-landscape(a) => { root.add-landscape(a); root.menu-done(); }
+                                    landscape-offers <=> root.landscape-offers;
+                                    landscape-kinds <=> root.landscape-kinds;
+                                    landscape-menu-shown <=> root.landscape-menu-shown;
+                                    people-offer: root.people-offer;
+                                    people-offer-mask: root.people-offer-mask;
+                                    people-offer-used => { root.people-offer-used(); }
+                                    people-offer-dismissed => { root.people-offer-dismissed(); }
+                                    delete-shape-at(a) => { root.delete-shape-at(a); }
+                                    shape-toggled(a) => { root.shape-toggled(a); }
+                                    invert-shape-toggled(a) => { root.invert-shape-toggled(a); }
+                                    component-changed(a) => { root.handles-down = false; root.component-changed(a); }
+                                    renamed => { root.renamed(); }
+                                    view-changed => { root.view-changed(); }
+                                }
+                                if section == "look" && root.shown-tab == "Develop": LookSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-look <=> root.collapsed-look;
+                                    look-name <=> root.look-name;
+                                    look-strength <=> root.look-strength;
+                                    look-rows: root.look-rows;
+                                    look-mismatch: root.look-mismatch;
+                                    look-refit: root.look-refit;
+                                    look-refit-asked => { root.look-refit-asked(); }
+                                    look-group-toggled(key) => { root.look-group-toggled(key); }
+                                    look-note: root.look-note;
+                                    look-warning: root.look-warning;
+                                    look-fitted: root.look-fitted;
+                                    look-picked => { root.look-picked(); }
+                                    look-hovered(name, on) => { root.look-hovered(name, on); }
+                                    look-removable: root.look-removable;
+                                    look-remove-asked => { root.look-remove-asked(); }
+                                    look-renamable: root.look-renamable;
+                                    look-rename-asked => { root.look-rename-asked(); }
+                                    match-asked => { root.match-asked(); }
+                                    view-changed => { root.view-changed(); }
+                                }
+                                if section == "white-balance" && root.shown-tab == "Develop": WhiteBalanceSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    as-shot <=> root.as-shot;
+                                    collapsed-wb <=> root.collapsed-wb;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    picking <=> root.picking;
+                                    pick-started(a) => { root.pick-started(a); }
+                                    wb-auto => { root.wb-auto(); }
+                                    // As Fit's menu: the keys before it opens,
+                                    // and back to them after a pick.
+                                    menu-opening => { keys.focus(); }
+                                    wb-preset(p) => { root.wb-preset(p); root.menu-done(); }
+                                    presets-shown <=> root.wb-presets-shown;
+                                    temperature <=> root.temperature;
+                                    tint <=> root.tint;
+                                    raw-input: root.raw-input;
+                                    picture: root.picture-open;
+                                    monochrome: root.monochrome-open;
+                                    mired-min: root.picture-mired-min;
+                                    mired-max: root.picture-mired-max;
+                                    tint-min: root.picture-tint-min;
+                                    tint-max: root.picture-tint-max;
+                                    develop-changed => { root.develop-changed(); }
+                                    as-shot-toggled => { root.as-shot-toggled(); }
+                                    wb-slider-reset(w) => { root.wb-slider-reset(w); }
+                                }
+                                // The chosen mask's own white balance: the light
+                                // under it, where that is not the light under the
+                                // rest. Off until switched on.
+                                if section == "white-balance" && root.shown-tab == "Masks" && root.target > 0: WhiteBalanceSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    local: true;
+                                    owner: root.target-name;
+                                    switchable: true;
+                                    on <=> root.local-wb-on;
+                                    switched => { root.local-wb-toggled(); }
+                                    relative <=> root.local-wb-relative;
+                                    relative-toggled => { root.local-wb-relative-toggled(); }
+                                    local-reset => { root.local-wb-reset(); }
+                                    collapsed-wb <=> root.collapsed-wb;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    picking <=> root.picking;
+                                    pick-started(a) => { root.pick-started(a); }
+                                    temperature <=> root.local-temperature;
+                                    tint <=> root.local-tint;
+                                    raw-input: root.raw-input;
+                                    picture: root.picture-open;
+                                    monochrome: root.monochrome-open;
+                                    develop-changed => { root.view-changed(); }
+                                }
+                                if section == "camera" && root.shown-tab == "Develop": CameraSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-camera <=> root.collapsed-camera;
+                                    raw-input: root.raw-input;
+                                    source-note: root.source-note;
+                                    camera-profile <=> root.camera-profile;
+                                    camera-profile-rows: root.camera-profile-rows;
+                                    camera-profile-note: root.camera-profile-note;
+                                    camera-profile-warning: root.camera-profile-warning;
+                                    camera-profiles-any: root.camera-profiles-any;
+                                    camera-profiles-all <=> root.camera-profiles-all;
+                                    camera-profile-has-curve: root.camera-profile-has-curve;
+                                    camera-tone-curve <=> root.camera-tone-curve;
+                                    view-changed => { root.view-changed(); }
+                                    camera-profile-picked => { root.camera-profile-picked(); }
+                                    camera-profile-group-toggled(key) => { root.camera-profile-group-toggled(key); }
+                                    camera-profiles-all-changed => { root.camera-profiles-all-changed(); }
+                                }
+                                if section == "light" && (root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0)): LightSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    exposure <=> root.exposure;
+                                    contrast <=> root.contrast;
+                                    highlights <=> root.highlights;
+                                    midtones <=> root.midtones;
+                                    shadows <=> root.shadows;
+                                    whites <=> root.whites;
+                                    blacks <=> root.blacks;
+                                    light-enabled <=> root.light-enabled;
+                                    display-curve <=> root.display-curve;
+                                    show-display-curve: root.target == 0 && root.raw-input;
+                                    display-curve-inert: root.camera-tone-curve && root.camera-profile-has-curve;
+                                    collapsed-light <=> root.collapsed-light;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    target-name <=> root.target-name;
+                                    raw-input: root.raw-input;
+                                    auto-shown: root.target == 0;
+                                    light-auto => { root.light-auto(); }
+                                    view-changed => { root.view-changed(); }
+                                }
+                                if section == "color" && (root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0)): ColorSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    color-enabled <=> root.color-enabled;
+                                    saturation <=> root.saturation;
+                                    vibrance <=> root.vibrance;
+                                    collapsed-color <=> root.collapsed-color;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    target-name <=> root.target-name;
+                                    band-colors: root.band-colors;
+                                    dull: root.dull;
+                                    view-changed => { root.view-changed(); }
+                                }
+                                if section == "curves" && (root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0)): CurvesSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    curves-enabled <=> root.curves-enabled;
+                                    curve-mode <=> root.curve-mode;
+                                    para-highlights <=> root.para-highlights;
+                                    para-lights <=> root.para-lights;
+                                    para-darks <=> root.para-darks;
+                                    para-shadows <=> root.para-shadows;
+                                    curve-channel <=> root.curve-channel;
+                                    curve-image: root.curve-image;
+                                    collapsed-curves <=> root.collapsed-curves;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    picking <=> root.picking;
+                                    pick-started(a) => { root.pick-started(a); }
+                                    target-name <=> root.target-name;
+                                    curve-press(a, b) => { root.curve-press(a, b); }
+                                    curve-move(a, b) => { root.curve-move(a, b); }
+                                    curve-release => { root.curve-release(); }
+                                    curve-double(a, b) => { root.curve-double(a, b); }
+                                    curve-selected: root.curve-selected;
+                                    curve-point-in: root.curve-point-in;
+                                    curve-point-out: root.curve-point-out;
+                                    curve-typed(a, b) => { root.curve-typed(a, b); }
+                                    curve-reset => { root.curve-reset(); }
+                                    curve-channel-changed => { root.curve-channel-changed(); }
+                                    curve-mode-changed => { root.curve-mode-changed(); }
+                                    curve-resized(w) => {
+                                        if (w != root.curve-side) {
+                                            root.curve-side = w;
+                                            root.curve-resized();
+                                        }
+                                    }
+                                    parametric-changed => { root.parametric-changed(); }
+                                    view-changed => { root.view-changed(); }
+                                }
+                                if section == "mixer" && (root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0)): MixerSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-mixer <=> root.collapsed-mixer;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    picking <=> root.picking;
+                                    pick-started(a) => { root.pick-started(a); }
+                                    target-name <=> root.target-name;
+                                    band-colors: root.band-colors;
+                                    mixer-enabled <=> root.mixer-enabled;
+                                    mixer-band <=> root.mixer-band;
+                                    mixer-hue <=> root.mixer-hue;
+                                    mixer-saturation <=> root.mixer-saturation;
+                                    mixer-luminance <=> root.mixer-luminance;
+                                    mixer-band-changed => { root.mixer-band-changed(); }
+                                    mixer-changed => { root.mixer-changed(); }
+                                    mixer-reset => { root.mixer-reset(); }
+                                    bw-enabled <=> root.bw-enabled;
+                                    target <=> root.target;
+                                    view-changed => { root.view-changed(); }
+                                }
+                                // Global only: a mask carries a look, and a
+                                // picture is mono or it is not, so this one
+                                // is not offered on the Masks tab.
+                                if section == "black-and-white" && root.shown-tab == "Develop": BlackWhiteSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-bw <=> root.collapsed-bw;
+                                    band-colors: root.band-colors;
+                                    dull: root.dull;
+                                    bw-enabled <=> root.bw-enabled;
+                                    bw-band <=> root.bw-band;
+                                    bw-weight <=> root.bw-weight;
+                                    bw-strength <=> root.bw-strength;
+                                    bw-filter <=> root.bw-filter;
+                                    bw-band-changed => { root.bw-band-changed(); }
+                                    bw-changed => { root.bw-changed(); }
+                                    bw-filter-changed => { root.bw-filter-changed(); }
+                                    bw-reset => { root.bw-reset(); }
+                                    view-changed => { root.view-changed(); }
+                                }
+                                if section == "grading" && (root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0)): GradingSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-grading <=> root.collapsed-grading;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    target-name <=> root.target-name;
+                                    grading-enabled <=> root.grading-enabled;
+                                    grade-range <=> root.grade-range;
+                                    grade-hue <=> root.grade-hue;
+                                    grade-saturation <=> root.grade-saturation;
+                                    grade-balance <=> root.grade-balance;
+                                    grade-images: root.grade-images;
+                                    grade-big <=> root.grade-big;
+                                    wheel-hand: root.wheel-hand;
+                                    wheel-guide: root.wheel-guide;
+                                    grade-press(a, b, c, d, e) => { root.grade-press(a, b, c, d, e); }
+                                    grade-move(a, b, c, d, e) => { root.grade-move(a, b, c, d, e); }
+                                    grade-keys(a, b, c) => { root.grade-keys(a, b, c); }
+                                    grade-release => { root.grade-release(); }
+                                    grade-double(a) => { root.grade-double(a); }
+                                    grade-chose(a) => { root.grade-chose(a); }
+                                    grade-changed => { root.grade-changed(); }
+                                    grade-reset => { root.grade-reset(); }
+                                    view-changed => { root.view-changed(); }
+                                }
+                                // A tint toward one hue, the last thing the
+                                // Oklab pass does: Lightroom's local Color,
+                                // and a look's, so the global picture and
+                                // every mask can carry one, each with its
+                                // switch.
+                                if section == "tint" && (root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0)): TintSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-tint <=> root.collapsed-tint;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    target-name <=> root.target-name;
+                                    tint-enabled <=> root.tint-enabled;
+                                    tint-hue <=> root.tint-hue;
+                                    tint-amount <=> root.tint-amount;
+                                    tint-color: root.tint-color;
+                                    tint-image: root.tint-image;
+                                    tint-hue-text: root.tint-hue-text;
+                                    in-hand: root.wheel-hand == 3;
+                                    guide: root.wheel-hand == 3 ? root.wheel-guide : { kind: 0 };
+                                    tint-press(a, b, c, d) => { root.tint-press(a, b, c, d); }
+                                    tint-move(a, b, c, d) => { root.tint-move(a, b, c, d); }
+                                    tint-keys(a, b) => { root.tint-keys(a, b); }
+                                    tint-release => { root.tint-release(); }
+                                    hue-circle: root.hue-circle;
+                                    tint-changed => { root.tint-changed(); }
+                                    tint-reset => { root.tint-reset(); }
+                                    view-changed => { root.view-changed(); }
+                                }
+                                // The chosen mask's own Texture, Clarity,
+                                // Structure, Dehaze, and Sharpen: a look
+                                // control, put on at the finish from the bands
+                                // and the sharpen's delta the develop keeps
+                                // beside the picture.
+                                if section == "detail" && root.shown-tab == "Masks" && root.target > 0: DetailSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-detail <=> root.collapsed-detail;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    target-name <=> root.target-name;
+                                    detail-enabled <=> root.local-detail-enabled;
+                                    detail-texture <=> root.local-texture;
+                                    detail-clarity <=> root.local-clarity;
+                                    detail-structure <=> root.local-structure;
+                                    detail-dehaze <=> root.local-dehaze;
+                                    local: true;
+                                    detail-sharpen <=> root.local-sharpen;
+                                    develop-changed => { root.view-changed(); }
+                                }
+                                if section == "noise" && root.shown-tab == "Develop": NoiseSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    noise-enabled <=> root.noise-enabled;
+                                    collapsed-noise <=> root.collapsed-noise;
+                                    denoise <=> root.denoise;
+                                    denoise-strength <=> root.denoise-strength;
+                                    denoise-learned <=> root.denoise-learned;
+                                    denoise-tiers: root.denoise-tiers;
+                                    denoise-learned-strength <=> root.denoise-learned-strength;
+                                    denoise-learned-chroma-strength <=> root.denoise-learned-chroma-strength;
+                                    unavailable: root.noise-unavailable;
+                                    learned-unavailable: root.learned-unavailable;
+                                    again-shown: root.merge-again-shown;
+                                    again-tier <=> root.merge-again-tier;
+                                    merging: root.merge-running;
+                                    develop-changed => { root.develop-changed(); }
+                                    merge-again => { root.merge-again(); }
+                                }
+                                if section == "lens" && root.shown-tab == "Develop": LensSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    lens-enabled <=> root.lens-enabled;
+                                    collapsed-lens <=> root.collapsed-lens;
+                                    picking <=> root.picking;
+                                    pick-started(a) => { root.pick-started(a); }
+                                    hue-circle: root.hue-circle;
+                                    lens-profile: root.lens-profile;
+                                    lens-available: root.lens-available;
+                                    lens-database: root.lens-database;
+                                    lens-choice-labels: root.lens-choice-labels;
+                                    lens-choice-keys: root.lens-choice-keys;
+                                    lens-choice <=> root.lens-choice;
+                                    lens-choice-index <=> root.lens-choice-index;
+                                    lens-makers: root.lens-makers;
+                                    lens-maker-index <=> root.lens-maker-index;
+                                    lens-filter <=> root.lens-filter;
+                                    lens-rows-changed => { root.lens-rows-changed(); }
+                                    lens-profile-on <=> root.lens-profile-on;
+                                    lens-distortion <=> root.lens-distortion;
+                                    lens-ca <=> root.lens-ca;
+                                    lens-ca-measured: root.lens-ca-measured;
+                                    lens-vignetting <=> root.lens-vignetting;
+                                    lens-manual <=> root.lens-manual;
+                                    lens-ca-red <=> root.lens-ca-red;
+                                    lens-ca-blue <=> root.lens-ca-blue;
+                                    lens-auto-scale <=> root.lens-auto-scale;
+                                    lens-scale <=> root.lens-scale;
+                                    lens-defringe <=> root.lens-defringe;
+                                    lens-defringe-radius <=> root.lens-defringe-radius;
+                                    lens-defringe-threshold <=> root.lens-defringe-threshold;
+                                    lens-defringe-purple-center <=> root.lens-defringe-purple-center;
+                                    lens-defringe-purple-width <=> root.lens-defringe-purple-width;
+                                    lens-defringe-purple-amount <=> root.lens-defringe-purple-amount;
+                                    lens-defringe-green-center <=> root.lens-defringe-green-center;
+                                    lens-defringe-green-width <=> root.lens-defringe-green-width;
+                                    lens-defringe-green-amount <=> root.lens-defringe-green-amount;
+                                    fetch-lenses => { root.fetch-lenses(); }
+                                    develop-changed => { root.develop-changed(); }
+                                }
+                                // Local contrast, the Texture, Clarity, and
+                                // Structure of the engine's guided filter: a
+                                // develop op, so the worker runs it, after the
+                                // retouch and before the sharpen.
+                                if section == "detail" && root.shown-tab == "Develop": DetailSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-detail <=> root.collapsed-detail;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    detail-enabled <=> root.detail-enabled;
+                                    detail-texture <=> root.detail-texture;
+                                    detail-clarity <=> root.detail-clarity;
+                                    detail-structure <=> root.detail-structure;
+                                    detail-dehaze <=> root.detail-dehaze;
+                                    develop-changed => { root.develop-changed(); }
+                                }
+                                if section == "sharpen" && root.shown-tab == "Develop": SharpenSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-sharpen <=> root.collapsed-sharpen;
+                                    show-sharpen-mask <=> root.show-sharpen-mask;
+                                    sharpen <=> root.sharpen;
+                                    sharpen-auto-radius <=> root.sharpen-auto-radius;
+                                    sharpen-radius <=> root.sharpen-radius;
+                                    sharpen-iterations <=> root.sharpen-iterations;
+                                    sharpen-auto-threshold <=> root.sharpen-auto-threshold;
+                                    sharpen-threshold <=> root.sharpen-threshold;
+                                    sharpen-measured-radius: root.sharpen-measured-radius;
+                                    sharpen-measured-threshold: root.sharpen-measured-threshold;
+                                    view-changed => { root.view-changed(); }
+                                    develop-changed => { root.develop-changed(); }
+                                }
+                                // The unsharp mask on the finished picture,
+                                // after the tone work: the viewport's to draw.
+                                if section == "output-sharpen" && root.shown-tab == "Develop": OutputSharpenSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    output-sharpen-enabled <=> root.output-sharpen-enabled;
+                                    collapsed-output-sharpen <=> root.collapsed-output-sharpen;
+                                    output-sharpen-amount <=> root.output-sharpen-amount;
+                                    output-sharpen-radius <=> root.output-sharpen-radius;
+                                    output-sharpen-threshold <=> root.output-sharpen-threshold;
+                                    view-changed => { root.view-changed(); }
+                                }
+                                if section == "vignette" && root.shown-tab == "Develop": VignetteSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    vignette-enabled <=> root.vignette-enabled;
+                                    collapsed-vignette <=> root.collapsed-vignette;
+                                    vignette-amount <=> root.vignette-amount;
+                                    vignette-midpoint <=> root.vignette-midpoint;
+                                    vignette-feather <=> root.vignette-feather;
+                                    vignette-roundness <=> root.vignette-roundness;
+                                    view-changed => { root.view-changed(); }
+                                }
+                                if section == "grain" && root.shown-tab == "Develop": GrainSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    grain-enabled <=> root.grain-enabled;
+                                    collapsed-grain <=> root.collapsed-grain;
+                                    grain-amount <=> root.grain-amount;
+                                    grain-size <=> root.grain-size;
+                                    grain-kind <=> root.grain-kind;
+                                    view-changed => { root.view-changed(); }
+                                }
+                                if section == "proof" && root.shown-tab == "Develop": ProofSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-proof <=> root.collapsed-proof;
+                                    proofing <=> root.proofing;
+                                    proof-profile <=> root.proof-profile;
+                                    proof-file <=> root.proof-file;
+                                    proof-intent <=> root.proof-intent;
+                                    gamut-warning <=> root.gamut-warning;
+                                    proof-changed => { root.proof-changed(); }
+                                    choose-proof-file => { root.choose-proof-file(); }
+                                }
+                                if section == "monitor" && root.shown-tab == "Develop": MonitorSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-monitor <=> root.collapsed-monitor;
+                                    display-profile <=> root.display-profile;
+                                    display-monitor <=> root.display-monitor;
+                                    display-file <=> root.display-file;
+                                    monitors: root.monitors;
+                                    display-note: root.display-note;
+                                    display-changed => { root.display-changed(); }
+                                    choose-display-file => { root.choose-display-file(); }
+                                    canvas-choice <=> root.canvas-choice;
+                                    canvas-colors: root.canvas-colors;
+                                    canvas-changed => { root.canvas-changed(); }
+                                }
+                                if section == "demosaic" && root.shown-tab == "Develop": DemosaicSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    collapsed-demosaic <=> root.collapsed-demosaic;
+                                    raw-input: root.raw-input;
+                                    source-note: root.source-note;
+                                    demosaic <=> root.demosaic;
+                                    demosaics: root.demosaics;
+                                    menu-hint: root.demosaic-hint;
+                                    picked(v) => { root.demosaic-picked(v); }
+                                }
+                                // The selection's title and keywords, last on
+                                // the Develop tab unless moved: not part of the
+                                // develop, but within reach of the frame being
+                                // worked on.
+                                if section == "metadata" && root.shown-tab == "Develop": MetaSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    frame-meta-on: root.frame-meta-on;
+                                    frame-title: root.frame-title;
+                                    frame-title-mixed: root.frame-title-mixed;
+                                    title-text <=> root.title-text;
+                                    title-dirty <=> root.title-dirty;
+                                    frame-keywords: root.frame-keywords;
+                                    keyword-text <=> root.keyword-text;
+                                    keyword-completions <=> root.keyword-completions;
+                                    keyword-pick <=> root.keyword-pick;
+                                    set-count: root.set-count;
+                                    collapsed-metadata <=> root.collapsed-metadata;
+                                    opened-alone => { root.alone-with-cull(); }
+                                    title-edited(t) => { root.title-edited(t); }
+                                    keyword-typed(t) => { root.keyword-typed(t); }
+                                    keyword-added(t) => { root.keyword-added(t); }
+                                    keyword-removed(t) => { root.keyword-removed(t); }
+                                    keyword-focused => { root.keyword-focused(); }
+                                    focus-keys => { keys.focus(); }
+                                }
+                            }
                         }
-                        // Global only: a mask carries a look, and a
-                        // picture is mono or it is not, so this one
-                        // is not offered on the Masks tab.
-                        if root.shown-tab == "Develop": BlackWhiteSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-bw <=> root.collapsed-bw;
-                            band-colors: root.band-colors;
-                            dull: root.dull;
-                            bw-enabled <=> root.bw-enabled;
-                            bw-band <=> root.bw-band;
-                            bw-weight <=> root.bw-weight;
-                            bw-strength <=> root.bw-strength;
-                            bw-filter <=> root.bw-filter;
-                            bw-band-changed => { root.bw-band-changed(); }
-                            bw-changed => { root.bw-changed(); }
-                            bw-filter-changed => { root.bw-filter-changed(); }
-                            bw-reset => { root.bw-reset(); }
-                            view-changed => { root.view-changed(); }
+                        if root.shown-tab == "Crop": crop-stack := SectionStack {
+                            view: "crop";
+                            count: root.crop-order.length;
+                            movable: root.crop-order.length > 1;
+                            viewport-x: panel-view.absolute-position.x;
+                            viewport-y: panel-view.absolute-position.y;
+                            viewport-width: panel-view.width;
+                            viewport-height: panel-view.visible-height;
+                            started => { keys.focus(); }
+                            moved-section(v, from, to, next) => { root.section-moved(v, from, to, next); }
+                            scroll-by(d) => {
+                                root.panel-scroll = clamp(root.panel-scroll + d,
+                                    min(0px, panel-view.visible-height - panel-view.content-height), 0px);
+                            }
+                            for section[i] in root.crop-order: SectionSlot {
+                                index: i;
+                                drag: crop-stack.state;
+                                consider(at, top) => { crop-stack.consider(at, top); }
+                                // The Crop tab in three: what is kept, which way
+                                // up it is, and the keystone. One section held
+                                // them all until the guide's buttons arrived and
+                                // the perspective's own heading began to read as
+                                // a second section inside the first.
+                                if section == "crop": CropSection {
+                                    reorderable: crop-stack.movable;
+                                    reorder-started => { crop-stack.start(i); }
+                                    reorder-moved(x, y) => { crop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return crop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    crop-mode <=> root.crop-mode;
+                                    level-mode <=> root.level-mode;
+                                    guide-mode <=> root.guide-mode;
+                                    collapsed-crop <=> root.collapsed-crop;
+                                    aspect-name <=> root.aspect-name;
+                                    aspect-custom <=> root.aspect-custom;
+                                    portrait <=> root.portrait;
+                                    portrait-shown: root.portrait-shown;
+                                    portrait-live: root.portrait-live;
+                                    crop-draw-armed <=> root.crop-draw-armed;
+                                    crop-clicked => { root.crop-in-or-out(); }
+                                    crop-toggled => { root.crop-toggled(); }
+                                    geometry-changed => { root.geometry-changed(); }
+                                    guide-dropped => { root.guide-dropped(); }
+                                    focus-keys => { keys.focus(); }
+                                }
+                                if section == "rotate": RotateSection {
+                                    reorderable: crop-stack.movable;
+                                    reorder-started => { crop-stack.start(i); }
+                                    reorder-moved(x, y) => { crop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return crop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    frame-turned(a) => { root.frame-turned(a); }
+                                    crop-mode <=> root.crop-mode;
+                                    level-mode <=> root.level-mode;
+                                    guide-mode <=> root.guide-mode;
+                                    collapsed-rotate <=> root.collapsed-rotate;
+                                    geo-angle <=> root.geo-angle;
+                                    angle-dragging <=> root.angle-dragging;
+                                    geometry-turned(a) => { root.geometry-turned(a); }
+                                    geometry-flipped(a) => { root.geometry-flipped(a); }
+                                    crop-toggled => { root.crop-toggled(); }
+                                    geometry-changed => { root.geometry-changed(); }
+                                    guide-dropped => { root.guide-dropped(); }
+                                    straightened => { root.straightened(); }
+                                    focus-keys => { keys.focus(); }
+                                }
+                                // The keystone: the camera's tilt, up or to the
+                                // right positive, for a lens whose focal length
+                                // is the frame's half side.
+                                if section == "perspective": PerspectiveSection {
+                                    reorderable: crop-stack.movable;
+                                    reorder-started => { crop-stack.start(i); }
+                                    reorder-moved(x, y) => { crop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return crop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    crop-mode <=> root.crop-mode;
+                                    level-mode <=> root.level-mode;
+                                    guide-mode <=> root.guide-mode;
+                                    collapsed-perspective <=> root.collapsed-perspective;
+                                    geo-vertical <=> root.geo-vertical;
+                                    geo-horizontal <=> root.geo-horizontal;
+                                    crop-toggled => { root.crop-toggled(); }
+                                    geometry-changed => { root.geometry-changed(); }
+                                    geometry-reset => { root.geometry-reset(); }
+                                    guide-dropped => { root.guide-dropped(); }
+                                    focus-keys => { keys.focus(); }
+                                }
+                            }
                         }
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): GradingSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-grading <=> root.collapsed-grading;
-                            opened-alone => { root.alone-with-masks(); }
-                            target-name <=> root.target-name;
-                            grading-enabled <=> root.grading-enabled;
-                            grade-range <=> root.grade-range;
-                            grade-hue <=> root.grade-hue;
-                            grade-saturation <=> root.grade-saturation;
-                            grade-balance <=> root.grade-balance;
-                            grade-images: root.grade-images;
-                            grade-big <=> root.grade-big;
-                            wheel-hand: root.wheel-hand;
-                            wheel-guide: root.wheel-guide;
-                            grade-press(a, b, c, d, e) => { root.grade-press(a, b, c, d, e); }
-                            grade-move(a, b, c, d, e) => { root.grade-move(a, b, c, d, e); }
-                            grade-keys(a, b, c) => { root.grade-keys(a, b, c); }
-                            grade-release => { root.grade-release(); }
-                            grade-double(a) => { root.grade-double(a); }
-                            grade-chose(a) => { root.grade-chose(a); }
-                            grade-changed => { root.grade-changed(); }
-                            grade-reset => { root.grade-reset(); }
-                            view-changed => { root.view-changed(); }
-                        }
-                        // A tint toward one hue, the last thing the
-                        // Oklab pass does: Lightroom's local Color,
-                        // and a look's, so the global picture and
-                        // every mask can carry one, each with its
-                        // switch.
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): TintSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-tint <=> root.collapsed-tint;
-                            opened-alone => { root.alone-with-masks(); }
-                            target-name <=> root.target-name;
-                            tint-enabled <=> root.tint-enabled;
-                            tint-hue <=> root.tint-hue;
-                            tint-amount <=> root.tint-amount;
-                            tint-color: root.tint-color;
-                            tint-image: root.tint-image;
-                            tint-hue-text: root.tint-hue-text;
-                            in-hand: root.wheel-hand == 3;
-                            guide: root.wheel-hand == 3 ? root.wheel-guide : { kind: 0 };
-                            tint-press(a, b, c, d) => { root.tint-press(a, b, c, d); }
-                            tint-move(a, b, c, d) => { root.tint-move(a, b, c, d); }
-                            tint-keys(a, b) => { root.tint-keys(a, b); }
-                            tint-release => { root.tint-release(); }
-                            hue-circle: root.hue-circle;
-                            tint-changed => { root.tint-changed(); }
-                            tint-reset => { root.tint-reset(); }
-                            view-changed => { root.view-changed(); }
-                        }
-                        // The chosen mask's own Texture, Clarity,
-                        // Structure, Dehaze, and Sharpen: a look
-                        // control, put on at the finish from the bands
-                        // and the sharpen's delta the develop keeps
-                        // beside the picture.
-                        if root.shown-tab == "Masks" && root.target > 0: DetailSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-detail <=> root.collapsed-detail;
-                            opened-alone => { root.alone-with-masks(); }
-                            target-name <=> root.target-name;
-                            detail-enabled <=> root.local-detail-enabled;
-                            detail-texture <=> root.local-texture;
-                            detail-clarity <=> root.local-clarity;
-                            detail-structure <=> root.local-structure;
-                            detail-dehaze <=> root.local-dehaze;
-                            local: true;
-                            detail-sharpen <=> root.local-sharpen;
-                            develop-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": NoiseSection {
-                            one-of-panel: !root.grid-open;
-                            noise-enabled <=> root.noise-enabled;
-                            collapsed-noise <=> root.collapsed-noise;
-                            denoise <=> root.denoise;
-                            denoise-strength <=> root.denoise-strength;
-                            denoise-learned <=> root.denoise-learned;
-                            denoise-tiers: root.denoise-tiers;
-                            denoise-learned-strength <=> root.denoise-learned-strength;
-                            denoise-learned-chroma-strength <=> root.denoise-learned-chroma-strength;
-                            unavailable: root.noise-unavailable;
-                            learned-unavailable: root.learned-unavailable;
-                            again-shown: root.merge-again-shown;
-                            again-tier <=> root.merge-again-tier;
-                            merging: root.merge-running;
-                            develop-changed => { root.develop-changed(); }
-                            merge-again => { root.merge-again(); }
-                        }
-                        if root.shown-tab == "Develop": LensSection {
-                            one-of-panel: !root.grid-open;
-                            lens-enabled <=> root.lens-enabled;
-                            collapsed-lens <=> root.collapsed-lens;
-                            picking <=> root.picking;
-                            pick-started(a) => { root.pick-started(a); }
-                            hue-circle: root.hue-circle;
-                            lens-profile: root.lens-profile;
-                            lens-available: root.lens-available;
-                            lens-database: root.lens-database;
-                            lens-choice-labels: root.lens-choice-labels;
-                            lens-choice-keys: root.lens-choice-keys;
-                            lens-choice <=> root.lens-choice;
-                            lens-choice-index <=> root.lens-choice-index;
-                            lens-makers: root.lens-makers;
-                            lens-maker-index <=> root.lens-maker-index;
-                            lens-filter <=> root.lens-filter;
-                            lens-rows-changed => { root.lens-rows-changed(); }
-                            lens-profile-on <=> root.lens-profile-on;
-                            lens-distortion <=> root.lens-distortion;
-                            lens-ca <=> root.lens-ca;
-                            lens-ca-measured: root.lens-ca-measured;
-                            lens-vignetting <=> root.lens-vignetting;
-                            lens-manual <=> root.lens-manual;
-                            lens-ca-red <=> root.lens-ca-red;
-                            lens-ca-blue <=> root.lens-ca-blue;
-                            lens-auto-scale <=> root.lens-auto-scale;
-                            lens-scale <=> root.lens-scale;
-                            lens-defringe <=> root.lens-defringe;
-                            lens-defringe-radius <=> root.lens-defringe-radius;
-                            lens-defringe-threshold <=> root.lens-defringe-threshold;
-                            lens-defringe-purple-center <=> root.lens-defringe-purple-center;
-                            lens-defringe-purple-width <=> root.lens-defringe-purple-width;
-                            lens-defringe-purple-amount <=> root.lens-defringe-purple-amount;
-                            lens-defringe-green-center <=> root.lens-defringe-green-center;
-                            lens-defringe-green-width <=> root.lens-defringe-green-width;
-                            lens-defringe-green-amount <=> root.lens-defringe-green-amount;
-                            fetch-lenses => { root.fetch-lenses(); }
-                            develop-changed => { root.develop-changed(); }
-                        }
-                        // Local contrast, the Texture, Clarity, and
-                        // Structure of the engine's guided filter: a
-                        // develop op, so the worker runs it, after the
-                        // retouch and before the sharpen.
-                        if root.shown-tab == "Develop": DetailSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-detail <=> root.collapsed-detail;
-                            opened-alone => { root.alone-with-masks(); }
-                            detail-enabled <=> root.detail-enabled;
-                            detail-texture <=> root.detail-texture;
-                            detail-clarity <=> root.detail-clarity;
-                            detail-structure <=> root.detail-structure;
-                            detail-dehaze <=> root.detail-dehaze;
-                            develop-changed => { root.develop-changed(); }
-                        }
-                        if root.shown-tab == "Develop": SharpenSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-sharpen <=> root.collapsed-sharpen;
-                            show-sharpen-mask <=> root.show-sharpen-mask;
-                            sharpen <=> root.sharpen;
-                            sharpen-auto-radius <=> root.sharpen-auto-radius;
-                            sharpen-radius <=> root.sharpen-radius;
-                            sharpen-iterations <=> root.sharpen-iterations;
-                            sharpen-auto-threshold <=> root.sharpen-auto-threshold;
-                            sharpen-threshold <=> root.sharpen-threshold;
-                            sharpen-measured-radius: root.sharpen-measured-radius;
-                            sharpen-measured-threshold: root.sharpen-measured-threshold;
-                            view-changed => { root.view-changed(); }
-                            develop-changed => { root.develop-changed(); }
-                        }
-                        // The unsharp mask on the finished picture,
-                        // after the tone work: the viewport's to draw.
-                        if root.shown-tab == "Develop": OutputSharpenSection {
-                            one-of-panel: !root.grid-open;
-                            output-sharpen-enabled <=> root.output-sharpen-enabled;
-                            collapsed-output-sharpen <=> root.collapsed-output-sharpen;
-                            output-sharpen-amount <=> root.output-sharpen-amount;
-                            output-sharpen-radius <=> root.output-sharpen-radius;
-                            output-sharpen-threshold <=> root.output-sharpen-threshold;
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": VignetteSection {
-                            one-of-panel: !root.grid-open;
-                            vignette-enabled <=> root.vignette-enabled;
-                            collapsed-vignette <=> root.collapsed-vignette;
-                            vignette-amount <=> root.vignette-amount;
-                            vignette-midpoint <=> root.vignette-midpoint;
-                            vignette-feather <=> root.vignette-feather;
-                            vignette-roundness <=> root.vignette-roundness;
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": GrainSection {
-                            one-of-panel: !root.grid-open;
-                            grain-enabled <=> root.grain-enabled;
-                            collapsed-grain <=> root.collapsed-grain;
-                            grain-amount <=> root.grain-amount;
-                            grain-size <=> root.grain-size;
-                            grain-kind <=> root.grain-kind;
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": ProofSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-proof <=> root.collapsed-proof;
-                            proofing <=> root.proofing;
-                            proof-profile <=> root.proof-profile;
-                            proof-file <=> root.proof-file;
-                            proof-intent <=> root.proof-intent;
-                            gamut-warning <=> root.gamut-warning;
-                            proof-changed => { root.proof-changed(); }
-                            choose-proof-file => { root.choose-proof-file(); }
-                        }
-                        if root.shown-tab == "Develop": MonitorSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-monitor <=> root.collapsed-monitor;
-                            display-profile <=> root.display-profile;
-                            display-monitor <=> root.display-monitor;
-                            display-file <=> root.display-file;
-                            monitors: root.monitors;
-                            display-note: root.display-note;
-                            display-changed => { root.display-changed(); }
-                            choose-display-file => { root.choose-display-file(); }
-                            canvas-choice <=> root.canvas-choice;
-                            canvas-colors: root.canvas-colors;
-                            canvas-changed => { root.canvas-changed(); }
-                        }
-                        // The Crop tab in three: what is kept, which way
-                        // up it is, and the keystone. One section held
-                        // them all until the guide's buttons arrived and
-                        // the perspective's own heading began to read as
-                        // a second section inside the first.
-                        if root.shown-tab == "Crop": CropSection {
-                            one-of-panel: !root.grid-open;
-                            crop-mode <=> root.crop-mode;
-                            level-mode <=> root.level-mode;
-                            guide-mode <=> root.guide-mode;
-                            collapsed-crop <=> root.collapsed-crop;
-                            aspect-name <=> root.aspect-name;
-                            aspect-custom <=> root.aspect-custom;
-                            portrait <=> root.portrait;
-                            portrait-shown: root.portrait-shown;
-                            portrait-live: root.portrait-live;
-                            crop-draw-armed <=> root.crop-draw-armed;
-                            crop-clicked => { root.crop-in-or-out(); }
-                            crop-toggled => { root.crop-toggled(); }
-                            geometry-changed => { root.geometry-changed(); }
-                            guide-dropped => { root.guide-dropped(); }
-                            focus-keys => { keys.focus(); }
-                        }
-                        if root.shown-tab == "Crop": RotateSection {
-                            one-of-panel: !root.grid-open;
-                            frame-turned(a) => { root.frame-turned(a); }
-                            crop-mode <=> root.crop-mode;
-                            level-mode <=> root.level-mode;
-                            guide-mode <=> root.guide-mode;
-                            collapsed-rotate <=> root.collapsed-rotate;
-                            geo-angle <=> root.geo-angle;
-                            angle-dragging <=> root.angle-dragging;
-                            geometry-turned(a) => { root.geometry-turned(a); }
-                            geometry-flipped(a) => { root.geometry-flipped(a); }
-                            crop-toggled => { root.crop-toggled(); }
-                            geometry-changed => { root.geometry-changed(); }
-                            guide-dropped => { root.guide-dropped(); }
-                            straightened => { root.straightened(); }
-                            focus-keys => { keys.focus(); }
-                        }
-                        // The keystone: the camera's tilt, up or to the
-                        // right positive, for a lens whose focal length
-                        // is the frame's half side.
-                        if root.shown-tab == "Crop": PerspectiveSection {
-                            one-of-panel: !root.grid-open;
-                            crop-mode <=> root.crop-mode;
-                            level-mode <=> root.level-mode;
-                            guide-mode <=> root.guide-mode;
-                            collapsed-perspective <=> root.collapsed-perspective;
-                            geo-vertical <=> root.geo-vertical;
-                            geo-horizontal <=> root.geo-horizontal;
-                            crop-toggled => { root.crop-toggled(); }
-                            geometry-changed => { root.geometry-changed(); }
-                            geometry-reset => { root.geometry-reset(); }
-                            guide-dropped => { root.guide-dropped(); }
-                            focus-keys => { keys.focus(); }
-                        }
-                        if root.shown-tab == "Develop": DemosaicSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-demosaic <=> root.collapsed-demosaic;
-                            raw-input: root.raw-input;
-                            source-note: root.source-note;
-                            demosaic <=> root.demosaic;
-                            demosaics: root.demosaics;
-                            menu-hint: root.demosaic-hint;
-                            picked(v) => { root.demosaic-picked(v); }
-                        }
-                        // The selection's title and keywords, last on
-                        // the Develop tab: not part of the develop, but
-                        // within reach of the frame being worked on.
-                        if root.shown-tab == "Develop": MetaSection {
-                            one-of-panel: !root.grid-open;
-                            frame-meta-on: root.frame-meta-on;
-                            frame-title: root.frame-title;
-                            frame-title-mixed: root.frame-title-mixed;
-                            title-text <=> root.title-text;
-                            title-dirty <=> root.title-dirty;
-                            frame-keywords: root.frame-keywords;
-                            keyword-text <=> root.keyword-text;
-                            keyword-completions <=> root.keyword-completions;
-                            keyword-pick <=> root.keyword-pick;
-                            set-count: root.set-count;
-                            collapsed-metadata <=> root.collapsed-metadata;
-                            opened-alone => { root.alone-with-cull(); }
-                            title-edited(t) => { root.title-edited(t); }
-                            keyword-typed(t) => { root.keyword-typed(t); }
-                            keyword-added(t) => { root.keyword-added(t); }
-                            keyword-removed(t) => { root.keyword-removed(t); }
-                            keyword-focused => { root.keyword-focused(); }
-                            focus-keys => { keys.focus(); }
-                        }
-                        if root.shown-tab == "Retouch": RetouchSection {
-                            one-of-panel: !root.grid-open;
-                            retouch-enabled <=> root.retouch-enabled;
-                            collapsed-retouch <=> root.collapsed-retouch;
-                            develop-changed => { root.develop-changed(); }
-                            retouch-mode <=> root.retouch-mode;
-                            patch-size <=> root.patch-size;
-                            patch-feather <=> root.patch-feather;
-                            patch-opacity <=> root.patch-opacity;
-                            patch-names <=> root.patch-names;
-                            patch <=> root.patch;
-                            patch-varies <=> root.patch-varies;
-                            fill-shown: root.fill-shown;
-                            fill-choice <=> root.fill-choice;
-                            fill-why-not: root.fill-why-not;
-                            fill-chosen(c) => { root.fill-chosen(c); }
-                            fill-painted: root.fill-here;
-                            fill-generate => { root.fill-generate(); }
-                            patch-sliding <=> root.patch-sliding;
-                            patch-settled => { root.patch-settled(); }
-                            retouch-toggled(a) => { root.retouch-toggled(a); }
-                            patch-changed(a) => { root.patch-changed(a); }
-                            patch-lit <=> root.patch-lit;
-                            lit-changed => { root.lit-changed(); }
-                            delete-patch => { root.delete-patch(); }
-                            patch-edited => { root.patch-edited(); }
-                            patch-another => { root.patch-another(); }
+                        if root.shown-tab == "Retouch": retouch-stack := SectionStack {
+                            view: "retouch";
+                            count: root.retouch-order.length;
+                            movable: root.retouch-order.length > 1;
+                            viewport-x: panel-view.absolute-position.x;
+                            viewport-y: panel-view.absolute-position.y;
+                            viewport-width: panel-view.width;
+                            viewport-height: panel-view.visible-height;
+                            started => { keys.focus(); }
+                            moved-section(v, from, to, next) => { root.section-moved(v, from, to, next); }
+                            scroll-by(d) => {
+                                root.panel-scroll = clamp(root.panel-scroll + d,
+                                    min(0px, panel-view.visible-height - panel-view.content-height), 0px);
+                            }
+                            for section[i] in root.retouch-order: SectionSlot {
+                                index: i;
+                                drag: retouch-stack.state;
+                                consider(at, top) => { retouch-stack.consider(at, top); }
+                                if section == "retouch": RetouchSection {
+                                    reorderable: retouch-stack.movable;
+                                    reorder-started => { retouch-stack.start(i); }
+                                    reorder-moved(x, y) => { retouch-stack.move(x, y); }
+                                    reorder-ended(commit) => { return retouch-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    retouch-enabled <=> root.retouch-enabled;
+                                    collapsed-retouch <=> root.collapsed-retouch;
+                                    develop-changed => { root.develop-changed(); }
+                                    retouch-mode <=> root.retouch-mode;
+                                    patch-size <=> root.patch-size;
+                                    patch-feather <=> root.patch-feather;
+                                    patch-opacity <=> root.patch-opacity;
+                                    patch-names <=> root.patch-names;
+                                    patch <=> root.patch;
+                                    patch-varies <=> root.patch-varies;
+                                    fill-shown: root.fill-shown;
+                                    fill-choice <=> root.fill-choice;
+                                    fill-why-not: root.fill-why-not;
+                                    fill-chosen(c) => { root.fill-chosen(c); }
+                                    fill-painted: root.fill-here;
+                                    fill-generate => { root.fill-generate(); }
+                                    patch-sliding <=> root.patch-sliding;
+                                    patch-settled => { root.patch-settled(); }
+                                    retouch-toggled(a) => { root.retouch-toggled(a); }
+                                    patch-changed(a) => { root.patch-changed(a); }
+                                    patch-lit <=> root.patch-lit;
+                                    lit-changed => { root.lit-changed(); }
+                                    delete-patch => { root.delete-patch(); }
+                                    patch-edited => { root.patch-edited(); }
+                                    patch-another => { root.patch-another(); }
+                                }
+                            }
                         }
                     }
                 }
@@ -5217,7 +5553,7 @@ export component App inherits Window {
         // so nothing here can raise the window's minimum
         // height past the screen's (see the note above about
         // Windows leaving fullscreen).
-        ScrollPane {
+        left-sections-view := ScrollPane {
             // This pane only scrolls vertically. The Flickable would
             // otherwise infer a wider content area from its children.
             content-width: self.visible-width;
@@ -5347,298 +5683,325 @@ export component App inherits Window {
                         wrap: word-wrap;
                     }
                 }
-                // The library's roots, with the grid: a row a root.
-                if root.grid-open: RootsSection {
-                    boxed: false;
-                    vertical-stretch: 0;
-                    roots: root.library-roots;
-                    all-on: root.library-all-on;
-                    all-count: root.library-all-count;
-                    can-add-open: root.library-can-add-open;
-                    empty-note: root.library-note;
-                    ctrl-click-menu: root.ctrl-click-menu;
-                    collapsed-roots <=> root.collapsed-roots;
-                    picked(p) => { root.commit-title(); root.library-root-picked(p); }
-                    removed(p) => { root.library-root-removed(p); }
-                    add => { root.library-root-add(); }
-                    add-open => { root.library-root-add-open(); }
-                    rename(p) => { root.library-root-rename(p); }
-                    archive-toggled(p) => { root.library-root-archive(p); }
-                    focus-keys => { keys.focus(); }
-                    menu-done => { root.menu-done(); }
-                    menu-shown => { return root.menu-shown(); }
-                    quiet: root.sheet-open();
-                    tip(t, x, y) => { root.tip-at(t, x, y); }
-                }
-                // The open root's folder tree, from the index.
-                // Its share of the pane's height (see `share-folders`):
-                // the section's own bounds, its weight, how it lies now.
-                if root.folder-tree-shown: Rectangle {
-                    min-height: folders-section.min-height;
-                    preferred-height: folders-section.preferred-height;
-                    max-height: folders-section.max-height;
-                    min-width: folders-section.min-width;
-                    preferred-width: folders-section.preferred-width;
-                    vertical-stretch: root.share-folders;
-                    property <length> grown: self.height - folders-section.preferred-height;
-                    property <length> room: folders-section.max-height - self.height;
-                    // Told only when a gap asks (a hover, a press, or a release): a
-                    // handler on the height itself would lay the section out
-                    // as it is made, and its fold would then move as its list
-                    // first fills.
-                    property <int> asked: root.share-ask;
-                    changed asked => { root.share-laid(0, self.grown, self.room); }
-                    folders-section := FoldersSection {
-                        boxed: false;
-                        rows: root.folder-tree;
-                        subfolders <=> root.folder-tree-subfolders;
-                        collapsed-folders <=> root.collapsed-folders;
-                        animated <=> root.folders-animated;
-                        picked(p) => { root.commit-title(); root.folder-tree-picked(p); }
-                        folded(p) => { root.folder-tree-folded(p); }
-                        subfolders-changed => { root.folder-tree-subfolders-changed(); }
-                        focus-keys => { keys.focus(); }
+                // The lists, in the view's order (`panel::order`): Library's
+                // with the grid, the Loupe's without. The stack takes the
+                // room the lists share, and gives each its weight in it.
+                // None on show (culling with no tree), no stack, so no
+                // gap for it at the foot either.
+                if root.left-shown-count() > 0: left-stack := SectionStack {
+                    vertical-stretch: 1;
+                    view: root.grid-open ? "library" : "loupe";
+                    count: root.left-order.length;
+                    movable: root.left-movable();
+                    viewport-x: left-sections-view.absolute-position.x;
+                    viewport-y: left-sections-view.absolute-position.y;
+                    viewport-width: left-sections-view.visible-width;
+                    viewport-height: left-sections-view.visible-height;
+                    started => { keys.focus(); }
+                    moved-section(v, from, to, next) => { root.section-moved(v, from, to, next); }
+                    scroll-by(d) => {
+                        left-sections-view.content-y = clamp(left-sections-view.content-y + d,
+                            min(0px, left-sections-view.visible-height - left-sections-view.content-height), 0px);
                     }
-                }
-                // The collections, beside the roots and the folders.
-                // Its share of the pane's height (see `share-folders`):
-                // the section's own bounds, its weight, how it lies now.
-                if root.grid-open: Rectangle {
-                    min-height: collections-section.min-height;
-                    preferred-height: collections-section.preferred-height;
-                    max-height: collections-section.max-height;
-                    min-width: collections-section.min-width;
-                    preferred-width: collections-section.preferred-width;
-                    vertical-stretch: root.share-collections;
-                    property <length> grown: self.height - collections-section.preferred-height;
-                    property <length> room: collections-section.max-height - self.height;
-                    // Told only when a gap asks (a hover, a press, or a release): a
-                    // handler on the height itself would lay the section out
-                    // as it is made, and its fold would then move as its list
-                    // first fills.
-                    property <int> asked: root.share-ask;
-                    changed asked => { root.share-laid(1, self.grown, self.room); }
-                    collections-section := CollectionsSection {
+                    for section[i] in root.left-order: SectionSlot {
+                        index: i;
+                        drag: left-stack.state;
+                        consider(at, top) => { left-stack.consider(at, top); }
                         boxed: false;
-                        collections: root.collections;
-                        ctrl-click-menu: root.ctrl-click-menu;
-                        collapsed-collections <=> root.collapsed-collections;
-                        picked(id) => { root.commit-title(); root.collection-picked(id); }
-                        rename(id) => { root.collection-rename(id); }
-                        delete(id) => { root.collection-delete(id); }
-                        capture-toggled(id) => { root.collection-capture(id); }
-                        forget-missing(id) => { root.collection-forget-missing(id); }
-                        forgettable(id) => { return root.collection-forgettable(id); }
-                        add => { root.collection-new(); }
-                        focus-keys => { keys.focus(); }
-                        menu-done => { root.menu-done(); }
-                        menu-shown => { return root.menu-shown(); }
-                    }
-                    // The gap above, to the list there, when both are open.
-                    if root.folder-tree-shown && !root.collapsed-folders && !root.collapsed-collections: DragEdge {
-                        y: -Theme.space-2;
-                        width: 100%;
-                        height: Theme.space-2;
-                        live: root.share-live(0, 1);
-                        hovering => { root.share-ask += 1; }
-                        started => { root.share-press(0, 1); }
-                        dragged(d) => { root.share-drag(d); }
-                        evened => { root.share-even(0, 1); }
-                    }
-                }
-                // The frames waiting to be exported, a listing of their
-                // own: below the collections rather than among the
-                // roots, since it is no folder, and in no section, so
-                // folding one never hides the one way into its view.
-                if root.grid-open: RootRow {
-                    vertical-stretch: 0;
-                    text: @tr("Export queue");
-                    count: root.queue-view-count;
-                    on: root.queue-view-on;
-                    menu-shown => { return root.menu-shown(); }
-                    clicked => { root.commit-title(); root.queue-view-picked(); keys.focus(); }
-                }
-                // The selection's title and keywords, over the grid,
-                // which covers the panel where they are otherwise:
-                // the grid is where a set is chosen to be named. Below
-                // the roots, folders and collections, which say where
-                // the user is; this says what is chosen there.
-                if root.grid-open: MetaSection {
-                    boxed: false;
-                    vertical-stretch: 0;
-                    frame-meta-on: root.frame-meta-on;
-                    frame-title: root.frame-title;
-                    frame-title-mixed: root.frame-title-mixed;
-                    title-text <=> root.title-text;
-                    title-dirty <=> root.title-dirty;
-                    frame-keywords: root.frame-keywords;
-                    keyword-text <=> root.keyword-text;
-                    keyword-completions <=> root.keyword-completions;
-                    keyword-pick <=> root.keyword-pick;
-                    set-count: root.set-count;
-                    collapsed-metadata <=> root.collapsed-metadata;
-                    title-edited(t) => { root.title-edited(t); }
-                    keyword-typed(t) => { root.keyword-typed(t); }
-                    keyword-added(t) => { root.keyword-added(t); }
-                    keyword-removed(t) => { root.keyword-removed(t); }
-                    keyword-focused => { root.keyword-focused(); }
-                    focus-keys => { keys.focus(); }
-                }
-                // The presets: a click lays one over the edit, the
-                // bin removes it, and the edit is saved or a
-                // Lightroom preset brought in below the list. Not
-                // in culling, as the snapshots and the history.
-                // Its share of the pane's height (see `share-folders`):
-                // the section's own bounds, its weight, how it lies now.
-                if !root.cull-mode && !root.grid-open && !root.frozen: Rectangle {
-                    min-height: presets-section.min-height;
-                    preferred-height: presets-section.preferred-height;
-                    max-height: presets-section.max-height;
-                    min-width: presets-section.min-width;
-                    preferred-width: presets-section.preferred-width;
-                    vertical-stretch: root.share-presets;
-                    property <length> grown: self.height - presets-section.preferred-height;
-                    property <length> room: presets-section.max-height - self.height;
-                    // Told only when a gap asks (a hover, a press, or a release): a
-                    // handler on the height itself would lay the section out
-                    // as it is made, and its fold would then move as its list
-                    // first fills.
-                    property <int> asked: root.share-ask;
-                    changed asked => { root.share-laid(2, self.grown, self.room); }
-                    presets-section := PresetsSection {
-                        boxed: false;
-                        selected <=> root.selected;
-                        collapsed-presets <=> root.collapsed-presets;
-                        preset-names <=> root.preset-names;
-                        rows: root.preset-list-rows;
-                        groups: root.preset-groups;
-                        ctrl-click-menu: root.ctrl-click-menu;
-                        favorite-toggled(i) => { root.preset-favorite-toggled(i); }
-                        fold-toggled(k) => { root.preset-fold-toggled(k); }
-                        // A pick from the Move to group sub-menu, New group...
-                        // too, as the frame menu's New collection...: two
-                        // popups close at once, and `menu-done` gives the keys
-                        // back.
-                        moved(i, g) => { root.preset-moved(i, g); root.menu-done(); }
-                        ungrouped(i) => { root.preset-ungrouped(i); }
-                        // Rename group... is the top menu's: its sheet takes
-                        // the focus itself, which `menu-done`'s timer would
-                        // take back.
-                        group-rename(g) => {
-                            root.preset-group-rename(g);
-                            if (!root.preset-group-sheet-open) { root.menu-done(); }
+                        // The gap between two lists, which the share
+                        // edges sit in: drawn over a section, they would
+                        // take the presses at its foot. None above the
+                        // first, whose gap is the pane's.
+                        gap: root.left-before(i) != "" ? Theme.space-2 : 0px;
+                        spacing: Theme.space-2;
+                        stretch: root.share-index(section) >= 0 ? root.share-of(root.share-index(section)) : 0;
+                        // The gap above, to the list there, when both are open.
+                        resize-a: root.share-open(root.left-before(i)) ? root.share-index(root.left-before(i)) : -1;
+                        resize-b: root.share-open(section) ? root.share-index(section) : -1;
+                        resize-live: root.share-live(root.share-index(root.left-before(i)), root.share-index(section));
+                        resize-hovered => { root.share-ask += 1; }
+                        resize-started => { root.share-press(root.share-index(root.left-before(i)), root.share-index(section)); }
+                        resize-dragged(d) => { root.share-drag(d); }
+                        resize-evened => { root.share-even(root.share-index(root.left-before(i)), root.share-index(section)); }
+                        // The library's roots, with the grid: a row a root.
+                        if section == "roots" && root.grid-open: RootsSection {
+                            reorderable: left-stack.movable;
+                            reorder-started => { left-stack.start(i); }
+                            reorder-moved(x, y) => { left-stack.move(x, y); }
+                            reorder-ended(commit) => { return left-stack.end(commit); }
+                            boxed: false;
+                            vertical-stretch: 0;
+                            roots: root.library-roots;
+                            all-on: root.library-all-on;
+                            all-count: root.library-all-count;
+                            can-add-open: root.library-can-add-open;
+                            empty-note: root.library-note;
+                            ctrl-click-menu: root.ctrl-click-menu;
+                            collapsed-roots <=> root.collapsed-roots;
+                            picked(p) => { root.commit-title(); root.library-root-picked(p); }
+                            removed(p) => { root.library-root-removed(p); }
+                            add => { root.library-root-add(); }
+                            add-open => { root.library-root-add-open(); }
+                            rename(p) => { root.library-root-rename(p); }
+                            archive-toggled(p) => { root.library-root-archive(p); }
+                            focus-keys => { keys.focus(); }
+                            menu-done => { root.menu-done(); }
+                            menu-shown => { return root.menu-shown(); }
+                            quiet: root.sheet-open();
+                            tip(t, x, y) => { root.tip-at(t, x, y); }
                         }
-                        focus-keys => { keys.focus(); }
-                        menu-done => { root.menu-done(); }
-                        menu-shown => { return root.menu-shown(); }
-                        confirm-remove <=> root.preset-confirm-remove;
-                        preset-applied(a) => { root.preset-applied(a); }
-                        preset-deleted(a) => { root.preset-deleted(a); }
-                        preset-import => { root.preset-import(); }
-                        preset-save-open => { root.preset-save-open(); }
-                        set-count: root.set-count;
-                        sync-open-asked => { root.sync-open-asked(); }
-                    }
-                    // The gap above, to the list there, when both are open.
-                    if root.folder-tree-shown && !root.collapsed-folders && !root.collapsed-presets: DragEdge {
-                        y: -Theme.space-2;
-                        width: 100%;
-                        height: Theme.space-2;
-                        live: root.share-live(0, 2);
-                        hovering => { root.share-ask += 1; }
-                        started => { root.share-press(0, 2); }
-                        dragged(d) => { root.share-drag(d); }
-                        evened => { root.share-even(0, 2); }
-                    }
-                }
-                // The snapshots: whole states kept by name. A
-                // click restores one as a step; a double-click
-                // renames it; the bin removes it.
-                // Not in culling, where the panel is not the
-                // frame's and a step is the way out of the mode.
-                // Its share of the pane's height (see `share-folders`):
-                // the section's own bounds, its weight, how it lies now.
-                if !root.cull-mode && !root.grid-open && !root.frozen: Rectangle {
-                    min-height: snapshots-section.min-height;
-                    preferred-height: snapshots-section.preferred-height;
-                    max-height: snapshots-section.max-height;
-                    min-width: snapshots-section.min-width;
-                    preferred-width: snapshots-section.preferred-width;
-                    vertical-stretch: root.share-snapshots;
-                    property <length> grown: self.height - snapshots-section.preferred-height;
-                    property <length> room: snapshots-section.max-height - self.height;
-                    // Told only when a gap asks (a hover, a press, or a release): a
-                    // handler on the height itself would lay the section out
-                    // as it is made, and its fold would then move as its list
-                    // first fills.
-                    property <int> asked: root.share-ask;
-                    changed asked => { root.share-laid(3, self.grown, self.room); }
-                    snapshots-section := SnapshotsSection {
-                        boxed: false;
-                        selected <=> root.selected;
-                        snapshot-names <=> root.snapshot-names;
-                        snapshot-editing <=> root.snapshot-editing;
-                        snapshot-taken => { root.snapshot-taken(); }
-                        snapshot-restored(a) => { root.snapshot-restored(a); }
-                        snapshot-hovered(a, b) => { root.snapshot-hovered(a, b); }
-                        snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
-                        snapshot-deleted(a) => { root.snapshot-deleted(a); }
-                        collapsed-snapshots <=> root.collapsed-snapshots;
-                    }
-                    // The gap above, to the list there, when both are open.
-                    if !root.collapsed-presets && !root.collapsed-snapshots: DragEdge {
-                        y: -Theme.space-2;
-                        width: 100%;
-                        height: Theme.space-2;
-                        live: root.share-live(2, 3);
-                        hovering => { root.share-ask += 1; }
-                        started => { root.share-press(2, 3); }
-                        dragged(d) => { root.share-drag(d); }
-                        evened => { root.share-even(2, 3); }
-                    }
-                }
-                // The history: every step, newest first, the
-                // current one lit and the undone ones muted. A
-                // click makes a step current; what lies past it
-                // stays until the next change.
-                // Its share of the pane's height (see `share-folders`):
-                // the section's own bounds, its weight, how it lies now.
-                if !root.cull-mode && !root.grid-open && !root.frozen: Rectangle {
-                    min-height: history-section.min-height;
-                    preferred-height: history-section.preferred-height;
-                    max-height: history-section.max-height;
-                    min-width: history-section.min-width;
-                    preferred-width: history-section.preferred-width;
-                    vertical-stretch: root.share-history;
-                    property <length> grown: self.height - history-section.preferred-height;
-                    property <length> room: history-section.max-height - self.height;
-                    // Told only when a gap asks (a hover, a press, or a release): a
-                    // handler on the height itself would lay the section out
-                    // as it is made, and its fold would then move as its list
-                    // first fills.
-                    property <int> asked: root.share-ask;
-                    changed asked => { root.share-laid(4, self.grown, self.room); }
-                    history-section := HistorySection {
-                        boxed: false;
-                        history-rows <=> root.history-rows;
-                        hint: root.history-version;
-                        history-current <=> root.history-current;
-                        history-clicked(a) => { root.history-clicked(a); }
-                        history-hovered(a) => { root.history-hovered(a); }
-                        resettable: root.history-resettable;
-                        reset-asked => { root.history-reset(); }
-                        collapsed-history <=> root.collapsed-history;
-                    }
-                    // The gap above, to the list there, when both are open.
-                    if !root.collapsed-snapshots && !root.collapsed-history: DragEdge {
-                        y: -Theme.space-2;
-                        width: 100%;
-                        height: Theme.space-2;
-                        live: root.share-live(3, 4);
-                        hovering => { root.share-ask += 1; }
-                        started => { root.share-press(3, 4); }
-                        dragged(d) => { root.share-drag(d); }
-                        evened => { root.share-even(3, 4); }
+                        // The open root's folder tree, from the index.
+                        // Its share of the pane's height (see `share-folders`):
+                        // the section's own bounds, its weight, how it lies now.
+                        if section == "folders" && root.folder-tree-shown: Rectangle {
+                            min-height: folders-section.min-height;
+                            preferred-height: folders-section.preferred-height;
+                            max-height: folders-section.max-height;
+                            min-width: folders-section.min-width;
+                            preferred-width: folders-section.preferred-width;
+                            vertical-stretch: root.share-folders;
+                            property <length> grown: self.height - folders-section.preferred-height;
+                            property <length> room: folders-section.max-height - self.height;
+                            // Told only when a gap asks (a hover, a press, or a release): a
+                            // handler on the height itself would lay the section out
+                            // as it is made, and its fold would then move as its list
+                            // first fills.
+                            property <int> asked: root.share-ask;
+                            changed asked => { root.share-laid(0, self.grown, self.room); }
+                            folders-section := FoldersSection {
+                                reorderable: left-stack.movable;
+                                reorder-started => { left-stack.start(i); }
+                                reorder-moved(x, y) => { left-stack.move(x, y); }
+                                reorder-ended(commit) => { return left-stack.end(commit); }
+                                boxed: false;
+                                rows: root.folder-tree;
+                                subfolders <=> root.folder-tree-subfolders;
+                                collapsed-folders <=> root.collapsed-folders;
+                                animated <=> root.folders-animated;
+                                picked(p) => { root.commit-title(); root.folder-tree-picked(p); }
+                                folded(p) => { root.folder-tree-folded(p); }
+                                subfolders-changed => { root.folder-tree-subfolders-changed(); }
+                                focus-keys => { keys.focus(); }
+                            }
+                        }
+                        // The collections, beside the roots and the folders.
+                        // Its share of the pane's height (see `share-folders`):
+                        // the section's own bounds, its weight, how it lies now.
+                        if section == "collections" && root.grid-open: Rectangle {
+                            min-height: collections-section.min-height;
+                            preferred-height: collections-section.preferred-height;
+                            max-height: collections-section.max-height;
+                            min-width: collections-section.min-width;
+                            preferred-width: collections-section.preferred-width;
+                            vertical-stretch: root.share-collections;
+                            property <length> grown: self.height - collections-section.preferred-height;
+                            property <length> room: collections-section.max-height - self.height;
+                            // Told only when a gap asks (a hover, a press, or a release): a
+                            // handler on the height itself would lay the section out
+                            // as it is made, and its fold would then move as its list
+                            // first fills.
+                            property <int> asked: root.share-ask;
+                            changed asked => { root.share-laid(1, self.grown, self.room); }
+                            collections-section := CollectionsSection {
+                                reorderable: left-stack.movable;
+                                reorder-started => { left-stack.start(i); }
+                                reorder-moved(x, y) => { left-stack.move(x, y); }
+                                reorder-ended(commit) => { return left-stack.end(commit); }
+                                boxed: false;
+                                collections: root.collections;
+                                ctrl-click-menu: root.ctrl-click-menu;
+                                collapsed-collections <=> root.collapsed-collections;
+                                picked(id) => { root.commit-title(); root.collection-picked(id); }
+                                rename(id) => { root.collection-rename(id); }
+                                delete(id) => { root.collection-delete(id); }
+                                capture-toggled(id) => { root.collection-capture(id); }
+                                forget-missing(id) => { root.collection-forget-missing(id); }
+                                forgettable(id) => { return root.collection-forgettable(id); }
+                                add => { root.collection-new(); }
+                                focus-keys => { keys.focus(); }
+                                menu-done => { root.menu-done(); }
+                                menu-shown => { return root.menu-shown(); }
+                            }
+                        }
+                        // The frames waiting to be exported, a listing of their
+                        // own: below the collections, in their slot wherever
+                        // the order puts them, rather than among the roots,
+                        // since it is no folder, and in no section, so
+                        // folding one never hides the one way into its view.
+                        if section == "collections" && root.grid-open: RootRow {
+                            vertical-stretch: 0;
+                            text: @tr("Export queue");
+                            count: root.queue-view-count;
+                            on: root.queue-view-on;
+                            menu-shown => { return root.menu-shown(); }
+                            clicked => { root.commit-title(); root.queue-view-picked(); keys.focus(); }
+                        }
+                        // The selection's title and keywords, over the grid,
+                        // which covers the panel where they are otherwise:
+                        // the grid is where a set is chosen to be named. Below
+                        // the roots, folders, and collections at first, which
+                        // say where the user is; this says what is chosen there.
+                        if section == "metadata" && root.grid-open: MetaSection {
+                            reorderable: left-stack.movable;
+                            reorder-started => { left-stack.start(i); }
+                            reorder-moved(x, y) => { left-stack.move(x, y); }
+                            reorder-ended(commit) => { return left-stack.end(commit); }
+                            boxed: false;
+                            vertical-stretch: 0;
+                            frame-meta-on: root.frame-meta-on;
+                            frame-title: root.frame-title;
+                            frame-title-mixed: root.frame-title-mixed;
+                            title-text <=> root.title-text;
+                            title-dirty <=> root.title-dirty;
+                            frame-keywords: root.frame-keywords;
+                            keyword-text <=> root.keyword-text;
+                            keyword-completions <=> root.keyword-completions;
+                            keyword-pick <=> root.keyword-pick;
+                            set-count: root.set-count;
+                            collapsed-metadata <=> root.collapsed-metadata;
+                            title-edited(t) => { root.title-edited(t); }
+                            keyword-typed(t) => { root.keyword-typed(t); }
+                            keyword-added(t) => { root.keyword-added(t); }
+                            keyword-removed(t) => { root.keyword-removed(t); }
+                            keyword-focused => { root.keyword-focused(); }
+                            focus-keys => { keys.focus(); }
+                        }
+                        // The presets: a click lays one over the edit, the
+                        // bin removes it, and the edit is saved or a
+                        // Lightroom preset brought in below the list. Not
+                        // in culling, as the snapshots and the history.
+                        // Its share of the pane's height (see `share-folders`):
+                        // the section's own bounds, its weight, how it lies now.
+                        if section == "presets" && !root.grid-open && !root.cull-mode && !root.frozen: Rectangle {
+                            min-height: presets-section.min-height;
+                            preferred-height: presets-section.preferred-height;
+                            max-height: presets-section.max-height;
+                            min-width: presets-section.min-width;
+                            preferred-width: presets-section.preferred-width;
+                            vertical-stretch: root.share-presets;
+                            property <length> grown: self.height - presets-section.preferred-height;
+                            property <length> room: presets-section.max-height - self.height;
+                            // Told only when a gap asks (a hover, a press, or a release): a
+                            // handler on the height itself would lay the section out
+                            // as it is made, and its fold would then move as its list
+                            // first fills.
+                            property <int> asked: root.share-ask;
+                            changed asked => { root.share-laid(2, self.grown, self.room); }
+                            presets-section := PresetsSection {
+                                reorderable: left-stack.movable;
+                                reorder-started => { left-stack.start(i); }
+                                reorder-moved(x, y) => { left-stack.move(x, y); }
+                                reorder-ended(commit) => { return left-stack.end(commit); }
+                                boxed: false;
+                                selected <=> root.selected;
+                                collapsed-presets <=> root.collapsed-presets;
+                                preset-names <=> root.preset-names;
+                                rows: root.preset-list-rows;
+                                groups: root.preset-groups;
+                                ctrl-click-menu: root.ctrl-click-menu;
+                                favorite-toggled(i) => { root.preset-favorite-toggled(i); }
+                                fold-toggled(k) => { root.preset-fold-toggled(k); }
+                                // A pick from the Move to group sub-menu, New group...
+                                // too, as the frame menu's New collection...: two
+                                // popups close at once, and `menu-done` gives the keys
+                                // back.
+                                moved(i, g) => { root.preset-moved(i, g); root.menu-done(); }
+                                ungrouped(i) => { root.preset-ungrouped(i); }
+                                // Rename group... is the top menu's: its sheet takes
+                                // the focus itself, which `menu-done`'s timer would
+                                // take back.
+                                group-rename(g) => {
+                                    root.preset-group-rename(g);
+                                    if (!root.preset-group-sheet-open) { root.menu-done(); }
+                                }
+                                focus-keys => { keys.focus(); }
+                                menu-done => { root.menu-done(); }
+                                menu-shown => { return root.menu-shown(); }
+                                confirm-remove <=> root.preset-confirm-remove;
+                                preset-applied(a) => { root.preset-applied(a); }
+                                preset-deleted(a) => { root.preset-deleted(a); }
+                                preset-import => { root.preset-import(); }
+                                preset-save-open => { root.preset-save-open(); }
+                                set-count: root.set-count;
+                                sync-open-asked => { root.sync-open-asked(); }
+                            }
+                        }
+                        // The snapshots: whole states kept by name. A
+                        // click restores one as a step; a double-click
+                        // renames it; the bin removes it.
+                        // Not in culling, where the panel is not the
+                        // frame's and a step is the way out of the mode.
+                        // Its share of the pane's height (see `share-folders`):
+                        // the section's own bounds, its weight, how it lies now.
+                        if section == "snapshots" && !root.grid-open && !root.cull-mode && !root.frozen: Rectangle {
+                            min-height: snapshots-section.min-height;
+                            preferred-height: snapshots-section.preferred-height;
+                            max-height: snapshots-section.max-height;
+                            min-width: snapshots-section.min-width;
+                            preferred-width: snapshots-section.preferred-width;
+                            vertical-stretch: root.share-snapshots;
+                            property <length> grown: self.height - snapshots-section.preferred-height;
+                            property <length> room: snapshots-section.max-height - self.height;
+                            // Told only when a gap asks (a hover, a press, or a release): a
+                            // handler on the height itself would lay the section out
+                            // as it is made, and its fold would then move as its list
+                            // first fills.
+                            property <int> asked: root.share-ask;
+                            changed asked => { root.share-laid(3, self.grown, self.room); }
+                            snapshots-section := SnapshotsSection {
+                                reorderable: left-stack.movable;
+                                reorder-started => { left-stack.start(i); }
+                                reorder-moved(x, y) => { left-stack.move(x, y); }
+                                reorder-ended(commit) => { return left-stack.end(commit); }
+                                boxed: false;
+                                selected <=> root.selected;
+                                snapshot-names <=> root.snapshot-names;
+                                snapshot-editing <=> root.snapshot-editing;
+                                snapshot-taken => { root.snapshot-taken(); }
+                                snapshot-restored(a) => { root.snapshot-restored(a); }
+                                snapshot-hovered(a, b) => { root.snapshot-hovered(a, b); }
+                                snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
+                                snapshot-deleted(a) => { root.snapshot-deleted(a); }
+                                collapsed-snapshots <=> root.collapsed-snapshots;
+                            }
+                        }
+                        // The history: every step, newest first, the
+                        // current one lit and the undone ones muted. A
+                        // click makes a step current; what lies past it
+                        // stays until the next change.
+                        // Its share of the pane's height (see `share-folders`):
+                        // the section's own bounds, its weight, how it lies now.
+                        if section == "history" && !root.grid-open && !root.cull-mode && !root.frozen: Rectangle {
+                            min-height: history-section.min-height;
+                            preferred-height: history-section.preferred-height;
+                            max-height: history-section.max-height;
+                            min-width: history-section.min-width;
+                            preferred-width: history-section.preferred-width;
+                            vertical-stretch: root.share-history;
+                            property <length> grown: self.height - history-section.preferred-height;
+                            property <length> room: history-section.max-height - self.height;
+                            // Told only when a gap asks (a hover, a press, or a release): a
+                            // handler on the height itself would lay the section out
+                            // as it is made, and its fold would then move as its list
+                            // first fills.
+                            property <int> asked: root.share-ask;
+                            changed asked => { root.share-laid(4, self.grown, self.room); }
+                            history-section := HistorySection {
+                                reorderable: left-stack.movable;
+                                reorder-started => { left-stack.start(i); }
+                                reorder-moved(x, y) => { left-stack.move(x, y); }
+                                reorder-ended(commit) => { return left-stack.end(commit); }
+                                boxed: false;
+                                history-rows <=> root.history-rows;
+                                hint: root.history-version;
+                                history-current <=> root.history-current;
+                                history-clicked(a) => { root.history-clicked(a); }
+                                history-hovered(a) => { root.history-hovered(a); }
+                                resettable: root.history-resettable;
+                                reset-asked => { root.history-reset(); }
+                                collapsed-history <=> root.collapsed-history;
+                            }
+                        }
                     }
                 }
                 // The room the lists leave, at the foot: the least of
@@ -6304,6 +6667,8 @@ export component App inherits Window {
         language-changed => { root.language-changed(); }
         one-section <=> root.one-section;
         one-section-changed => { root.one-section-changed(); }
+        section-order-moved: root.section-order-moved;
+        section-order-reset => { root.section-order-reset(); }
         start-choice <=> root.start-choice;
         start-folder: root.start-folder;
         start-picked(c) => { root.start-picked(c); }

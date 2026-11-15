@@ -75,6 +75,11 @@ panel". The word goes when you click, press a key or scroll.
 ### Sections
 
 - Click a section's title to fold it away or open it again.
+- Drag a section's title up or down to move the section; a line shows
+  where it will land, and Esc while dragging puts it back. Develop and
+  Masks share one order, and the left pane's lists move the same way.
+  **Reset section order**, in Settings under Interface, puts every
+  section back where it started.
 - Most sections have a **switch** at the right of the title. Off, the
   picture is as if the section were not there. Its settings stay, dimmed,
   for when you turn it back on. Use it to compare before and after.

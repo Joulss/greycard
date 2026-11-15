@@ -101,6 +101,10 @@ export component SettingsSheet inherits Rectangle {
     /// Opening one of the panel's sections folds the others.
     in-out property <bool> one-section;
     callback one-section-changed();
+    // Whether any view's sections are out of their first order, and the
+    // button that puts them all back.
+    in property <bool> section-order-moved;
+    callback section-order-reset();
     /// Where a launch opens: "Last folder" or "Chosen folder", as the
     /// row spells it, and the chosen folder as shown. The host sets
     /// the choice once the chooser answers: a click on "Chosen folder"
@@ -579,6 +583,16 @@ export component SettingsSheet inherits Rectangle {
                                 label: @tr("One section open at a time");
                                 checked <=> root.one-section;
                                 toggled => { root.one-section-changed(); }
+                            }
+                            HorizontalLayout {
+                                PanelButton {
+                                    // Interface: every view's sections back in
+                                    // their first order, after dragging them
+                                    text: @tr("Reset section order");
+                                    enabled: root.section-order-moved;
+                                    clicked => { root.section-order-reset(); }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
                             }
                         }
                         library := VerticalLayout {

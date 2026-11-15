@@ -1141,6 +1141,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>
     panel::export_queue::install(app, &state, &worker);
     panel::queue_view::install(app, &state, &worker);
     panel::edit::install(app, &state, &worker);
+    panel::order::install(app);
     panel::assets::install(app, &state, &worker);
     panel::preset_list::install(app, &state);
     panel::crop::install(app, &state, &worker);

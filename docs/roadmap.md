@@ -864,10 +864,9 @@ clears or a tester asks for it.
 - [ ] Every section switch and button a bindable action in the keys
       table (§390), so a key applies the lens correction or opens the
       crop; a key that applies a named preset beside it
-- [ ] Section order and default folds: drag sections into the order
-      wanted (the pipeline's order unchanged), fold a set by default;
-      and the scopes folded away on a small screen, their space to
-      the panel
+- [ ] Default folds: a set of sections folded by default; and the
+      scopes folded away on a small screen, their space to the panel
+      (the sections' order is dragged since §689)
 - [ ] Before and after: the picture against a chosen history step or
       snapshot under a wipe the pointer drags; and the last render
       kept when a section is switched off or on, so Denoise's toggle

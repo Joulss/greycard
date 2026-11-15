@@ -268,6 +268,15 @@ export global Folds {
     in-out property <int> let-go: 0;
 }
 
+// A header dragged to move its section, by whichever stack holds it.
+// Esc while one is in hand puts it back: the window's keys see the Esc
+// and count it here, and the stack lets the drag go with nothing moved.
+export global SectionDrag {
+    // A stack has a header in hand: Esc is the drag's.
+    in-out property <bool> active: false;
+    in-out property <int> cancels: 0;
+}
+
 // A section: a header of icon, title and chevron over a rule, and
 // the body under it. The header folds the body away and back. A
 // section with an effect carries a switch at the header's right: off,
@@ -306,6 +315,86 @@ export component Section inherits VerticalLayout {
     // for when it acts again.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
+    // A header that moves its section by a drag, in a SectionStack: the
+    // stack works out where it lands and says at the release whether
+    // anything moved, so that the click the release also makes over the
+    // header folds only when nothing did.
+    in property <bool> reorderable: false;
+    callback reorder-started();
+    callback reorder-moved(length, length);
+    callback reorder-ended(bool) -> bool;
+    property <bool> reorder-armed: false;
+    property <bool> reorder-dragging: false;
+    // A drag another button put back: the left's release is no click.
+    property <bool> reorder-swallow: false;
+    property <length> reorder-down-y;
+    // A press turns into a drag once the pointer has gone 8 px up or
+    // down: past a click's wobble (GTK's own drag threshold is 8 px),
+    // and along the stack only, since sideways moves nothing in it.
+    // Under that the stack is never told, and a release is the click it
+    // always was.
+    function reorder-press(e: PointerEvent, y: length) {
+        // Another button pressed or let go while the left is held puts
+        // the section back: the header loses the pointer's grab at that
+        // release, so the left's own may never reach it. Nothing moves,
+        // and the left's release, should it land on the header, is no
+        // fold.
+        if ((e.kind == PointerEventKind.down || e.kind == PointerEventKind.up)
+            && e.button != PointerEventButton.left) {
+            if (root.reorder-armed || root.reorder-dragging) {
+                root.reorder-swallow = root.reorder-dragging;
+                root.reorder-finish(false);
+                root.reorder-armed = false;
+            }
+            return;
+        }
+        if (e.kind == PointerEventKind.down) {
+            root.reorder-swallow = false;
+            root.reorder-armed = root.reorderable && e.button == PointerEventButton.left;
+            root.reorder-down-y = y;
+            root.reorder-dragging = false;
+        } else if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) {
+            // Released off the header, no click follows: the drop is here.
+            // Over it, the click came first and has had it.
+            root.reorder-finish(e.kind == PointerEventKind.up);
+            root.reorder-armed = false;
+        }
+    }
+    function reorder-motion(x: length, y: length) {
+        if (!root.reorder-armed) { return; }
+        if (!root.reorder-dragging && abs(y - root.reorder-down-y) > 8px) {
+            root.reorder-dragging = true;
+            root.reorder-started();
+        }
+        if (root.reorder-dragging) { root.reorder-moved(x, y); }
+    }
+    // The drag in hand let go, dropped or not: whether it moved the
+    // section, after which the release's click is no fold.
+    function reorder-finish(commit: bool) -> bool {
+        if (!root.reorder-dragging) { return false; }
+        root.reorder-dragging = false;
+        return root.reorder-ended(commit);
+    }
+    // A cancel (Esc, or a change of what the panes show) puts the
+    // section back at once, whether or not a release ever comes here:
+    // the cursor is the pointer's again, and a release over the header
+    // is no fold.
+    property <int> drag-cancels: SectionDrag.cancels;
+    changed drag-cancels => {
+        if (root.reorder-dragging) {
+            root.reorder-dragging = false;
+            root.reorder-armed = false;
+            root.reorder-swallow = true;
+        }
+    }
+    function header-clicked() {
+        if (root.reorder-swallow) {
+            root.reorder-swallow = false;
+            return;
+        }
+        if (root.reorder-finish(true)) { return; }
+        root.fold-clicked();
+    }
     // Whether a fold moves or lands at once: a click on the header
     // moves it, and a fold the view brings, set false around it,
     // lands as the sections around it appear.
@@ -413,8 +502,11 @@ export component Section inherits VerticalLayout {
         animate background { duration: Theme.quick; }
         row := TouchArea {
             enabled: root.boxed;
-            mouse-cursor: MouseCursor.pointer;
-            clicked => { root.fold-clicked(); }
+            mouse-cursor: root.reorder-dragging ? MouseCursor.grabbing : MouseCursor.pointer;
+            pointer-event(e) => { root.reorder-press(e, self.absolute-position.y + self.mouse-y); }
+            moved => { root.reorder-motion(self.absolute-position.x + self.mouse-x,
+                self.absolute-position.y + self.mouse-y); }
+            clicked => { root.header-clicked(); }
         }
         HorizontalLayout {
             spacing: root.boxed ? Theme.space-3 : Theme.space-2;
@@ -486,8 +578,11 @@ export component Section inherits VerticalLayout {
                 }
                 head := TouchArea {
                     enabled: !root.boxed;
-                    mouse-cursor: MouseCursor.pointer;
-                    clicked => { root.fold-clicked(); }
+                    mouse-cursor: root.reorder-dragging ? MouseCursor.grabbing : MouseCursor.pointer;
+                    pointer-event(e) => { root.reorder-press(e, self.absolute-position.y + self.mouse-y); }
+                    moved => { root.reorder-motion(self.absolute-position.x + self.mouse-x,
+                        self.absolute-position.y + self.mouse-y); }
+                    clicked => { root.header-clicked(); }
                 }
             }
             if root.action != "": Rectangle {
@@ -599,6 +694,269 @@ export component Section inherits VerticalLayout {
             animate opacity { duration: Theme.quick; }
             @children
         }
+    }
+}
+
+// A gap that is dragged to move room from one side of it to the
+// other: the gap between two of the left pane's lists, and the panes'
+// edges. Nothing is drawn; the pointer over it, when `live`, turns to
+// the resizing hand. `hovering` is raised at each move over it with no
+// button held, and at a release, so the owner can work `live` out
+// afresh for the next move; the hand shows the answer a move behind.
+// `dragged` carries the pointer's travel since the press, in the
+// window, along y or, with `along-y` false, along x, so the gap moving
+// under the pointer as the room moves does not count. A double-click
+// is `evened`, which its press and release precede.
+// `live` false, nothing could move there as last asked: the pointer keeps the
+// arrow; a press still raises `started`, and the owner finds nothing
+// to move.
+export component DragEdge inherits Rectangle {
+    in property <bool> along-y: true;
+    in property <bool> live: true;
+    callback hovering();
+    callback started();
+    callback dragged(length);
+    callback ended();
+    callback evened();
+    property <length> from;
+    pure function at() -> length {
+        return root.along-y ? root.absolute-position.y + area.mouse-y
+            : root.absolute-position.x + area.mouse-x;
+    }
+    area := TouchArea {
+        mouse-cursor: !root.live ? MouseCursor.default
+            : root.along-y ? MouseCursor.ns-resize : MouseCursor.ew-resize;
+        pointer-event(e) => {
+            // The TouchArea's `moved` comes only with a button held.
+            if (e.kind == PointerEventKind.move && !self.pressed) { root.hovering(); }
+            if (e.button != PointerEventButton.left) { return; }
+            if (e.kind == PointerEventKind.down) {
+                root.from = root.at();
+                root.started();
+            }
+            // The release asks too: the drag moved room, so where the
+            // pointer now rests may have turned.
+            if (e.kind == PointerEventKind.up) { root.ended(); root.hovering(); }
+        }
+        moved => {
+            if (self.pressed) { root.dragged(root.at() - root.from); }
+        }
+        double-clicked => { root.evened(); }
+    }
+}
+
+// What the slots of a stack need of its drag: the section in hand, the
+// place it would land (before the slot of that index, or after the
+// last one on show when it is past them all), the last slot on show,
+// and a count of the moves, at each of which the slots say where they
+// are. No section is in hand while `index` is below nought.
+export struct SectionDragState {
+    index: int,
+    slot: int,
+    last: int,
+    revision: int,
+}
+
+// Sections in the order the user drags them into (`panel::order`),
+// each in a SectionSlot: the drag and where it would land. The
+// sections stay where they are until the release, and only a 1 px line
+// in the accent shows the place, so nothing jumps as the pointer goes.
+// Each move, every slot on show says where its line would be, and the
+// first one below the pointer takes the drop; past them all, the drop
+// is after the last. Off the pane sideways it is nowhere, and the
+// release moves nothing. Near the pane's top or foot, or past them,
+// the stack scrolls the pane.
+export component SectionStack inherits VerticalLayout {
+    // Which order this is, named to the Rust side with a move. A drag
+    // under way when it changes (the left pane's stack holds Library's
+    // order or the Loupe's) is let go of with nothing moved.
+    in property <string> view;
+    in property <int> count;
+    // Whether a header here is dragged at all: not with one section.
+    in property <bool> movable: root.count > 1;
+    in property <length> viewport-x;
+    in property <length> viewport-y;
+    in property <length> viewport-width;
+    in property <length> viewport-height;
+    property <int> drag-index: -1;
+    property <int> drop-slot: -1;
+    property <int> last-shown: -1;
+    // The first slot on show under the one in hand (the order's length
+    // for none): a drop there is just under itself on screen, whatever
+    // hidden slots lie between, and moves nothing.
+    property <int> next-shown: -1;
+    property <length> drag-y;
+    property <int> drag-revision;
+    property <string> drag-view;
+    property <int> drag-cancels;
+    // The drag as the slots see it: none once Esc or a change of view
+    // has let it go, though the header in hand hears of that only at
+    // its release.
+    property <bool> live: root.drag-index >= 0 && root.drag-view == root.view
+        && root.drag-cancels == SectionDrag.cancels;
+    // Whether the section in hand still said where it is at the last
+    // move: one the view has taken away under the drag hears no release,
+    // and its line and the scrolling go with it.
+    property <bool> dragged-there;
+    property <bool> held: root.live && root.dragged-there;
+    out property <SectionDragState> state: {
+        index: root.held ? root.drag-index : -1,
+        slot: root.drop-slot,
+        last: root.last-shown,
+        revision: root.drag-revision,
+    };
+    // A section moved, by its index in `view`'s order, to before the
+    // one at `to` (the order's length for the end), with the first slot
+    // on show under it, so the Rust side can tell a drop there is none.
+    callback moved-section(string, int, int, int);
+    callback scroll-by(length);
+    // A drag begun: the window's keys take the focus, so that an Esc
+    // reaches them.
+    callback started();
+    public function start(i: int) {
+        root.drag-index = i;
+        root.drop-slot = -1;
+        root.dragged-there = true;
+        root.drag-view = root.view;
+        root.drag-cancels = SectionDrag.cancels;
+        SectionDrag.active = true;
+        root.started();
+    }
+    public function move(x: length, y: length) {
+        if (!root.live) { return; }
+        root.drag-y = y;
+        if (x < root.viewport-x || x > root.viewport-x + root.viewport-width) {
+            root.drop-slot = -1;
+            return;
+        }
+        root.ask();
+    }
+    function ask() {
+        root.dragged-there = false;
+        root.drop-slot = root.count;
+        root.last-shown = -1;
+        root.next-shown = root.count;
+        root.drag-revision += 1;
+    }
+    // Slot `i`, on show, has its line at `top` in the window.
+    public function consider(i: int, top: length) {
+        if (!root.live) { return; }
+        if (i == root.drag-index) { root.dragged-there = true; }
+        root.last-shown = max(root.last-shown, i);
+        if (i > root.drag-index && i < root.next-shown) { root.next-shown = i; }
+        if (root.drag-y < top && i < root.drop-slot) { root.drop-slot = i; }
+    }
+    // The release over the pane (`commit`) or elsewhere: whether the
+    // drag moved a section or had been canceled, so the header's
+    // click does not fold it. A drop on itself, or just under itself on
+    // screen, moves nothing.
+    public function end(commit: bool) -> bool {
+        if (root.drag-index < 0) { return false; }
+        let from = root.drag-index;
+        let to = root.drop-slot;
+        let next = root.next-shown;
+        let live = root.held;
+        root.drag-index = -1;
+        root.drop-slot = -1;
+        SectionDrag.active = false;
+        if (!live) { return true; }
+        if (commit && to >= 0 && to != from && to != next) {
+            root.moved-section(root.view, from, to, next);
+            return true;
+        }
+        return false;
+    }
+    // 30 px from an end, or past it, the pane scrolls 12 px every 40 ms
+    // (300 px a second) toward it, and the drop is worked out afresh.
+    Timer {
+        interval: 40ms;
+        running: root.held && root.drop-slot >= 0
+            && (root.drag-y < root.viewport-y + 30px
+                || root.drag-y > root.viewport-y + root.viewport-height - 30px);
+        triggered => {
+            root.scroll-by(root.drag-y < root.viewport-y + 30px ? 12px : -12px);
+            root.ask();
+        }
+    }
+    // A cancel (Esc, or a change of what the panes show) lets the drag
+    // go here too: the header in hand may never hear a release.
+    property <int> cancels: SectionDrag.cancels;
+    changed cancels => {
+        root.drag-index = -1;
+        root.drop-slot = -1;
+    }
+    @children
+}
+
+// One place in a SectionStack, holding whichever section its name is.
+// One the view does not show holds nothing and takes no room: a layout
+// lays out every child it has, shown or not, so the stack has no
+// spacing of its own and each slot on show keeps its own `gap` above
+// it instead, which the owner leaves out above the first. Draws the
+// drop's line, and in the left pane carries the gap's edge that moves
+// room between its list and the one above (`DragEdge`).
+export component SectionSlot inherits Rectangle {
+    in property <int> index;
+    in property <SectionDragState> drag: { index: -1, slot: -1, last: -1, revision: 0 };
+    in property <length> gap: 0px;
+    in property <length> spacing: 0px;
+    in property <bool> boxed: true;
+    in property <float> stretch: 0;
+    // The lists either side of the gap above, by their share index; no
+    // edge unless both are.
+    in property <int> resize-a: -1;
+    in property <int> resize-b: -1;
+    in property <bool> resize-live: false;
+    callback resize-hovered();
+    callback resize-started();
+    callback resize-dragged(length);
+    callback resize-evened();
+    callback consider(int, length);
+    out property <bool> shown: inner.preferred-height > 0;
+    property <length> top: root.shown ? root.gap : 0px;
+    min-height: content.min-height;
+    preferred-height: content.preferred-height;
+    max-height: content.max-height;
+    vertical-stretch: root.stretch;
+    property <int> revision: root.drag.revision;
+    changed revision => {
+        // Within the header, however tall the body under it: a tall open
+        // body does not put the place past the foot of the view.
+        if (root.shown) {
+            root.consider(root.index, root.absolute-position.y + root.top + min(inner.height / 2, Theme.space-4));
+        }
+    }
+    content := VerticalLayout {
+        padding-top: root.top;
+        inner := VerticalLayout {
+            spacing: root.spacing;
+            alignment: root.boxed ? LayoutAlignment.start : LayoutAlignment.stretch;
+            @children
+        }
+    }
+    if root.drag.index < 0 && root.shown && root.top > 0 && root.resize-a >= 0 && root.resize-b >= 0: DragEdge {
+        y: 0;
+        width: 100%;
+        height: root.top;
+        live: root.resize-live;
+        hovering => { root.resize-hovered(); }
+        started => { root.resize-started(); }
+        dragged(d) => { root.resize-dragged(d); }
+        evened => { root.resize-evened(); }
+    }
+    // The drop's line: boxed, on the section's top edge, or under the
+    // last one's foot; unboxed, in the middle of the gap above or below.
+    if root.drag.index >= 0 && root.shown && root.drag.slot == root.index: Rectangle {
+        y: root.boxed ? 0px : root.top - (Theme.space-2 + 1px) / 2;
+        height: 1px;
+        width: 100%;
+        background: Theme.accent;
+    }
+    if root.drag.index >= 0 && root.shown && root.drag.slot > root.drag.last && root.drag.last == root.index: Rectangle {
+        y: root.boxed ? root.height - 1px : root.height + (Theme.space-2 - 1px) / 2;
+        height: 1px;
+        width: 100%;
+        background: Theme.accent;
     }
 }
 
@@ -2517,54 +2875,6 @@ export component ScrollBand inherits TouchArea {
 // The thumb stays drawn at rest here: a view whose bar faded would
 // hide that it holds more below. The thumb's arithmetic is the
 // grid's: 4 px from the ends, no shorter than 24 px.
-// A gap that is dragged to move room from one side of it to the
-// other: the gap between two of the left pane's lists, and the panes'
-// edges. Nothing is drawn; the pointer over it, when `live`, turns to
-// the resizing hand. `hovering` is raised at each move over it with no
-// button held, and at a release, so the owner can work `live` out
-// afresh for the next move; the hand shows the answer a move behind.
-// `dragged` carries the pointer's travel since the press, in the
-// window, along y or, with `along-y` false, along x, so the gap moving
-// under the pointer as the room moves does not count. A double-click
-// is `evened`, which its press and release precede.
-// `live` false, nothing could move there as last asked: the pointer keeps the
-// arrow; a press still raises `started`, and the owner finds nothing
-// to move.
-export component DragEdge inherits Rectangle {
-    in property <bool> along-y: true;
-    in property <bool> live: true;
-    callback hovering();
-    callback started();
-    callback dragged(length);
-    callback ended();
-    callback evened();
-    property <length> from;
-    pure function at() -> length {
-        return root.along-y ? root.absolute-position.y + area.mouse-y
-            : root.absolute-position.x + area.mouse-x;
-    }
-    area := TouchArea {
-        mouse-cursor: !root.live ? MouseCursor.default
-            : root.along-y ? MouseCursor.ns-resize : MouseCursor.ew-resize;
-        pointer-event(e) => {
-            // The TouchArea's `moved` comes only with a button held.
-            if (e.kind == PointerEventKind.move && !self.pressed) { root.hovering(); }
-            if (e.button != PointerEventButton.left) { return; }
-            if (e.kind == PointerEventKind.down) {
-                root.from = root.at();
-                root.started();
-            }
-            // The release asks too: the drag moved room, so where the
-            // pointer now rests may have turned.
-            if (e.kind == PointerEventKind.up) { root.ended(); root.hovering(); }
-        }
-        moved => {
-            if (self.pressed) { root.dragged(root.at() - root.from); }
-        }
-        double-clicked => { root.evened(); }
-    }
-}
-
 export component ScrollPane {
     out property <length> visible-width <=> flick.width;
     out property <length> visible-height <=> flick.height;
