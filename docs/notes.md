@@ -688,3 +688,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§674. An open dropped by a develop asked while it decodes](notes/674-an-open-dropped-by-a-develop-asked-while-it-decodes.md) (2026-11-14)
 - [§675. The develop panel starts at 334 px](notes/675-the-develop-panel-starts-at-334-px.md) (2026-11-14)
 - [§676. The lightbox's bar, the tile size slider, and the canvas surround](notes/676-the-lightboxs-bar-the-tile-size-slider-and-the-canvas-surround.md) (2026-11-14)
+- [§677. A benchmark for highlight reconstruction](notes/677-a-benchmark-for-highlight-reconstruction.md) (2026-11-14)

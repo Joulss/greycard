@@ -2011,6 +2011,7 @@ dependencies = [
  "greycard-core",
  "half",
  "image",
+ "lcms2",
  "rayon",
  "serde_json",
 ]

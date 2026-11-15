@@ -14,6 +14,7 @@
 use std::io::{Seek, Write};
 
 use ::rawler::RawImage;
+use ::rawler::cfa::{CFA, PlaneColor};
 use ::rawler::decoders::Camera;
 use ::rawler::dng::writer::DngWriter;
 use ::rawler::dng::{
@@ -22,14 +23,16 @@ use ::rawler::dng::{
 use ::rawler::formats::tiff::{Rational, SRational};
 use ::rawler::imgop::xyz::Illuminant;
 use ::rawler::pixarray::PixU16;
-use ::rawler::rawimage::{BlackLevel, RawImageData, RawPhotometricInterpretation, WhiteLevel};
+use ::rawler::rawimage::{
+    BlackLevel, CFAConfig, RawImageData, RawPhotometricInterpretation, WhiteLevel,
+};
 use ::rawler::tags::{DngTag, ExifTag, TiffCommonTag};
 use rawcolor::CalibrationIlluminant;
 
 use crate::decode::rawler_backend::RawMetadata;
 use crate::error::{Error, Result};
 use crate::image::CameraImage;
-use crate::raw::{Calibration, Orientation, RawFrame, SensorLayout};
+use crate::raw::{Calibration, CfaColor, CfaPattern, Orientation, RawFrame, SensorLayout};
 
 /// How the samples are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -105,6 +108,101 @@ pub fn write_linear_dng<W: Write + Seek>(
         options,
         None,
     )
+}
+
+/// A mosaic to write as a CFA DNG: one sample a pixel, levels normalized
+/// (black at 0, the sensor's clip at 1), no white balance, in `pattern`
+/// from its top left photosite.
+#[derive(Debug, Clone, Copy)]
+pub struct CfaMosaic<'a> {
+    pub samples: &'a [f32],
+    pub width: usize,
+    pub height: usize,
+    pub pattern: &'a CfaPattern,
+}
+
+/// Write a mosaic as a CFA DNG, the form a camera's own DNG takes: 16-bit
+/// samples, black 0, white 65535 (1.0 in `mosaic`), the pattern, and the
+/// same color tags as [`write_linear_dng`]'s from `frame`. Another raw
+/// developer reads it as it would the camera's file, which is what a
+/// benchmark that feeds every developer the same doctored mosaic needs.
+/// 2x2 Bayer and 6x6 X-Trans patterns only.
+pub fn write_cfa_dng<W: Write + Seek>(
+    out: W,
+    frame: &RawFrame,
+    mosaic: &CfaMosaic<'_>,
+    gains: [f32; 3],
+    options: &LinearDngOptions<'_>,
+) -> Result<()> {
+    if gains.iter().any(|g| !g.is_finite() || *g <= 0.0) {
+        return Err(Error::Unsupported(format!("white balance gains {gains:?}")));
+    }
+    if mosaic.samples.len() != mosaic.width * mosaic.height {
+        return Err(Error::Unsupported(format!(
+            "{}x{} mosaic with {} samples",
+            mosaic.width,
+            mosaic.height,
+            mosaic.samples.len()
+        )));
+    }
+    let headroom = options.headroom.unwrap_or(1.0);
+    if !headroom.is_finite() || headroom < 1.0 {
+        return Err(Error::Unsupported(format!("headroom {headroom}")));
+    }
+    let cfa = rawler_cfa(mosaic.pattern)?;
+    let scale = f32::from(WHITE_LEVEL) / headroom;
+    let data: Vec<u16> = mosaic
+        .samples
+        .iter()
+        .map(|&v| {
+            let v = if v.is_finite() { v } else { 0.0 };
+            (v.clamp(0.0, headroom) * scale).round() as u16
+        })
+        .collect();
+    let mut camera = Camera::new();
+    camera.make = frame.make.clone();
+    camera.model = frame.model.clone();
+    camera.clean_make = frame.make.clone();
+    camera.clean_model = frame.model.clone();
+    camera.cfa = cfa.clone();
+    let raw = RawImage::new(
+        camera,
+        PixU16::new_with(data, mosaic.width, mosaic.height),
+        1,
+        [gains[0], gains[1], gains[2], f32::NAN],
+        RawPhotometricInterpretation::Cfa(CFAConfig::new(&cfa, &PlaneColor::default())),
+        Some(BlackLevel::new(&[0u16], 1, 1, 1)),
+        Some(WhiteLevel::new_bits(16, 1)),
+        false,
+    );
+    write_container(
+        out,
+        frame,
+        &raw,
+        (DngCompression::Uncompressed, &CompressionParams::default()),
+        gains,
+        options,
+        None,
+    )
+}
+
+/// rawler's pattern for ours: its letters, row by row.
+fn rawler_cfa(pattern: &CfaPattern) -> Result<CFA> {
+    if !matches!((pattern.width, pattern.height), (2, 2) | (6, 6)) || !pattern.is_rgb() {
+        return Err(Error::Unsupported(format!(
+            "a CFA DNG of a {pattern:?} mosaic"
+        )));
+    }
+    let name: String = pattern
+        .colors
+        .iter()
+        .map(|c| match c {
+            CfaColor::Red => 'R',
+            CfaColor::Green => 'G',
+            _ => 'B',
+        })
+        .collect();
+    Ok(CFA::new(&name))
 }
 
 /// What a merge's file carries beyond a linear DNG's tags.
@@ -761,6 +859,60 @@ mod tests {
         // A linear DNG of ours that is no merge says neither.
         let plain = round_trip(Compression::Uncompressed);
         assert_eq!((plain.dng.noise_profile, plain.dng.merged), (None, None));
+    }
+
+    /// A CFA DNG reads back as the mosaic it was given, in its pattern
+    /// (Bayer and X-Trans), with the levels, the white and the matrices
+    /// a developer needs, and develops as the mosaic does.
+    #[test]
+    fn a_cfa_dng_round_trips_its_mosaic() {
+        use crate::develop::normalize_levels;
+        for pattern in [CfaPattern::rggb().shifted(1, 0), CfaPattern::xtrans()] {
+            let (w, h) = (24usize, 18usize);
+            let samples: Vec<f32> = (0..w * h)
+                .map(|i| ((i * 37) % 101) as f32 / 100.0)
+                .collect();
+            let frame = crate::develop::tests::flat_frame();
+            let mosaic = CfaMosaic {
+                samples: &samples,
+                width: w,
+                height: h,
+                pattern: &pattern,
+            };
+            let mut buf = Cursor::new(Vec::new());
+            write_cfa_dng(
+                &mut buf,
+                &frame,
+                &mosaic,
+                [2.0, 1.0, 4.0],
+                &Default::default(),
+            )
+            .unwrap();
+            let back = RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap();
+            assert_eq!(back.layout, SensorLayout::Cfa(pattern.clone()));
+            assert_eq!((back.width, back.height, back.channels), (w, h, 1));
+            assert_eq!(back.levels.white.values, vec![65535.0]);
+            let read = normalize_levels(&back);
+            for (got, want) in read.iter().zip(&samples) {
+                assert!((got - want).abs() < 1.0 / 65535.0, "{got} vs {want}");
+            }
+            let gains = back.as_shot_coefficients.unwrap();
+            assert!((gains[0] - 2.0).abs() < 1e-4 && (gains[2] - 4.0).abs() < 1e-4);
+            assert_eq!(back.calibrations.len(), 1);
+            assert!(develop(&back, &DevelopSettings::default()).is_ok());
+        }
+        // Neither a pattern it cannot name nor a short buffer is written.
+        let frame = crate::develop::tests::flat_frame();
+        let odd = CfaPattern::new(1, 1, vec![CfaColor::Green]).unwrap();
+        let one = [0.5f32];
+        let mosaic = CfaMosaic {
+            samples: &one,
+            width: 1,
+            height: 1,
+            pattern: &odd,
+        };
+        let mut buf = Cursor::new(Vec::new());
+        assert!(write_cfa_dng(&mut buf, &frame, &mosaic, [1.0; 3], &Default::default()).is_err());
     }
 
     #[test]

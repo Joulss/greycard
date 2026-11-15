@@ -359,6 +359,22 @@ needs `curl` and `unzip`), then:
 cargo run -p greycard-bench --release -- data/bench/kodak data/bench/mcm
 ```
 
+The highlight reconstruction benchmark takes raws of your own whose
+highlights the sensor did not clip, clips them by 1 to 3 stops, and
+scores each method against the original where the clip fell. `survey`
+says which of your raws qualify; the list is one path a line, kept
+outside the repository with the results:
+
+```sh
+cargo run -p greycard-bench --release --bin greycard-highlight-bench -- survey ~/Pictures > survey.csv
+cargo run -p greycard-bench --release --bin greycard-highlight-bench -- \
+    run --frames frames.list --out results/
+```
+
+`run --external` adds darktable-cli's and rawtherapee-cli's methods
+when they are on `PATH`. The module documentation of
+`greycard_bench::highlight` has the method and what is written.
+
 A change to a reader of outside files (the sidecar, a preset, the
 Lightroom and RawTherapee imports, XMP, the filter language, a DNG's
 opcodes, or a DCP camera profile) can

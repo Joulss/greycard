@@ -19,6 +19,10 @@ path = "src/main.rs"
 name = "greycard-denoise-data"
 path = "src/bin/denoise_data.rs"
 
+[[bin]]
+name = "greycard-highlight-bench"
+path = "src/bin/highlight_bench.rs"
+
 [dependencies]
 greycard-core = { path = "../greycard-core" }
 greycard-ai = { path = "../greycard-ai" }
@@ -28,6 +32,8 @@ anyhow.workspace = true
 rayon.workspace = true
 serde_json.workspace = true
 half.workspace = true
+# Reading another developer's TIFF through its embedded profile.
+lcms2.workspace = true
 
 [dev-dependencies]
 # The scratch folder's removal the tests share.

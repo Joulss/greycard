@@ -1183,7 +1183,18 @@ clears or a tester asks for it.
 - [ ] Camera tethering
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
-- [ ] Idea: AI highlight recovery
+- [ ] Learned highlight reconstruction, scored on the benchmark
+      (§677): today's develop cuts every method at the brightest
+      channel's clip, so a fully clipped area is measured, not
+      improvable, until a method enters with that ceiling raised; a
+      region with one or two channels left is where a method can win
+      inside the engine (opposed 0.09 stop, a perfect chroma offset a
+      third better). Infer, never invent; the classical fill stays
+      the default until a model beats it
+- [ ] darktable's guided laplacians ported as the classical ceiling,
+      after its own numbers on the benchmark's frames say what it
+      wins (the darktable and RawTherapee adapters are written and
+      unverified; neither is installed here)
 - [ ] Maybe: MCP
 - [ ] Maybe: Depth mapping for blur
 - [ ] Maybe: a Fill painted but not generated kept in the sidecar, as
