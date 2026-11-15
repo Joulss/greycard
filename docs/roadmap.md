@@ -1221,10 +1221,14 @@ clears or a tester asks for it.
       squashing one axis so a tower a strong vertical correction
       stretched is its own height again, and a shear, as darktable's
       rotate and perspective has (discussion 149, 2026-11-15)
-- [ ] Maybe: the generative remove on a card too small for it (a
-      4 GB card has Fast and Best greyed, §646): slowly on the CPU or
-      a lower-memory run. Nobody has timed it; measure before
-      promising (issue 153)
+- [ ] The generative remove on a card too small for it (a 4 GB card
+      has Fast and Best greyed, §646), measured 2026-11-15: the fp16
+      UNet holds 5.0 to 5.3 GiB on the card whatever the tile, so
+      nothing fits 4 GB there. An 8-bit UNet (MatMul weights, a second
+      2.9 GB file) runs on the CPU in 5 to 10 GB of RAM, 37 dB from
+      fp32, minutes a fill, and on a 6 GB card at full speed inside
+      both parity floors; 4-bit fails them. A CPU branch in `Remove`
+      with a RAM check, and the file in the registry (issue 153)
 - [ ] A crop copied to other frames, and the crop's numbers shown so
       one can be typed (discussion 59, 2026-11-12)
 - [ ] A reset on each section's header, on Develop, Crop, and a
