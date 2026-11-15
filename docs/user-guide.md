@@ -77,11 +77,9 @@ unpack it.
   Windows warns about an unknown publisher, click **More info**, then
   **Run anyway**. Remove it from **Settings > Apps > Installed apps**.
   Your settings, presets, and downloaded models stay either way.
-- **Windows, from the zip:** take `greycard-<version>-x86_64-windows.zip`
-  (or `-aarch64-windows.zip`) and double-click `install.cmd`, which
-  installs the same things the setup does, the same way;
-  `uninstall.cmd` removes them. Or skip both, unpack it anywhere, and
-  run `bin\greycard-ui.exe`: nothing needs installing.
+- **Windows, without installing:** take
+  `greycard-<version>-x86_64-windows.zip` (or `-aarch64-windows.zip`),
+  unpack it anywhere, and run `bin\greycard-ui.exe`.
 
 ## The basics
 

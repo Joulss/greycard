@@ -347,14 +347,10 @@ the reasoning lives in `docs/notes.md`.
 
 ## Next
 
-0.12.0: a signed Windows installer, and the first translation.
+0.12.0: a Windows installer, and the first translation.
 
 - [ ] The Windows installer (§619) compiled and installed on CI: a
       run of windows-package.yml, before the tag
-- [ ] The Windows installer signed: waits on a signing service
-- [ ] The strings added since the French catalog was made
-      translated: 20 as of §651 (`scripts/translations-check.py
-      --list` names them)
 
 ### Speed
 
@@ -845,6 +841,9 @@ clears or a tester asks for it.
 
 #### Editor
 
+- [ ] The strings added since the French catalog was made
+      translated (`scripts/translations-check.py --list` names them);
+      waits on a translator
 - [ ] Failures as a dialog queue, not a status line: a failed outcome
       today becomes "failed: {message}" in the status bar
       (deliver.rs); a queue of typed errors with a kind, the frame it
@@ -1495,6 +1494,8 @@ Slint, a runtime exposing what it knows, a rawler release. It joins a
 release when the wait clears.
 
 #### Platform
+- [ ] The Windows installer signed (Authenticode): waits on a
+      signing service
 - [ ] Report a problem fills in the CPU as it fills the OS and the GPU
       (report.rs): `/proc/cpuinfo`'s model name, `sysctl
       machdep.cpu.brand_string`, the registry on Windows. The bug form

@@ -51,6 +51,9 @@ design note behind it.
   editor. Settings, Interface, Language chooses it, or it follows the
   system (issue 75,
   [§641](https://github.com/jessolmstead/greycard/blob/master/docs/notes/641-french-translation.md)).
+  Translations are new: some of this release's newest wording is
+  still in English, and more languages are welcome
+  ([how to add one](https://github.com/jessolmstead/greycard/blob/master/docs/translating.md)).
 - The line over the foot of the picture no longer lists the frame's
   size, the develop's time, and what each tool measured after every
   develop; that is in the log. It still says what an edit went
