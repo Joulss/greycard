@@ -532,9 +532,23 @@ fn orient_fractions([x, y, w, h]: [f32; 4], orientation: Orientation) -> [f32; 4
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FocusPoint {
     pub area: [f32; 4],
+    /// The shape of the picture the camera placed the point on, its
+    /// width over its height before the orientation: a picture of
+    /// another shape (a camera JPEG shot at 16:9 beside a 3:2 raw) is
+    /// not the one the fractions are of.
+    pub aspect: f32,
 }
 
 impl FocusPoint {
+    /// [`FocusPoint::aspect`] on the picture as `orientation` shows it.
+    pub fn oriented_aspect(&self, orientation: Orientation) -> f32 {
+        use Orientation::*;
+        match orientation {
+            Transpose | Rotate90 | Transverse | Rotate270 => 1.0 / self.aspect,
+            Normal | FlipHorizontal | Rotate180 | FlipVertical => self.aspect,
+        }
+    }
+
     /// The area on the picture as `orientation` shows it.
     pub fn oriented(&self, orientation: Orientation) -> [f32; 4] {
         orient_fractions(self.area, orientation)

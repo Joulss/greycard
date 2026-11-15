@@ -67,9 +67,10 @@ design note behind it.
 
 ### Library
 
-- On a Canon raw, **Space** and **Z** zoom to where the camera
-  focused, in Cull, the lightbox, and Develop
-  ([§688](https://github.com/jessolmstead/greycard/blob/master/docs/notes/688-the-cameras-focus-point.md)).
+- **Space** and **Z** zoom to where the camera focused, on Canon,
+  Nikon, Sony, Fujifilm, Panasonic, and Olympus and OM System raws
+  ([§688](https://github.com/jessolmstead/greycard/blob/master/docs/notes/688-the-cameras-focus-point.md),
+  [§692](https://github.com/jessolmstead/greycard/blob/master/docs/notes/692-the-focus-point-from-five-more-makers.md)).
 - Several chosen frames each wear a ring in the filmstrip, the current
   one the strongest
   ([§687](https://github.com/jessolmstead/greycard/blob/master/docs/notes/687-a-set-that-shows-in-the-strip.md)).

@@ -152,8 +152,10 @@ pub fn may_have_camera_frame(path: &Path) -> bool {
 /// does not say, focused by hand, or is of a maker not read, and for
 /// anything at `path` that is not a regular file (a FIFO would block
 /// the open). Reads the few small pieces of the head it needs and
-/// nothing else: a CR3's box headers up to its maker note, a CR2's
-/// IFDs. Canon is the maker read.
+/// nothing else: a CR3's box headers up to its maker note, a TIFF
+/// raw's IFDs and maker note, a RAF's or an RW2's embedded JPEG's EXIF.
+/// Canon, Nikon, Sony, Fujifilm, Panasonic, and Olympus and OM System
+/// are the makers read.
 pub fn focus_point_path(
     path: impl AsRef<Path>,
 ) -> Result<Option<(crate::raw::FocusPoint, Orientation)>> {
@@ -167,7 +169,8 @@ pub fn focus_point_path(
         || rawler_backend::half_copy_at(path),
         || {
             // The head in one read: a CR3's moov (30 to 60 KiB on the
-            // bodies seen) and a CR2's IFDs and maker note lie in it.
+            // bodies seen), and the maker note of every other raw
+            // read, lie in it.
             // Only a walk that runs past it reads the file again, a
             // piece at a time.
             let mut file = std::fs::File::open(path)?;
@@ -190,8 +193,8 @@ pub fn focus_point_bytes(bytes: &[u8]) -> Result<Option<(crate::raw::FocusPoint,
 }
 
 /// The extensions of the raws [`focus_point_path`] can find a point
-/// in: Canon's.
-const FOCUS_EXTENSIONS: [&str; 2] = ["cr3", "cr2"];
+/// in.
+const FOCUS_EXTENSIONS: [&str; 8] = ["cr3", "cr2", "nef", "arw", "raf", "rw2", "orf", "ori"];
 
 /// Whether the file at `path` is of a kind [`focus_point_path`] can
 /// find a point in, by its name alone.

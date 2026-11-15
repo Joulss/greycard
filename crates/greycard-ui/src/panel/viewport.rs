@@ -4468,6 +4468,7 @@ pub(crate) mod tests {
         // Right of and above the middle of the unturned 6000 by 4000.
         let point = FocusPoint {
             area: [0.7, 0.2, 0.1, 0.1],
+            aspect: 1.5,
         };
         let fit = || {
             let mut st = state.borrow_mut();
@@ -4565,6 +4566,7 @@ pub(crate) mod tests {
             st.develop.drawn_focus = Some((
                 FocusPoint {
                     area: [0.0, 0.0, 0.1, 0.1],
+                    aspect: 1.5,
                 },
                 Orientation::Normal,
             ));
@@ -4589,6 +4591,7 @@ pub(crate) mod tests {
         let point = Some((
             FocusPoint {
                 area: [0.7, 0.2, 0.1, 0.1],
+                aspect: 1.5,
             },
             Orientation::Normal,
         ));
@@ -4655,6 +4658,7 @@ pub(crate) mod tests {
         let point = Some((
             FocusPoint {
                 area: [0.7, 0.2, 0.1, 0.1],
+                aspect: 1.5,
             },
             Orientation::Normal,
         ));

@@ -1558,6 +1558,8 @@ pub(crate) fn loupe_focus_center(st: &State, app: &App) -> Option<(f32, f32)> {
     let path = st.path_of(c);
     let (point, tag) = crate::focus_points::known(path)??;
     let (mut u, mut v) = point.center(tag);
+    // The shape of the picture the point's fractions are of, as shown.
+    let mut shape = point.oriented_aspect(tag);
     // The camera's picture of a frame the camera framed comes cut to
     // that frame (`cull::cut_to_camera`), and the camera's JPEG beside
     // the raw is that cut already.
@@ -1566,8 +1568,20 @@ pub(crate) fn loupe_focus_center(st: &State, app: &App) -> Option<(f32, f32)> {
     {
         let [x, y, w, h] = frame.shown();
         (u, v) = ((u - x) / w, (v - y) / h);
+        shape *= w / h;
     }
     if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+        return None;
+    }
+    // A picture of another shape is not the one the point is on: a
+    // camera JPEG beside the raw shot at 16:9, 1:1, or 4:3 while the
+    // point is of the raw's 3:2. Within 1%, as the reader holds a
+    // decode's crop to the maker's picture.
+    let (sw, sh) = (preview.source.0 as f32, preview.source.1 as f32);
+    let seen = sw / sh;
+    let same =
+        shape.is_finite() && seen.is_finite() && (shape - seen).abs() <= 0.01 * shape.max(seen);
+    if !same {
         return None;
     }
     let from_panel = holding && Some(c) == st.current;
@@ -1577,7 +1591,6 @@ pub(crate) fn loupe_focus_center(st: &State, app: &App) -> Option<(f32, f32)> {
         flip,
         ..Geometry::default()
     };
-    let (sw, sh) = (preview.source.0 as f32, preview.source.1 as f32);
     let r = geometry.to_plane((u * sw, v * sh), sw, sh);
     let origin = geometry.frame(sw, sh, None).origin;
     Some((r.0 - origin.0, r.1 - origin.1))
@@ -7774,6 +7787,7 @@ pub(crate) mod tests {
         // Right of and above the middle of the sensor.
         let point = FocusPoint {
             area: [0.7, 0.2, 0.1, 0.1],
+            aspect: 1.5,
         };
         {
             let mut st = state.borrow_mut();
@@ -8022,12 +8036,57 @@ pub(crate) mod tests {
             .cache
             .insert(0, Arc::new(preview));
         let at = |st: &State, area: [f32; 4]| {
-            crate::focus_points::tell(&path, Some((FocusPoint { area }, Orientation::Normal)));
+            // Of the 4:3 sensor, which the cut makes 3:2.
+            let point = FocusPoint {
+                area,
+                aspect: 4.0 / 3.0,
+            };
+            crate::focus_points::tell(&path, Some((point, Orientation::Normal)));
             loupe_focus_center(st, &app)
         };
         // At three quarters down the sensor: (2250 - 166) of the cut.
         let c = at(&st, [0.45, 0.7, 0.1, 0.1]).unwrap();
         assert!(near(c, (2000.0, 2084.0)), "{c:?}");
         assert_eq!(at(&st, [0.45, 0.0, 0.1, 0.02]), None, "above the cut");
+    }
+
+    /// A camera JPEG beside the raw of another shape than the picture
+    /// the point is of (shot at 16:9, 1:1, or 4:3 beside a 3:2 point) is
+    /// not the one the fractions are of: no point. One of the point's
+    /// shape, turned by the tag or within 1%, takes it.
+    #[test]
+    fn a_paired_jpeg_of_another_shape_has_no_point() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let app = window(2);
+        let names = (0..2).map(|i| format!("/nowhere/focus-shape/IMG_{i:04}.CR3").into());
+        let (state, _worker) = state_for(&app, names.collect());
+        app.invoke_select(0);
+        let mut st = state.borrow_mut();
+        enter_cull(&mut st, &app, 1);
+        let path = st.path_of(0).clone();
+        let point = FocusPoint {
+            area: [0.45, 0.45, 0.1, 0.1],
+            aspect: 1.5,
+        };
+        let at = |st: &mut State, source: (u32, u32), tag: Orientation| {
+            let mut preview = cull::Preview::new(8, 6, vec![0; 192], source, false);
+            preview.companion = true;
+            st.culling
+                .cull
+                .as_mut()
+                .unwrap()
+                .cache
+                .insert(0, Arc::new(preview));
+            crate::focus_points::tell(&path, Some((point, tag)));
+            loupe_focus_center(st, &app)
+        };
+        for source in [(6000, 3376), (4000, 4000), (5328, 4000)] {
+            assert_eq!(at(&mut st, source, Orientation::Normal), None, "{source:?}");
+        }
+        assert_eq!(at(&mut st, (6000, 4000), Orientation::Rotate90), None);
+        let c = at(&mut st, (6000, 4000), Orientation::Normal).unwrap();
+        assert!(near(c, (3000.0, 2000.0)), "{c:?}");
+        assert!(at(&mut st, (6000, 3990), Orientation::Normal).is_some());
+        assert!(at(&mut st, (4000, 6000), Orientation::Rotate270).is_some());
     }
 }

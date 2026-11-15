@@ -1,7 +1,9 @@
 //! The camera's focus point read from a raw's head: a CR3's box walk to
-//! its maker note, or a CR2's IFDs, and Canon's AFInfo2 record. Never a
-//! panic, and a point found lies on the picture: its center within the
-//! frame, its size no larger than it, every number finite.
+//! its maker note and Canon's AFInfo2 record; a TIFF raw's IFDs to a
+//! CR2's, NEF's, ARW's, RW2's (through its embedded JPEG), or ORF's
+//! note; a RAF's header to its JPEG's note and its own metadata. Never
+//! a panic, and a point found lies on the picture: its center within
+//! the frame, its size no larger than it, every number finite.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;

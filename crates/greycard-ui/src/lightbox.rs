@@ -1411,6 +1411,7 @@ mod tests {
         assert!(app.get_lightbox() && app.get_lightbox_loupe());
         let point = FocusPoint {
             area: [0.7, 0.2, 0.1, 0.1],
+            aspect: 1.5,
         };
         let frames = [
             ((6000, 4000), Some((point, Orientation::Normal))),

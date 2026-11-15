@@ -405,10 +405,10 @@ pub(super) fn maker_note<R: Read + Seek>(
 
 pub(super) const TAG_MAKE: u16 = 0x010f;
 const TAG_ORIENTATION: u16 = 0x0112;
-const TAG_IMAGE_WIDTH: u16 = 0x0100;
-const TAG_IMAGE_LENGTH: u16 = 0x0101;
-const TAG_EXIF_IFD: u16 = 0x8769;
-const TAG_MAKER_NOTE: u16 = 0x927c;
+pub(super) const TAG_IMAGE_WIDTH: u16 = 0x0100;
+pub(super) const TAG_IMAGE_LENGTH: u16 = 0x0101;
+pub(super) const TAG_EXIF_IFD: u16 = 0x8769;
+pub(super) const TAG_MAKER_NOTE: u16 = 0x927c;
 pub(super) const TAG_DNG_VERSION: u16 = 0xc612;
 const TAG_DNG_PRIVATE_DATA: u16 = 0xc634;
 
@@ -424,8 +424,8 @@ const MAX_VALUE: u64 = 64 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Field {
     tag: u16,
-    typ: u16,
-    count: u32,
+    pub(super) typ: u16,
+    pub(super) count: u32,
     /// The value's position in the source.
     pub(super) at: u64,
     pub(super) endian: Endian,
@@ -469,8 +469,8 @@ pub(super) fn find(fields: &[Field], tag: u16) -> Option<Field> {
 /// count could ask for gigabytes, an abort the panic guard cannot
 /// catch.
 pub(super) struct Tiff<R> {
-    r: R,
-    len: u64,
+    pub(super) r: R,
+    pub(super) len: u64,
 }
 
 impl<R: Read + Seek> Tiff<R> {
@@ -480,7 +480,7 @@ impl<R: Read + Seek> Tiff<R> {
     }
 
     /// `n` bytes at `at`, an error when they run past the end.
-    fn read_at(&mut self, at: u64, n: u64) -> Result<Vec<u8>> {
+    pub(super) fn read_at(&mut self, at: u64, n: u64) -> Result<Vec<u8>> {
         if at.checked_add(n).is_none_or(|end| end > self.len) {
             return Err(note_error(format!(
                 "{n} bytes at {at} run past the end of the file"
@@ -526,7 +526,7 @@ impl<R: Read + Seek> Tiff<R> {
 
     /// A value's bytes; `None` for a type the reader does not know, a
     /// value over [`MAX_VALUE`] or one that runs past the end.
-    fn bytes(&mut self, f: &Field) -> Option<Vec<u8>> {
+    pub(super) fn bytes(&mut self, f: &Field) -> Option<Vec<u8>> {
         let size = type_size(f.typ)?.checked_mul(f.count as u64)?;
         if size > MAX_VALUE {
             return None;
@@ -807,7 +807,7 @@ fn fujifilm_raf(mut file: impl Read + Seek) -> Result<CameraStyle> {
 /// How much of a JPEG's head its EXIF is looked for in: the EXIF
 /// segment is the JPEG's first or second, and a segment is at most
 /// 64 KiB.
-const JPEG_HEAD: u64 = 160 * 1024;
+pub(super) const JPEG_HEAD: u64 = 160 * 1024;
 
 /// The head of the JPEG at `at`, `len` bytes long, as far as
 /// [`jpeg_exif`] looks into it: its markers and lengths and its APP1
@@ -816,7 +816,11 @@ const JPEG_HEAD: u64 = 160 * 1024;
 /// file's end. `jpeg_exif` finds in it what it finds in the head read
 /// whole; a camera JPEG's thumbnail segment, the most of that head, is
 /// never read.
-fn jpeg_head(file: &mut (impl Read + Seek), at: u64, len: u64) -> std::io::Result<Vec<u8>> {
+pub(super) fn jpeg_head(
+    file: &mut (impl Read + Seek),
+    at: u64,
+    len: u64,
+) -> std::io::Result<Vec<u8>> {
     let end = len.min(JPEG_HEAD) as usize;
     let mut head = vec![0u8; end];
     // Bytes `from..to` of the head read into place; false where the
@@ -834,7 +838,7 @@ fn jpeg_head(file: &mut (impl Read + Seek), at: u64, len: u64) -> std::io::Resul
         }
         Ok(true)
     };
-    if !fill(&mut head, 0, 2)? || head[..2] != [0xff, 0xd8] {
+    if !fill(&mut head, 0, 2)? || head.len() < 2 || head[..2] != [0xff, 0xd8] {
         return Ok(head);
     }
     let mut pos = 2;
@@ -881,7 +885,7 @@ fn fujifilm_from_jpeg(jpeg: &[u8]) -> Result<CameraStyle> {
 }
 
 /// The TIFF body of a JPEG's EXIF segment, if the head holds one.
-fn jpeg_exif(jpeg: &[u8]) -> Option<&[u8]> {
+pub(super) fn jpeg_exif(jpeg: &[u8]) -> Option<&[u8]> {
     if !jpeg.starts_with(&[0xff, 0xd8]) {
         return None;
     }
@@ -973,7 +977,7 @@ fn fujifilm_from_note(note: &[u8]) -> Result<CameraStyle> {
 }
 
 /// A maker note IFD's integer tag, first element.
-fn int_tag<R: Read + Seek>(tiff: &mut Tiff<R>, ifd: &[Field], tag: u16) -> Option<i64> {
+pub(super) fn int_tag<R: Read + Seek>(tiff: &mut Tiff<R>, ifd: &[Field], tag: u16) -> Option<i64> {
     find(ifd, tag).and_then(|f| tiff.int(&f))
 }
 
@@ -1426,7 +1430,7 @@ fn panasonic_from_note<R: Read + Seek>(tiff: &mut Tiff<R>, note: &Field) -> Resu
 // against exiv2's output on OM-1 and OM-5 files; the Tone Level and
 // Stacked Image layouts, which exiv2 does not name, are ExifTool's.
 
-const OLYMPUS_CAMERA_SETTINGS: u16 = 0x2020;
+pub(super) const OLYMPUS_CAMERA_SETTINGS: u16 = 0x2020;
 const OLYMPUS_SCENE_MODE: u16 = 0x0509;
 const OLYMPUS_SHADING_COMPENSATION: u16 = 0x050c;
 const OLYMPUS_GRADATION: u16 = 0x050f;
@@ -1505,7 +1509,7 @@ fn olympus_scene_named(code: i64) -> bool {
 
 /// An Olympus note's main IFD, the base its offsets count from, and its
 /// byte order; `None` for a note of no header the reader knows.
-fn olympus_note<R: Read + Seek>(
+pub(super) fn olympus_note<R: Read + Seek>(
     tiff: &mut Tiff<R>,
     note: &Field,
 ) -> Result<Option<(Vec<Field>, u64, Endian)>> {
@@ -1537,7 +1541,7 @@ fn olympus_note<R: Read + Seek>(
 /// A sub-IFD of an Olympus note by its tag: an offset (IFD or LONG), or
 /// the older bodies' UNDEFINED block that is the IFD itself. `None`
 /// when the note has no such entry.
-fn olympus_sub<R: Read + Seek>(
+pub(super) fn olympus_sub<R: Read + Seek>(
     tiff: &mut Tiff<R>,
     (ifd, base, endian): &(Vec<Field>, u64, Endian),
     tag: u16,
@@ -1702,12 +1706,12 @@ fn olympus_from_note<R: Read + Seek>(
 // exiv2's (its OlympusIp group); the coordinates were checked on a 3:2
 // frame, whose camera picture is the area's middle 3:2 band.
 
-const OLYMPUS_IMAGE_PROCESSING: u16 = 0x2040;
+pub(super) const OLYMPUS_IMAGE_PROCESSING: u16 = 0x2040;
 const OLYMPUS_CROP_LEFT: u16 = 0x0612;
 const OLYMPUS_CROP_TOP: u16 = 0x0613;
-const OLYMPUS_CROP_WIDTH: u16 = 0x0614;
-const OLYMPUS_CROP_HEIGHT: u16 = 0x0615;
-const OLYMPUS_ASPECT_FRAME: u16 = 0x1113;
+pub(super) const OLYMPUS_CROP_WIDTH: u16 = 0x0614;
+pub(super) const OLYMPUS_CROP_HEIGHT: u16 = 0x0615;
+pub(super) const OLYMPUS_ASPECT_FRAME: u16 = 0x1113;
 
 /// The camera's frame of the raw read from `file`, in sensor samples:
 /// `None` for a maker whose frame is not read, a DNG (whose converter
@@ -1818,6 +1822,26 @@ fn olympus_frame(
 mod tests {
     use super::*;
     use ::rawler::formats::tiff::GenericTiffReader;
+
+    /// A JPEG said to be 0 or 1 bytes long is a head of that many bytes
+    /// and no EXIF, not a panic; so is a RAF whose header says so, read
+    /// for its style.
+    #[test]
+    fn a_jpeg_of_under_two_bytes_has_no_exif() {
+        let file = [0xffu8, 0xd8, 0xff, 0xe1];
+        for len in [0, 1] {
+            let head = jpeg_head(&mut Cursor::new(&file), 0, len).unwrap();
+            assert_eq!(head.len(), len as usize);
+            assert_eq!(jpeg_exif(&head), None);
+            let mut raf = RAF_MAGIC.to_vec();
+            raf.resize(0x64, 0);
+            raf[0x54..0x58].copy_from_slice(&0x64u32.to_be_bytes());
+            raf[0x58..0x5c].copy_from_slice(&(len as u32).to_be_bytes());
+            raf.extend([0xff, 0xd8, 0xff, 0xd9]);
+            let style = read_stream(Cursor::new(raf)).unwrap().unwrap();
+            assert_eq!(style.style, None);
+        }
+    }
 
     /// A JPEG's head read by its segments gives `jpeg_exif` what the
     /// head read whole gives it: the EXIF after a JFIF segment and an

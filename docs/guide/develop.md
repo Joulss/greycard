@@ -18,8 +18,9 @@ pan and zoom straight away.
 
 - A **click** on the picture zooms to 1:1 there, and another goes
   back to fit. **Space** does the same, and **Z** zooms to 3:1.
-  From the fit view on a Canon raw, both keys zoom where the camera
-  focused, when the file says where.
+  From the fit view on a CR3, CR2, NEF, ARW, RAF, RW2, ORF, or ORI
+  raw, both keys zoom where the camera focused, when the file says
+  where.
 - A **middle click** on the picture zooms to 200% there, and another
   goes back to where you were.
 - The **Fit** button at the panel's foot fits the picture; its chevron,

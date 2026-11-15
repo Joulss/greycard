@@ -719,10 +719,12 @@ the user.
       other filters, and the camera's own copyright and artist
       shown read-only in METADATA (discussion 147, 2026-11-14);
       `date:` in the search field is the only date filter today
-- [ ] The camera's focus point, the rest (§688 reads Canon's and
-      takes Space and Z there): Nikon, Sony, Fuji, Olympus, and
-      Panasonic have theirs; older Canons' AFInfo and Canon DNGs;
-      in-camera aspect and crop modes, refused today; among several
+- [ ] The camera's focus point, the rest (§688, §692): Nikon DSLRs'
+      viewfinder points, which need each body's grid; Sony compacts,
+      Pentax, and NRW; older Canons' AFInfo and Canon DNGs; Fujifilm's
+      exact middle, refused unless a face holds it; the point through
+      the lens correction; in-camera aspect and crop modes, refused
+      today; among several
       areas in focus the nearest the frame's middle is taken, where a
       face or the largest cluster would be better; culling can show
       the point, and the focus score can be taken there

@@ -19,7 +19,7 @@ crash.
 | `filter`          | the filter language, printed back and parsed again         |
 | `dng_opcodes`     | a DNG's opcode list, its gain maps applied to a buffer     |
 | `dcp`             | a DCP camera profile, its map and look table on pixels     |
-| `focus_point`     | a raw's head to its focus point: CR3 boxes, CR2 IFDs       |
+| `focus_point`     | a raw's head to its focus point, every maker read          |
 
 The seeds in `corpus/<target>/seed-*` are taken from the crates' own
 tests and fixtures. What a run adds to a corpus is ignored by git.

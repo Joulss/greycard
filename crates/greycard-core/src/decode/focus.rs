@@ -26,14 +26,34 @@
 //! TIFF reader. Either reads a few small pieces of the file's head, so
 //! it serves the culling loupe's camera picture, which has no decode,
 //! as well as the decode.
+//!
+//! The other makers' notes are read in the submodules, each to a
+//! [`Spot`]: Nikon ([`nikon`]), Sony ([`sony`]), Fujifilm
+//! ([`fujifilm`]), Panasonic ([`panasonic`]), and Olympus and OM System
+//! ([`olympus`]). Their layouts follow ExifTool's tag documentation and
+//! `lib/Image/ExifTool/Nikon.pm`, `Sony.pm`, `FujiFilm.pm`,
+//! `Panasonic.pm`, and `Olympus.pm`, copyright Phil Harvey, under the
+//! same terms as Perl (the GPL or the Artistic License), each named in
+//! its module; the reading code is ours.
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
+use ::rawler::bits::Endian;
+
+use super::rawler_backend::RAF_MAGIC;
 use super::style::{
     Field, Maker, TAG_DNG_VERSION, TAG_MAKE, Tiff, find, maker_note, read_up_to, tiff_ifd0,
 };
 use crate::error::{Error, Result};
 use crate::raw::{FocusPoint, Orientation};
+
+#[cfg(test)]
+mod fixtures;
+mod fujifilm;
+mod nikon;
+mod olympus;
+mod panasonic;
+mod sony;
 
 /// The maker note's CameraSettings, whose element 7 is FocusMode.
 const CANON_CAMERA_SETTINGS: u16 = 0x0001;
@@ -95,15 +115,28 @@ pub(crate) fn focus_stream(
     file: impl Read + Seek,
     area: (usize, usize),
 ) -> Result<Option<FocusPoint>> {
-    Ok(read_canon(file)?.and_then(|note| canon_focus(note.mode, note.af.as_ref()?, area)))
+    Ok(match read_note(file)? {
+        Some(Note::Canon(note)) => note
+            .af
+            .as_ref()
+            .and_then(|af| canon_focus(note.mode, af, area)),
+        Some(Note::Spot(spot, _)) => spot.and_then(|s| spot_focus(&s, Some(area))),
+        None => None,
+    })
 }
 
 /// [`focus_stream`] with no decode: the point on the cropped area the
 /// note's SensorInfo gives (the decoder's crop on every Canon read),
 /// or the Canon image where it gives none, with the file's orientation.
 pub(crate) fn focus_head(file: impl Read + Seek) -> Result<Option<(FocusPoint, Orientation)>> {
-    let Some(note) = read_canon(file)? else {
-        return Ok(None);
+    let note = match read_note(file)? {
+        Some(Note::Canon(note)) => note,
+        Some(Note::Spot(spot, orientation)) => {
+            return Ok(spot
+                .and_then(|s| spot_focus(&s, None))
+                .map(|p| (p, orientation.unwrap_or_default())));
+        }
+        None => return Ok(None),
     };
     let Some(af) = note.af.as_ref() else {
         return Ok(None);
@@ -177,21 +210,57 @@ impl Seek for Head {
     }
 }
 
-/// The maker note's reading of a CR3 or a CR2; `None` for any other
-/// file.
-fn read_canon(mut file: impl Read + Seek) -> Result<Option<CanonNote>> {
+/// What a file's maker note says of its focus.
+enum Note {
+    Canon(CanonNote),
+    /// Another maker's: the point, none where the note gives none or
+    /// says the camera did not focus, and the file's orientation.
+    Spot(Option<Spot>, Option<Orientation>),
+}
+
+/// The maker note's reading of a CR3, a RAF, or a TIFF raw of a maker
+/// read; `None` for any other file.
+fn read_note(mut file: impl Read + Seek) -> Result<Option<Note>> {
     file.seek(SeekFrom::Start(0))?;
-    let mut head = [0u8; 12];
+    let mut head = [0u8; 16];
     let n = read_up_to(&mut file, &mut head)?;
     let head = &head[..n];
     file.seek(SeekFrom::Start(0))?;
     if head.len() >= 12 && &head[4..8] == b"ftyp" && &head[8..12] == b"crx " {
-        canon_cr3(file)
+        Ok(canon_cr3(file)?.map(Note::Canon))
+    } else if head.starts_with(RAF_MAGIC) {
+        let (spot, orientation) = fujifilm::read(file)?;
+        Ok(Some(Note::Spot(spot, orientation)))
     } else if head.starts_with(b"II") || head.starts_with(b"MM") {
-        canon_cr2(file)
+        tiff_raw(file)
     } else {
         Ok(None)
     }
+}
+
+/// A TIFF raw's note by its maker: a CR2's, a NEF's, an ARW's, an
+/// RW2's, or an ORF's. Not a DNG, whose maker note, where it came
+/// along, is not where this looks, and whose converter may have cut
+/// the picture otherwise.
+fn tiff_raw(file: impl Read + Seek) -> Result<Option<Note>> {
+    let mut tiff = Tiff::new(file)?;
+    let (ifd0, endian) = tiff_ifd0(&mut tiff)?;
+    if find(&ifd0, TAG_DNG_VERSION).is_some() {
+        return Ok(None);
+    }
+    let make = find(&ifd0, TAG_MAKE)
+        .and_then(|f| tiff.ascii(&f))
+        .unwrap_or_default();
+    let orientation = orientation(&mut tiff, &ifd0);
+    let spot = match Maker::from_make(&make) {
+        Maker::Canon => return Ok(canon_cr2(&mut tiff, &ifd0, endian)?.map(Note::Canon)),
+        Maker::Nikon => nikon::read(&mut tiff, &ifd0, endian)?,
+        Maker::Sony => sony::read(&mut tiff, &ifd0, endian)?,
+        Maker::Panasonic => panasonic::read(&mut tiff, &ifd0, endian)?,
+        Maker::Olympus | Maker::OmDigital => olympus::read(&mut tiff, &ifd0, endian)?,
+        Maker::Fujifilm | Maker::Other => return Ok(None),
+    };
+    Ok(Some(Note::Spot(spot, orientation)))
 }
 
 fn box_error(what: impl std::fmt::Display) -> Error {
@@ -308,28 +377,20 @@ fn canon_cr3(mut file: impl Read + Seek) -> Result<Option<CanonNote>> {
 }
 
 /// The maker note of a CR2: an IFD with no header whose offsets count
-/// from the TIFF's start. Not a DNG, whose maker note, where it came
-/// along, is not where this looks.
-fn canon_cr2(file: impl Read + Seek) -> Result<Option<CanonNote>> {
-    let mut tiff = Tiff::new(file)?;
-    let (ifd0, endian) = tiff_ifd0(&mut tiff)?;
-    if find(&ifd0, TAG_DNG_VERSION).is_some() {
-        return Ok(None);
-    }
-    let make = find(&ifd0, TAG_MAKE)
-        .and_then(|f| tiff.ascii(&f))
-        .unwrap_or_default();
-    if Maker::from_make(&make) != Maker::Canon {
-        return Ok(None);
-    }
-    let Some(note) = maker_note(&mut tiff, &ifd0, endian)? else {
+/// from the TIFF's start.
+fn canon_cr2<R: Read + Seek>(
+    tiff: &mut Tiff<R>,
+    ifd0: &[Field],
+    endian: Endian,
+) -> Result<Option<CanonNote>> {
+    let Some(note) = maker_note(tiff, ifd0, endian)? else {
         return Ok(None);
     };
-    let orientation = orientation(&mut tiff, &ifd0);
+    let orientation = orientation(tiff, ifd0);
     let fields = tiff.ifd(note.at, 0, note.endian)?;
     Ok(Some(CanonNote {
         orientation,
-        ..canon_note(&mut tiff, &fields)
+        ..canon_note(tiff, &fields)
     }))
 }
 
@@ -438,6 +499,7 @@ fn canon_focus(mode: Option<i64>, af: &AfInfo, (aw, ah): (usize, usize)) -> Opti
         && rect[3] <= 1.0;
     on.then(|| FocusPoint {
         area: rect.map(|v| v as f32),
+        aspect: (aw / ah) as f32,
     })
 }
 
@@ -456,6 +518,134 @@ fn middle_of(areas: &[AfArea]) -> Option<AfArea> {
         .iter()
         .copied()
         .reduce(|best, a| if d(&a) < d(&best) { a } else { best })
+}
+
+/// A point as another maker's note gives it: the area as fractions
+/// `[x, y, w, h]` of the picture the maker measures in, before the
+/// orientation, and that picture's size in the maker's units, which
+/// says its shape.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Spot {
+    rect: [f64; 4],
+    of: (f64, f64),
+}
+
+/// A point the maker gives no size for is drawn as a square this many
+/// times smaller than the picture's shorter side: about one AF area of
+/// the bodies that do give one.
+const POINT_SPAN: f64 = 16.0;
+
+impl Spot {
+    /// The area centered at (`cx`, `cy`), `w` by `h`, in units of a
+    /// picture `of`; a size of zero is a point, drawn [`POINT_SPAN`]
+    /// across. `None` for a picture of no size or a number not finite.
+    fn at(cx: f64, cy: f64, w: f64, h: f64, of: (f64, f64)) -> Option<Spot> {
+        if !(of.0 > 0.0 && of.1 > 0.0 && of.0.is_finite() && of.1.is_finite()) {
+            return None;
+        }
+        let (w, h) = if w > 0.0 && h > 0.0 {
+            (w, h)
+        } else {
+            let s = of.0.min(of.1) / POINT_SPAN;
+            (s, s)
+        };
+        let rect = [
+            (cx - w / 2.0) / of.0,
+            (cy - h / 2.0) / of.1,
+            w / of.0,
+            h / of.1,
+        ];
+        rect.iter()
+            .all(|v| v.is_finite())
+            .then_some(Spot { rect, of })
+    }
+
+    /// The area `[left, top, right, bottom]` in units of `of`.
+    fn spanning([l, t, r, b]: [f64; 4], of: (f64, f64)) -> Option<Spot> {
+        Spot::at((l + r) / 2.0, (t + b) / 2.0, r - l, b - t, of)
+    }
+}
+
+/// Of the boxes `[left, top, right, bottom]` that hold the point
+/// (`x`, `y`), the smallest: a face's eye over the face, the face over
+/// the body.
+fn smallest_holding(
+    boxes: impl IntoIterator<Item = [f64; 4]>,
+    (x, y): (f64, f64),
+) -> Option<[f64; 4]> {
+    let size = |b: &[f64; 4]| (b[2] - b[0]) * (b[3] - b[1]);
+    boxes
+        .into_iter()
+        .filter(|b| {
+            b[0] < b[2] && b[1] < b[3] && (b[0]..=b[2]).contains(&x) && (b[1]..=b[3]).contains(&y)
+        })
+        .reduce(|best, b| if size(&b) < size(&best) { b } else { best })
+}
+
+/// A rational value's elements, unsigned (RATIONAL) or signed
+/// (SRATIONAL); an element over zero is not a number.
+fn rationals<R: Read + Seek>(tiff: &mut Tiff<R>, f: &Field) -> Option<Vec<f64>> {
+    let b = tiff.bytes(f)?;
+    let word = |c: &[u8]| {
+        let c = [c[0], c[1], c[2], c[3]];
+        match f.endian {
+            Endian::Little => u32::from_le_bytes(c),
+            Endian::Big => u32::from_be_bytes(c),
+        }
+    };
+    let pairs = b.as_chunks::<8>().0.iter();
+    Some(match f.typ {
+        5 => pairs
+            .map(|p| f64::from(word(&p[..4])) / f64::from(word(&p[4..])))
+            .collect(),
+        10 => pairs
+            .map(|p| f64::from(word(&p[..4]) as i32) / f64::from(word(&p[4..]) as i32))
+            .collect(),
+        _ => return None,
+    })
+}
+
+/// A 16-bit word of a record at `at`, in the note's byte order.
+fn u16_in(endian: Endian, b: &[u8], at: usize) -> Option<u16> {
+    let c = b.get(at..at.checked_add(2)?)?;
+    Some(match endian {
+        Endian::Little => u16::from_le_bytes([c[0], c[1]]),
+        Endian::Big => u16::from_be_bytes([c[0], c[1]]),
+    })
+}
+
+/// Whether two sizes are of one shape, their aspects within `tol` of
+/// each other.
+fn same_shape((aw, ah): (f64, f64), (bw, bh): (f64, f64), tol: f64) -> bool {
+    let (a, b) = (aw / ah, bw / bh);
+    a.is_finite() && b.is_finite() && a > 0.0 && b > 0.0 && (a - b).abs() <= tol * a.max(b)
+}
+
+/// The focus point a maker's spot places on a decode's crop `area`
+/// pixels, or with no decode (`None`) on the maker's own picture, the
+/// whole of what the camera kept. The maker's picture is taken to be
+/// the crop, scaled: one of another shape (an aspect chosen in camera
+/// that the raw does not keep) is refused rather than guessed at. As
+/// with Canon's, a point whose center is off the picture or whose area
+/// is larger than it is none.
+fn spot_focus(spot: &Spot, area: Option<(usize, usize)>) -> Option<FocusPoint> {
+    if let Some((aw, ah)) = area
+        && !same_shape((aw as f64, ah as f64), spot.of, 0.01)
+    {
+        return None;
+    }
+    let [x, y, w, h] = spot.rect;
+    let area = spot.rect.map(|v| v as f32);
+    // A size so small it is no size once single precision.
+    let on = spot.rect.iter().all(|v| v.is_finite())
+        && area[2] > 0.0
+        && area[3] > 0.0
+        && w <= 1.0
+        && h <= 1.0
+        && (0.0..=1.0).contains(&(x + w / 2.0))
+        && (0.0..=1.0).contains(&(y + h / 2.0));
+    let aspect = (spot.of.0 / spot.of.1) as f32;
+    (on && aspect.is_finite() && aspect > 0.0).then_some(FocusPoint { area, aspect })
 }
 
 #[cfg(test)]
@@ -863,7 +1053,13 @@ mod tests {
     fn the_point_turns_with_the_picture() {
         let p = FocusPoint {
             area: [0.8, 0.1, 0.1, 0.1],
+            aspect: 1.5,
         };
+        assert_eq!(
+            p.oriented_aspect(crate::raw::Orientation::Rotate90),
+            1.0 / 1.5
+        );
+        assert_eq!(p.oriented_aspect(crate::raw::Orientation::Rotate180), 1.5);
         let (x, y) = p.center(crate::raw::Orientation::Rotate90);
         assert!(
             (x - 0.85).abs() < 1e-5 && (y - 0.85).abs() < 1e-5,
