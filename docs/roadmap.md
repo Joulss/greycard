@@ -1210,6 +1210,14 @@ clears or a tester asks for it.
       the empty corners kept for a pixel editor, and a scale beside
       the perspective sliders to bring back what was pushed out, as
       darktable has (discussion 149, 2026-11-14)
+- [ ] An aspect adjust beside the perspective sliders, stretching or
+      squashing one axis so a tower a strong vertical correction
+      stretched is its own height again, and a shear, as darktable's
+      rotate and perspective has (discussion 149, 2026-11-15)
+- [ ] Maybe: the generative remove on a card too small for it (a
+      4 GB card has Fast and Best greyed, §646): slowly on the CPU or
+      a lower-memory run. Nobody has timed it; measure before
+      promising (issue 153)
 - [ ] A crop copied to other frames, and the crop's numbers shown so
       one can be typed (discussion 59, 2026-11-12)
 - [ ] A reset on each section's header, on Develop, Crop, and a

@@ -289,6 +289,9 @@ than one. Keywords are added in the **METADATA** section (see
 [Keywords and a title](culling.md#keywords-and-a-title)) or brought
 in with a Lightroom catalog or an XMP.
 
+When the chips do not fit the row, it scrolls sideways: turn the
+mouse wheel over it, drag it, or hold Shift and turn the wheel.
+
 The count at the end of the row says how many frames are shown, for
 example "120 of 640". **Clear** shows the whole folder again.
 **Save...**, beside it, keeps the filter as a smart collection (see
