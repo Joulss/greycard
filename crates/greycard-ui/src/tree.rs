@@ -1703,6 +1703,65 @@ mod tests {
         crate::testing::remove_dir_retry(dir);
     }
 
+    /// A tile's menu opened by a right-click while the filter's words
+    /// have the focus, the presses as the window has them (its event
+    /// filter, which sets `menu-up` from Slint's popups, then Slint): a
+    /// back press over another tile only closes the menu, and the next
+    /// one visits the folder before, as the grid's side buttons do.
+    #[test]
+    fn a_tiles_menu_from_a_text_box_holds_the_folder_visit() {
+        use crate::panel::side_buttons::SideButtons;
+        use slint::platform::{PointerEventButton, WindowEvent, update_timers_and_animations};
+        use slint::winit_030::winit::event::{
+            DeviceId, ElementState, MouseButton, WindowEvent as Heard,
+        };
+        let dir = scratch("tiles-menu-box");
+        let (app, state, _worker) = studio(&dir);
+        app.set_grid_open(true);
+        update_timers_and_animations();
+        let visits = Rc::new(RefCell::new(Vec::new()));
+        let seen = visits.clone();
+        app.on_visit_folder(move |back| seen.borrow_mut().push(back));
+        let middle = |label: &str| {
+            let (at, size) = crate::testing::buttons(&app, label)[0];
+            slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0)
+        };
+        let mut b = SideButtons::default();
+        // A press as the window has it: its filter first, then Slint.
+        let mut press_over = |position, button: PointerEventButton| {
+            let heard = |state| Heard::MouseInput {
+                device_id: DeviceId::dummy(),
+                state,
+                button: match button {
+                    PointerEventButton::Back => MouseButton::Back,
+                    _ => MouseButton::Right,
+                },
+            };
+            b.event(&app, &heard(ElementState::Pressed));
+            for event in [
+                WindowEvent::PointerMoved { position },
+                WindowEvent::PointerPressed { position, button },
+                WindowEvent::PointerReleased { position, button },
+            ] {
+                app.window().dispatch_event(event);
+            }
+            b.event(&app, &heard(ElementState::Released));
+        };
+        crate::testing::press(&app, "/");
+        update_timers_and_animations();
+        let typing = app.global::<crate::Typing>();
+        assert_eq!(typing.get_boxes(), 1, "the filter's words");
+        press_over(middle("Folder cedar"), PointerEventButton::Right);
+        assert_eq!(typing.get_boxes(), 0, "the box let go");
+        assert!(app.get_menu_up());
+        press_over(middle("Folder birch"), PointerEventButton::Back);
+        assert!(visits.borrow().is_empty(), "the press only closed the menu");
+        assert!(!app.get_menu_up());
+        press_over(middle("Folder birch"), PointerEventButton::Back);
+        assert_eq!(*visits.borrow(), [true]);
+        done(&dir, state);
+    }
+
     /// A folder with folders under it has a tile for each, counted as
     /// the tree counts them, under it in all; one with none has none.
     /// The root's own view has its first-level folders.

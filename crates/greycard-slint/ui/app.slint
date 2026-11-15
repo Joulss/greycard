@@ -2832,16 +2832,21 @@ export component App inherits Window {
         if (!self.sync-open) { self.sync-paste = false; }
         if (!self.sync-open && !self.sheet-open()) { keys.focus(); }
     }
-    /// Whether the frame menu is up, for the surfaces. A press outside
-    /// a menu closes it and goes only to the menu area's parent, which
-    /// lets that one go by; for the frame menu, a zero-sized corner,
-    /// it reaches nothing. Its release goes to whatever is under the
-    /// pointer, which ignores a release it had no press for. Slint 1.18 does not say
-    /// whether a ContextMenuArea's menu is open, so it is read off the
-    /// keys: Slint's own menu takes the focus from them while it is up
-    /// and gives it back when it closes, however it closes. A native
-    /// menu (macOS, Windows) takes neither the focus nor the click.
-    out property <bool> menu-up: false;
+    /// Whether a menu or a popup is up, for the surfaces. A press
+    /// outside a menu closes it and goes only to the menu area's
+    /// parent, which lets that one go by; for the frame menu, a
+    /// zero-sized corner, it reaches nothing. Its release goes to
+    /// whatever is under the pointer, which ignores a release it had no
+    /// press for. Slint 1.18 does not say whether a ContextMenuArea's
+    /// menu is open, so it is read two ways. Off the keys: Slint's own
+    /// menu takes the focus from them while it is up and gives it back
+    /// when it closes, however it closes. And from Slint's own list of
+    /// the window's popups, set before each of the window's events is
+    /// dispatched (`panel::side_buttons`), for a menu opened while a
+    /// text box or a slider had the focus, which the keys never lost.
+    /// A native menu (macOS, Windows) takes neither the focus nor the
+    /// click, and holds the event loop while it is up.
+    in-out property <bool> menu-up: false;
     pure function menu-shown() -> bool {
         return root.menu-up;
     }
@@ -2949,10 +2954,12 @@ export component App inherits Window {
     /// or after, by the arrows' own step, Shift adding as theirs does;
     /// true, and the press goes no further. Elsewhere false, and it
     /// goes on as before: the grid's to the folders visited, the
-    /// loupe's to nobody. Not under a sheet, a menu, or a text field.
+    /// loupe's to nobody. Not under a sheet, a menu, a text field, or
+    /// a slider holding the keys.
     public function side-button(back: bool, shift: bool) -> bool {
         if (!root.cull-mode || root.grid-open || root.lightbox || root.sheet-open()
-            || root.menu-shown() || Typing.editing || Typing.boxes > 0) {
+            || root.menu-shown() || Typing.editing || Typing.boxes > 0
+            || SliderKeys.holder != 0) {
             return false;
         }
         root.tip-text = "";

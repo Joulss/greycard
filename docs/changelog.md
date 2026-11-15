@@ -80,6 +80,9 @@ design note behind it.
 
 ### Library
 
+- Several frames chosen show in the filmstrip: each wears a ring, the
+  current one the strongest
+  ([§687](https://github.com/jessolmstead/greycard/blob/master/docs/notes/687-a-set-that-shows-in-the-strip.md)).
 - In Cull, the mouse's back and forward buttons step to the previous
   and next frame, as the arrows do
   ([§685](https://github.com/jessolmstead/greycard/blob/master/docs/notes/685-back-and-forward-step-culls-frames.md)).

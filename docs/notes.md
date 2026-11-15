@@ -698,3 +698,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§684. A setup that starts no shell](notes/684-a-setup-that-starts-no-shell.md) (2026-11-15)
 - [§685. Back and forward step Cull's frames](notes/685-back-and-forward-step-culls-frames.md) (2026-11-15)
 - [§686. Highlight reconstruction against darktable and RawTherapee](notes/686-highlight-reconstruction-against-darktable-and-rawtherapee.md) (2026-11-15)
+- [§687. A set that shows in the strip, and a menu known to be up](notes/687-a-set-that-shows-in-the-strip.md) (2026-11-15)

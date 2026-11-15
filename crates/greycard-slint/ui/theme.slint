@@ -169,6 +169,12 @@ export global Theme {
     out property <color> accent-hover: #8dbbff;
     out property <color> accent-pressed: #5b95ec;
     out property <color> accent-muted: #6ea8ff40;
+    // The ring of a frame in the strip's set and not current: the
+    // accent at 60%, a full ring the eye finds over a dark picture or
+    // a bright one, and still a step below the current frame's
+    // (`accent-text`, the accent itself on the dark themes and
+    // Light's darker blue there). The same in every theme.
+    out property <color> selection-ring: #6ea8ff99;
     // The accent on a ground light in every theme (the lightbox on a
     // white canvas), where the blue itself is lost: Light's darker
     // blue, 8.6:1 on white, and its muted ring.

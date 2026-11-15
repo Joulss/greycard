@@ -138,7 +138,12 @@ export component Filmstrip inherits Rectangle {
                 height: root.cell-h;
                 // The current frame, and the set it is one of:
                 // every frame in the set wears the selection's
-                // ground, the current one its ring as well.
+                // ground and a full ring, the set's the accent at
+                // 60%, the current one's the accent itself (Light's
+                // darker blue on Light). The ground alone is the
+                // ring's 2 px under a picture that fills the cell,
+                // too little to find a set by, as the grid's plate
+                // round its smaller pictures is not.
                 property <bool> on: i == root.selected;
                 property <bool> in-set: on || t.chosen;
                 property <length> ring: root.strip-ring;
@@ -154,8 +159,8 @@ export component Filmstrip inherits Rectangle {
                     height: ring + photo-h + Theme.space-1 + ring;
                     border-radius: Theme.radius-sm;
                     background: in-set ? Theme.selection : (tt.has-hover ? Theme.hover : transparent);
-                    border-width: on ? 2px : (in-set ? 1px : 0);
-                    border-color: on ? Theme.accent : Theme.accent-muted;
+                    border-width: in-set ? 2px : 0;
+                    border-color: on ? Theme.accent-text : Theme.selection-ring;
                     animate background { duration: Theme.quick; }
                     // The picture, inset by the ring alone; below it
                     // the gap where a color label's band goes, whether

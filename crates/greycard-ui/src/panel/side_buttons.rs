@@ -13,6 +13,10 @@
 //! We act on the press, as the grid's side buttons do and as the arrows
 //! do. A button does not repeat, and a second press without a release
 //! between is not taken again.
+//!
+//! The same hook keeps the window's `menu-up` with Slint's own popups
+//! before each event goes on (`menu_up`), so a menu opened while a text
+//! box had the focus holds the step here and every surface's press.
 
 use slint::ComponentHandle;
 use slint::winit_030::EventResult;
@@ -34,15 +38,16 @@ impl SideButtons {
     /// or a change of the modifiers. PreventDefault for a press the
     /// window took and for that press's release.
     pub(crate) fn event(&mut self, app: &App, event: &WindowEvent) -> EventResult {
+        menu_up(app);
         match event {
             WindowEvent::ModifiersChanged(m) => {
                 self.shift = m.state().shift_key();
             }
             // A button held as the window lost the keyboard may never
-            // report its release here.
+            // report its release here. What its press was is kept: a
+            // release that does come still goes with its press.
             WindowEvent::Focused(false) => {
                 self.held = [false; 2];
-                self.taken = [false; 2];
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let i = match button {
@@ -72,8 +77,28 @@ impl SideButtons {
     }
 }
 
-/// The side buttons heard on `app`'s window from now on. Nothing on a
-/// backend other than winit's.
+/// The window's `menu-up` set from Slint's own list of its popups: a
+/// context menu, a sub-menu, or a combo box's list up, tooltips not
+/// counting. The keys' focus says so only when they had it as the
+/// menu opened; a menu opened from a text box or a slider took the
+/// focus from that instead. Called before each of the window's events
+/// is dispatched, so every surface asking `menu-shown` on that event
+/// has the answer as it stands; it lags a close only until the next
+/// event, and nothing reads it between.
+pub(crate) fn menu_up(app: &App) {
+    use slint::private_unstable_api::re_exports::{WindowInner, WindowKind};
+    let up = WindowInner::from_pub(app.window())
+        .active_popups()
+        .iter()
+        .any(|p| !matches!(p.window_kind, WindowKind::ToolTip));
+    if app.get_menu_up() != up {
+        app.set_menu_up(up);
+    }
+}
+
+/// The side buttons heard on `app`'s window from now on, and its
+/// `menu-up` kept with its popups. Nothing on a backend other than
+/// winit's.
 pub(crate) fn install(app: &App) {
     use slint::winit_030::WinitWindowAccessor;
     let weak = app.as_weak();
@@ -261,6 +286,94 @@ mod tests {
         assert!(!app.get_menu_up());
         assert!(steps.borrow().is_empty());
         // With all of them gone, the step.
+        assert_eq!(side(&mut b, &app, true), (true, true));
+        assert_eq!(*steps.borrow(), [(-1, false)]);
+    }
+
+    /// A menu opened while a text box has the focus: the box loses it,
+    /// not the keys, so `menu-up` is had from Slint's popups as the
+    /// next event comes in, and the step waits for the menu to close.
+    /// The help menu is opened as its key opens it, which moves no
+    /// focus. The grid's side buttons under a tile's menu are
+    /// `tree`'s test.
+    #[test]
+    fn a_menu_opened_from_a_text_box_holds_the_step() {
+        use slint::platform::update_timers_and_animations as settle;
+        let app = window(5);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = state_for(&app, folder(5));
+        let steps = steps_of(&app);
+        let typing = app.global::<crate::Typing>();
+        let popups = || {
+            slint::private_unstable_api::re_exports::WindowInner::from_pub(app.window())
+                .active_popups()
+                .len()
+        };
+        let mut b = SideButtons::default();
+        app.set_culling(true);
+        app.invoke_select(1);
+        settle();
+        let (at, size) = crate::testing::labeled(&app, "Frame title");
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        settle();
+        assert_eq!(typing.get_boxes(), 1, "the box has the focus");
+        app.set_help_menu_shown(true);
+        settle();
+        assert_eq!(popups(), 1, "the help menu");
+        assert_eq!(typing.get_boxes(), 0, "the menu took the box's focus");
+        assert!(!app.get_menu_up(), "the keys never had it to lose");
+        assert_eq!(side(&mut b, &app, true), (false, false));
+        assert!(app.get_menu_up(), "had from the popups");
+        assert!(steps.borrow().is_empty());
+        // Closed, the box has its focus back and holds the step as a
+        // box does; let go, the step.
+        press(&app, Key::Escape);
+        settle();
+        assert_eq!(popups(), 0);
+        assert_eq!(typing.get_boxes(), 1, "back to the box");
+        assert_eq!(side(&mut b, &app, true), (false, false), "the box");
+        assert!(!app.get_menu_up(), "the menu is gone");
+        typing.invoke_close_all();
+        settle();
+        assert_eq!(side(&mut b, &app, true), (true, true));
+        assert_eq!(*steps.borrow(), [(-1, false)]);
+    }
+
+    /// A press taken, the window losing the keyboard before its
+    /// release (Alt-Tab), and the release coming after all: it goes
+    /// with its press, not on to Slint alone.
+    #[test]
+    fn a_release_after_focus_lost_goes_with_its_press() {
+        let app = window(5);
+        let steps = steps_of(&app);
+        let mut b = SideButtons::default();
+        app.set_culling(true);
+        let prevented = |r| matches!(r, EventResult::PreventDefault);
+        assert!(prevented(
+            b.event(&app, &button(ElementState::Pressed, false))
+        ));
+        b.event(&app, &WindowEvent::Focused(false));
+        assert!(prevented(
+            b.event(&app, &button(ElementState::Released, false))
+        ));
+        // A press after it is a press of its own.
+        assert_eq!(side(&mut b, &app, false), (true, true));
+        assert_eq!(*steps.borrow(), [(1, false), (1, false)]);
+    }
+
+    /// A slider holding the keys is not stepped under, as the picture
+    /// does not take the keys from it.
+    #[test]
+    fn a_slider_holding_the_keys_keeps_the_frame() {
+        let app = window(5);
+        let steps = steps_of(&app);
+        let mut b = SideButtons::default();
+        app.set_culling(true);
+        let sliders = app.global::<crate::SliderKeys>();
+        sliders.set_holder(1);
+        assert_eq!(side(&mut b, &app, true), (false, false));
+        sliders.set_holder(0);
         assert_eq!(side(&mut b, &app, true), (true, true));
         assert_eq!(*steps.borrow(), [(-1, false)]);
     }

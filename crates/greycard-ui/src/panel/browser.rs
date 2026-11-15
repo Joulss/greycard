@@ -6865,4 +6865,136 @@ mod tests {
         };
         assert_eq!(app.get_filter_text(), typed);
     }
+
+    /// The strip's marks for the set and the current frame, five
+    /// frames with the middle three in the set and the middle one
+    /// current, over dark and over bright pictures (synthetic), in
+    /// each theme at scales 1 and 2, drawn by Slint's software
+    /// renderer. Run with `GREYCARD_STRIP_CAPTURES=DIR` and
+    /// `--ignored`.
+    #[test]
+    #[ignore]
+    fn capture_the_strips_set() {
+        use crate::testing;
+        use slint::platform::WindowEvent;
+        let Some(dir) = std::env::var_os("GREYCARD_STRIP_CAPTURES") else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A night street and a pale sky, 3:2: the ring against a
+        // picture darker than every theme's strip and one lighter.
+        let picture = |bright: bool| {
+            let (w, h) = (240u32, 160u32);
+            let mut px = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+            for (i, p) in px.make_mut_slice().iter_mut().enumerate() {
+                let (x, y) = (i as u32 % w, i as u32 / w);
+                let v = if bright {
+                    255 - (y * 30 / h) as u8 - (x * 10 / w) as u8
+                } else {
+                    4 + (y * 24 / h) as u8 + if (x / 30 + y / 40) % 3 == 0 { 10 } else { 0 }
+                };
+                let b = if bright { v - 6 } else { v.saturating_add(4) };
+                *p = slint::Rgba8Pixel::new(v, v, b, 255);
+            }
+            slint::Image::from_rgba8(px)
+        };
+        testing::drawing_backend();
+        for theme in ["Charcoal", "Grey", "Light"] {
+            for scale in [1.0f32, 2.0] {
+                for current_bright in [false, true] {
+                    let app = testing::window(5);
+                    app.window()
+                        .dispatch_event(WindowEvent::ScaleFactorChanged {
+                            scale_factor: scale,
+                        });
+                    let (w, h) = (1200.0, 800.0);
+                    app.window().set_size(slint::PhysicalSize::new(
+                        (w * scale) as u32,
+                        (h * scale) as u32,
+                    ));
+                    app.window().dispatch_event(WindowEvent::Resized {
+                        size: slint::LogicalSize::new(w, h),
+                    });
+                    app.global::<crate::Theme>().set_name(theme.into());
+                    let thumbs = (0..5)
+                        .map(|i| Thumb {
+                            name: format!("f{i:02}.CR3").into(),
+                            // The current frame's picture bright or
+                            // dark, the others alternating from it.
+                            image: picture((i % 2 == 0) == current_bright),
+                            chosen: (1..=3).contains(&i),
+                            ..Default::default()
+                        })
+                        .collect();
+                    crate::cells::set_rows(&app, thumbs);
+                    // The strip's cells, which its report asks for once
+                    // a folder's state is there to answer it.
+                    crate::cells::show(&app, crate::cells::View::Strip, 0, 5);
+                    app.set_selected(2);
+                    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+                    let shot = app.window().take_snapshot().expect("a drawing backend");
+                    let full = image::RgbaImage::from_raw(
+                        shot.width(),
+                        shot.height(),
+                        shot.as_bytes().to_vec(),
+                    )
+                    .unwrap();
+                    let (left, width) = crate::cells::strip_layout(&app)
+                        .place(4)
+                        .expect("five cells");
+                    let px = |v: f32| (v * scale).max(0.0).round() as u32;
+                    let top = h - app.get_strip_h();
+                    let part = image::imageops::crop_imm(
+                        &full,
+                        0,
+                        px(top),
+                        px(left + width + crate::strip::PAD),
+                        px(app.get_strip_h()),
+                    )
+                    .to_image();
+                    let name = format!(
+                        "{}-x{}-current-{}.png",
+                        theme.to_lowercase(),
+                        scale as u32,
+                        if current_bright { "bright" } else { "dark" },
+                    );
+                    part.save(dir.join(&name)).unwrap();
+                    // The same five on the Library grid, to
+                    // `GREYCARD_GRID_CAPTURES` when it is set.
+                    let Some(grid_dir) = std::env::var_os("GREYCARD_GRID_CAPTURES") else {
+                        continue;
+                    };
+                    let grid_dir = std::path::PathBuf::from(grid_dir);
+                    std::fs::create_dir_all(&grid_dir).unwrap();
+                    app.set_grid_open(true);
+                    crate::cells::show(&app, crate::cells::View::Grid, 0, 5);
+                    app.invoke_grid_range(0.0, 600.0, 5, 0.0);
+                    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+                    let cells: Vec<_> = i_slint_backend_testing::ElementHandle::find_by_element_id(
+                        &app,
+                        "GridSheet::ct",
+                    )
+                    .map(|c| testing::bounds_of(&c))
+                    .collect();
+                    assert_eq!(cells.len(), 5, "five cells on the sheet");
+                    let x0 = cells.iter().map(|b| b.0.x).fold(f32::MAX, f32::min) - 12.0;
+                    let y0 = cells.iter().map(|b| b.0.y).fold(f32::MAX, f32::min) - 12.0;
+                    let x1 = cells.iter().map(|b| b.0.x + b.1.width).fold(0.0, f32::max) + 12.0;
+                    let y1 = cells.iter().map(|b| b.0.y + b.1.height).fold(0.0, f32::max) + 12.0;
+                    let shot = app.window().take_snapshot().expect("a drawing backend");
+                    let full = image::RgbaImage::from_raw(
+                        shot.width(),
+                        shot.height(),
+                        shot.as_bytes().to_vec(),
+                    )
+                    .unwrap();
+                    image::imageops::crop_imm(&full, px(x0), px(y0), px(x1 - x0), px(y1 - y0))
+                        .to_image()
+                        .save(grid_dir.join(&name))
+                        .unwrap();
+                }
+            }
+        }
+    }
 }

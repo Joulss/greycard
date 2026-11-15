@@ -837,9 +837,15 @@ export component GridSheet inherits Rectangle {
                     background: t.label == 0 || root.lightbox ? transparent : Theme.plate-tint(Theme.sheet, t.label);
                     border-width: on ? 2px : (in-set ? 1px : 0);
                     // On a white surround the blue is lost: the dark one.
+                    // The current frame on the sheet as the strip has it,
+                    // in `accent-text`: the accent on the dark themes,
+                    // Light's darker blue on Light's sheet. The lightbox's
+                    // other grounds are the viewport's, not the theme's,
+                    // and keep the accent.
                     border-color: root.lightbox && root.ground-light
                         ? (on ? Theme.accent-dark : Theme.accent-dark-muted)
-                        : (on ? Theme.accent : Theme.accent-muted);
+                        : (on ? (root.lightbox ? Theme.accent : Theme.accent-text)
+                            : Theme.accent-muted);
                     Rectangle {
                         x: 0;
                         y: 0;
