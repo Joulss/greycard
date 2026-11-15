@@ -838,7 +838,9 @@ mod tests {
         let s = shown(&dt);
         assert!(s.starts_with("darktable-cli /w/in.dng /w/dt-segments.xmp /w/out.tif"));
         assert!(s.contains("--icc-type LIN_REC2020"));
-        assert!(s.contains("--core --configdir /w/darktable-config"));
+        // Joined by the platform, so the separator is Windows' own there.
+        let config = Path::new("/w").join("darktable-config");
+        assert!(s.contains(&format!("--core --configdir {}", config.display())));
         assert!(s.contains("--library :memory:"));
         let rt = command(
             &RAWTHERAPEE[0],
