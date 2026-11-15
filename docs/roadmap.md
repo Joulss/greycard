@@ -1109,6 +1109,14 @@ clears or a tester asks for it.
       rework four demosaics, the CA passes, and the denoise's
       transform. Waits on an ISO 12800 frame with true black in it;
       `examples/below_black.rs` takes the table again
+- [ ] The profiled denoise's Strength reaching its wavelet stage,
+      which runs at its own strength whatever the slider says, so the
+      low end leaves the mottling and color noise it asks to keep;
+      the default renders as now, other stored values move, so it
+      needs a look at renders first
+- [ ] A mix with the original for the profiled denoise, as the
+      learned one's Luma and Chroma: weighed against a lower
+      Strength, which keeps edges better at the same grain
 - [ ] The profiled denoise's unbiased inverse has a pole below zero
       when the fitted `b` is zero (`Vst`, §549): nothing reaches it
       today, since the develop never hands the denoise a negative, but
