@@ -620,4 +620,142 @@ mod tests {
         double_click(&app, "strip-edge");
         assert_eq!(state.borrow().views.thumb_want, crate::worker::THUMB_WIDTH);
     }
+
+    /// The label column's width at the default panel, and its cap.
+    const LEAST: f32 = 68.0;
+    const MOST: f32 = 116.0;
+    /// The gap between a slider's label and its track, and the room
+    /// its value has at the right.
+    const GAP: f32 = 8.0;
+    const VALUE: f32 = 60.0;
+
+    /// The Text a row's label is drawn in.
+    fn label_text(app: &App, label: &str) -> ElementHandle {
+        ElementHandle::find_by_element_type_name(app, "Text")
+            .find(|e| e.accessible_label().is_some_and(|l| l == label))
+            .unwrap_or_else(|| panic!("the {label:?} label"))
+    }
+
+    /// A slider's label column and its track's width, as laid out:
+    /// from the label's left to the track, and from there to the value
+    /// field less the gap before it.
+    fn slider_parts(app: &App, label: &str) -> (f32, f32) {
+        let (at, size) = crate::testing::labeled(app, label);
+        let text = label_text(app, label);
+        let field = ElementHandle::find_by_accessible_label(app, &format!("{label} value"))
+            .next()
+            .unwrap_or_else(|| panic!("{label}'s value"));
+        assert_eq!(text.absolute_position().x, at.x, "{label}");
+        let column = text.size().width + GAP;
+        let track = field.absolute_position().x - GAP - (at.x + column);
+        // The field keeps its place at the row's right.
+        assert_eq!(
+            field.absolute_position().x,
+            at.x + size.width - VALUE + GAP,
+            "{label}"
+        );
+        (column, track)
+    }
+
+    fn right_at(app: &App, width: f32) {
+        app.set_right_size(width);
+        settle(app);
+        settle(app);
+    }
+
+    /// The panel's label column is 68 px at its default width and
+    /// under; dragged wider, the labels take the extra first, up to the
+    /// cap, the tracks staying as they were, and only then do the tracks
+    /// grow. The sliders and the rows with a control share it.
+    #[test]
+    fn a_wider_panel_widens_the_labels_first() {
+        let app = loupe();
+        let column = |app: &App| app.global::<crate::LabelColumn>().get_width();
+        assert_eq!(column(&app), LEAST);
+        let (label, track) = slider_parts(&app, "Roundness");
+        assert_eq!(label, LEAST);
+        // The narrowest panel takes its room from the tracks alone.
+        right_at(&app, 280.0);
+        assert_eq!(column(&app), LEAST);
+        assert_eq!(slider_parts(&app, "Roundness"), (LEAST, track - 40.0));
+        // Wider: the labels first.
+        for (panel, label) in [(344.0, 92.0), (RIGHT + MOST - LEAST, MOST)] {
+            right_at(&app, panel);
+            assert_eq!(column(&app), label, "at {panel}");
+            assert_eq!(
+                slider_parts(&app, "Roundness"),
+                (label, track),
+                "at {panel}"
+            );
+            assert_eq!(slider_parts(&app, "Exposure"), (label, track), "at {panel}");
+        }
+        // Past the cap, the tracks.
+        right_at(&app, 420.0);
+        assert_eq!(column(&app), MOST);
+        let grown = 420.0 - RIGHT - (MOST - LEAST);
+        assert_eq!(slider_parts(&app, "Roundness"), (MOST, track + grown));
+        // As wide as the window lets it, a third of it.
+        right_at(&app, W / 3.0);
+        assert_eq!(column(&app), MOST);
+        let grown = W / 3.0 - RIGHT - (MOST - LEAST);
+        assert_eq!(slider_parts(&app, "Roundness"), (MOST, track + grown));
+        // The Crop tab's rows with a control keep to the same column.
+        app.set_panel_tab("Crop".into());
+        settle(&app);
+        let _ = crate::testing::labeled(&app, "Aspect");
+        assert_eq!(label_text(&app, "Aspect").size().width, MOST);
+        // Back to the default: as it was.
+        right_at(&app, RIGHT);
+        assert_eq!(column(&app), LEAST);
+        assert_eq!(label_text(&app, "Aspect").size().width, LEAST);
+    }
+
+    /// "Roundness", the longest English slider label that the default
+    /// column cuts, is whole from a 324 px panel on: 62.6 px at the
+    /// panel's type in Noto Sans, the Linux default (Segoe UI and San
+    /// Francisco set it narrower), in a column 72 px wide less the gap.
+    #[test]
+    fn roundness_is_whole_from_a_324_px_panel() {
+        const ROUNDNESS: f32 = 62.6;
+        let app = loupe();
+        let (label, _) = slider_parts(&app, "Roundness");
+        assert!(label - GAP < ROUNDNESS, "cut at the default");
+        right_at(&app, 324.0);
+        let (label, _) = slider_parts(&app, "Roundness");
+        assert!(label - GAP >= ROUNDNESS, "whole at 324: {label}");
+    }
+
+    /// A width kept from the last run sets the column with the panel,
+    /// before anything is drawn; a hidden panel leaves it at the least.
+    #[test]
+    fn a_kept_width_sets_the_column_at_the_start() {
+        let app = loupe();
+        let kept = Settings {
+            right_width: Some(400.0),
+            ..Settings::default()
+        };
+        show(&app, &kept);
+        // The change handlers' one run, as before a frame.
+        slint::platform::update_timers_and_animations();
+        assert_eq!(app.global::<crate::LabelColumn>().get_width(), MOST);
+        app.set_right_hidden(true);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(app.global::<crate::LabelColumn>().get_width(), LEAST);
+        app.set_right_hidden(false);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(app.global::<crate::LabelColumn>().get_width(), MOST);
+    }
+
+    /// The export sheet keeps its own 68 px column, however wide the
+    /// panel.
+    #[test]
+    fn the_export_sheet_keeps_its_column() {
+        let app = loupe();
+        right_at(&app, 420.0);
+        app.set_export_open(true);
+        settle(&app);
+        settle(&app);
+        assert_eq!(label_text(&app, "Quality").size().width, LEAST - GAP);
+        assert_eq!(label_text(&app, "Format").size().width, LEAST);
+    }
 }

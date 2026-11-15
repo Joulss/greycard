@@ -1,7 +1,7 @@
 // What the screen shows the picture through: the soft proof and the
 // monitor's profile, with the surround behind the picture.
 
-import { Theme } from "../theme.slint";
+import { Theme, LabelColumn } from "../theme.slint";
 import { Section, Toggle, PanelButton, Segmented, Swatches } from "../controls.slint";
 
 export component ProofSection inherits Section {
@@ -107,7 +107,7 @@ export component MonitorSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         // Monitor section: the canvas shade row
-        Text { text: @tr("Canvas"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Canvas"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Swatches {
             colors: root.canvas-colors;
             ringed: true;

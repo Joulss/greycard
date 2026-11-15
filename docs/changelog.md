@@ -61,6 +61,10 @@ design note behind it.
   folds it. Crop, Rotate, and Perspective group their tools. Thanks to
   Joulss (PR 136,
   [§670](https://github.com/jessolmstead/greycard/blob/master/docs/notes/670-the-right-panels-sections-and-tools.md)).
+- Dragging the right panel wider gives the width to the sliders'
+  labels first, then to their tracks, so a label the default width
+  cuts ("Roundness", and many more in French) reads whole
+  ([§672](https://github.com/jessolmstead/greycard/blob/master/docs/notes/672-the-panels-label-column-grows-with-the-panel.md)).
 
 ### Library
 

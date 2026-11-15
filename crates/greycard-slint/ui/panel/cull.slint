@@ -1,7 +1,7 @@
 // The CULLING section: the mode's keys, the frame's turn, the
 // browser's filter, the compare view and the two ways out.
 
-import { Theme } from "../theme.slint";
+import { Theme, LabelColumn } from "../theme.slint";
 import { FilterChip, FacetRow, SortMenu } from "../structs.slint";
 import { Section, PanelButton, Segmented, Toggle } from "../controls.slint";
 import { FilterBar } from "filter.slint";
@@ -68,13 +68,13 @@ export component CullSection inherits Section {
     // full size without the edit panel. In a panel too narrow for the
     // label and both buttons whole beside it, the label goes over them,
     // as the filter's group names do.
-    property <bool> picture-over: 68px + 2 * Theme.space-2 + camera-jpeg.preferred-width
+    property <bool> picture-over: LabelColumn.width + 2 * Theme.space-2 + camera-jpeg.preferred-width
         + developed.preferred-width > self.body-width;
     // Culling section: the row that picks which picture is shown
     if root.picture-over: Text { text: @tr("Picture"); color: Theme.text; font-size: Theme.font-sm; }
     HorizontalLayout {
         spacing: Theme.space-2;
-        if !root.picture-over: Text { text: @tr("Picture"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        if !root.picture-over: Text { text: @tr("Picture"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         camera-jpeg := PanelButton {
             text: @tr("Camera JPEG");
             primary: !root.developed;
@@ -106,7 +106,7 @@ export component CullSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         // Culling section: the row with the Left and Right buttons
-        Text { text: @tr("Turn"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Turn"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         PanelButton {
             text: @tr("Left");
             icon: @image-url("../icons/rotate-ccw.svg");
@@ -161,7 +161,7 @@ export component CullSection inherits Section {
     // The compare view is the camera JPEG's alone.
     if !root.developed: HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: @tr("Compare"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Compare"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Segmented {
             // Three is shown only while Compare versions has put the
             // view at three; it is never offered otherwise.

@@ -338,6 +338,8 @@ export component ExportSheet inherits Rectangle {
                         }
                         EditSlider {
                             label: @tr("Quality");
+                            // The sheet's own column, not the panel's.
+                            label-width: 68px;
                             enabled: root.export-format == "JPEG";
                             minimum: 50;
                             maximum: 100;
@@ -499,6 +501,7 @@ export component ExportSheet inherits Rectangle {
                                 EditSlider {
                                     // Export watermark: the slider
                                     label: @tr("Size");
+                                    label-width: 68px;
                                     minimum: 1;
                                     maximum: 50;
                                     default: 15;
@@ -510,6 +513,7 @@ export component ExportSheet inherits Rectangle {
                                 EditSlider {
                                     // Export watermark: the slider
                                     label: @tr("Margin");
+                                    label-width: 68px;
                                     minimum: 0;
                                     maximum: 10;
                                     default: 2;
@@ -521,6 +525,7 @@ export component ExportSheet inherits Rectangle {
                                 EditSlider {
                                     // Export watermark: the slider
                                     label: @tr("Opacity");
+                                    label-width: 68px;
                                     minimum: 5;
                                     maximum: 100;
                                     default: 60;
@@ -586,6 +591,7 @@ export component ExportSheet inherits Rectangle {
                         if root.export-border: EditSlider {
                             // Export border: the slider
                             label: @tr("Width");
+                            label-width: 68px;
                             minimum: 0.5;
                             maximum: 25;
                             default: 5;

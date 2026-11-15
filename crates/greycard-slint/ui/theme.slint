@@ -57,6 +57,21 @@ export global ScrollBars {
     out property <length> band: lit + 8px;
 }
 
+// The develop panel's label column: the room a row's label has before
+// its slider's track or its control, one width down the whole panel so
+// the tracks line up. `least` at the panel's default width and under;
+// as the panel is dragged wider the column takes the extra first, up to
+// `most`, and only then do the tracks grow. `most` holds the panel's
+// longest labels, English and French, at the panel's type. The window
+// sets `panel-width` as the panel's width changes. The sheets keep a
+// 68 px column of their own.
+export global LabelColumn {
+    in-out property <length> panel-width: 320px;
+    out property <length> least: 68px;
+    out property <length> most: 116px;
+    out property <length> width: clamp(least + panel-width - 320px, least, most);
+}
+
 export global Theme {
     /// The palette by name: "Charcoal", "Grey", or "Light"; any other
     /// reads as Charcoal. Set from the Settings sheet's Theme row.

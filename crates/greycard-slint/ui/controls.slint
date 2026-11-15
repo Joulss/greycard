@@ -2,7 +2,7 @@
 // (rest, hover, pressed, disabled) and a focus ring where it takes
 // focus. Icons are Lucide (ISC, see icons/LICENSE), tinted here.
 
-import { Theme, ScrollBars } from "theme.slint";
+import { Theme, ScrollBars, LabelColumn } from "theme.slint";
 
 // The window's one hover text, written by whatever has rested under the
 // pointer (a `TipArea`) and drawn by the window over everything: it
@@ -935,9 +935,10 @@ export component EditSlider inherits Rectangle {
     accessible-enabled: root.enabled;
 
     height: Theme.control-height;
-    // Wider for a section whose labels run long; the sliders of one
-    // block share it so their tracks line up.
-    in property <length> label-width: 68px;
+    // The develop panel's label column, or wider for a block whose
+    // labels run long; the sliders of one block share it so their
+    // tracks line up.
+    in property <length> label-width: LabelColumn.width;
     property <length> value-width: 60px;
     property <length> track-left: label-width;
     property <length> track-right: self.width - value-width;

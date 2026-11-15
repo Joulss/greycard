@@ -2,7 +2,7 @@
 // found, the manual corrections, and the defringe.
 
 import { ComboBox, LineEdit } from "std-widgets.slint";
-import { Theme } from "../theme.slint";
+import { Theme, LabelColumn } from "../theme.slint";
 import { Section, EditSlider, Steps, Toggle, PanelButton, Typing } from "../controls.slint";
 
 export component LensSection inherits Section {
@@ -58,7 +58,7 @@ export component LensSection inherits Section {
     // width of its own.
     HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: @tr("Maker"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Maker"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         ComboBox {
             min-width: 64px;
             horizontal-stretch: 1;
@@ -84,7 +84,7 @@ export component LensSection inherits Section {
     Rectangle { height: Theme.space-1; }
     HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: @tr("Lens"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Lens"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         ComboBox {
             model: root.lens-choice-labels;
             current-index <=> root.lens-choice-index;

@@ -4,7 +4,7 @@
 // row that adds another to it, the first of those sections.
 
 import { LineEdit } from "std-widgets.slint";
-import { Theme } from "../theme.slint";
+import { Theme, LabelColumn } from "../theme.slint";
 import { Tips, TipArea, Section, EditSlider, Steps, Toggle, PanelButton, Segmented, Typing, ScrollPane, ButtonKeys } from "../controls.slint";
 
 // The list: Global, then each mask with its switch, the chosen one
@@ -400,7 +400,7 @@ export component AdjustmentsSection inherits Section {
                 // The whole mask's edge drawn onto the picture's.
                 EditSlider {
                     label: @tr("Refine edge");
-                    label-width: 84px;
+                    label-width: max(84px, LabelColumn.width);
                     minimum: 0;
                     maximum: 1;
                     default: 0;
@@ -416,7 +416,7 @@ export component AdjustmentsSection inherits Section {
                 EditSlider {
                     // Mask: the strength of its whole look
                     label: @tr("Opacity");
-                    label-width: 84px;
+                    label-width: max(84px, LabelColumn.width);
                     minimum: 0;
                     maximum: 1;
                     default: 1;
@@ -738,7 +738,7 @@ export component AdjustmentsSection inherits Section {
                         }
                         EditSlider {
                             label: @tr("Hue");
-                            label-width: 84px;
+                            label-width: max(84px, LabelColumn.width);
                             tinted: true;
                             tint: root.hue-circle;
                             minimum: 0;
@@ -752,7 +752,7 @@ export component AdjustmentsSection inherits Section {
                         }
                         EditSlider {
                             label: @tr("Width");
-                            label-width: 84px;
+                            label-width: max(84px, LabelColumn.width);
                             minimum: 0;
                             maximum: 180;
                             default: 60;
@@ -765,7 +765,7 @@ export component AdjustmentsSection inherits Section {
                         EditSlider {
                             // Color range: the fade
                             label: @tr("Hue fade");
-                            label-width: 84px;
+                            label-width: max(84px, LabelColumn.width);
                             minimum: 0;
                             maximum: 90;
                             default: 25;
@@ -777,7 +777,7 @@ export component AdjustmentsSection inherits Section {
                         }
                         EditSlider {
                             label: @tr("Chroma");
-                            label-width: 84px;
+                            label-width: max(84px, LabelColumn.width);
                             minimum: 0;
                             maximum: 0.2;
                             default: 0.02;
@@ -795,7 +795,7 @@ export component AdjustmentsSection inherits Section {
                         EditSlider {
                             // Color range: the fade
                             label: @tr("Chroma fade");
-                            label-width: 84px;
+                            label-width: max(84px, LabelColumn.width);
                             minimum: 0;
                             maximum: 0.1;
                             default: 0.01;

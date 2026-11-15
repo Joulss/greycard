@@ -6,9 +6,9 @@
 // bound to the properties and callbacks below that it uses.
 
 import { Palette } from "std-widgets.slint";
-import { Theme, ScrollBars } from "theme.slint";
-// The theme's name is read on the Rust side's tests.
-export { Theme, ScrollBars } from "theme.slint";
+import { Theme, ScrollBars, LabelColumn } from "theme.slint";
+// The theme's name and the label column are read on the Rust side's tests.
+export { Theme, ScrollBars, LabelColumn } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys, ButtonKeys } from "controls.slint";
@@ -2825,13 +2825,20 @@ export component App inherits Window {
         root.strip-photo-most = max(root.strip-photo-default,
             root.height / 3 - root.strip-pad - root.strip-cell-rest - root.strip-foot);
     }
-    init => { root.ceilings(); }
+    init => {
+        root.ceilings();
+        LabelColumn.panel-width = root.right-w;
+    }
     changed width => { root.ceilings(); }
     changed height => { root.ceilings(); }
     changed strip-photo-default => { root.ceilings(); }
     changed strip-foot => { root.ceilings(); }
     property <length> left-w: root.left-hidden ? 0px : clamp(root.left-size, 200px, root.left-most);
     property <length> right-w: root.right-hidden ? 0px : clamp(root.right-size, 280px, root.right-most);
+    // The panel's label column follows its width; Slint runs the
+    // handler before the next frame, so a kept width is right on the
+    // first.
+    changed right-w => { LabelColumn.panel-width = root.right-w; }
     // The strip's foot grows with the scroll bar's size, so a wider
     // thumb still keeps off the frames.
     out property <length> strip-h: root.strip-hidden ? 0px : root.strip-pad + root.strip-cell-h + root.strip-foot;
