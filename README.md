@@ -103,6 +103,23 @@ patch fill works everywhere.
 [Building from source](docs/building.md) is a `cargo build --release`
 once the libraries are in, and one script for the AI runtime.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io),
+certificate by [SignPath Foundation](https://signpath.org).
+
+Committer, reviewer, and approver:
+[Jess Olmstead](https://github.com/jessolmstead). Everyone else's
+work comes in as a pull request, and I review each one before it's
+merged.
+
+Privacy: greycard has no accounts, telemetry, or analytics. On its
+own it does one thing over the network: once a day at launch it asks
+GitHub whether there's a newer release, and you can turn that off in
+Settings. Everything else it downloads (AI models, the lens database,
+a CPU runtime) it asks about first. **Report a problem** opens a
+prefilled GitHub issue in your browser and sends nothing itself.
+
 ## Feedback
 
 Bugs, feature requests, things you love or hate: please tell me. Use
