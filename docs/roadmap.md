@@ -1188,6 +1188,9 @@ clears or a tester asks for it.
 - [ ] Idea: AI highlight recovery
 - [ ] Maybe: MCP
 - [ ] Maybe: Depth mapping for blur
+- [ ] Maybe: a Fill painted but not generated kept in the sidecar, as
+      a row in the list marked not made, so its strokes survive a quit;
+      build it if strokes lost at quit are missed
 - [ ] Bloom: a soft glow around the highlights
 - [ ] Halation: the red glow film gives a bright edge, as an effect
       of its own beside the grain
