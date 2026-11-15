@@ -2941,6 +2941,25 @@ export component App inherits Window {
             || root.lr-open || root.rt-open || root.keys-open;
     }
 
+    /// A mouse's back (true) or forward button pressed anywhere over
+    /// the window, heard from the window's own events before any
+    /// TouchArea has it (`panel::side_buttons`): Slint gives a press
+    /// to the topmost TouchArea under the pointer whatever the button,
+    /// so no element of ours sees every one. In Cull, the frame before
+    /// or after, by the arrows' own step, Shift adding as theirs does;
+    /// true, and the press goes no further. Elsewhere false, and it
+    /// goes on as before: the grid's to the folders visited, the
+    /// loupe's to nobody. Not under a sheet, a menu, or a text field.
+    public function side-button(back: bool, shift: bool) -> bool {
+        if (!root.cull-mode || root.grid-open || root.lightbox || root.sheet-open()
+            || root.menu-shown() || Typing.editing || Typing.boxes > 0) {
+            return false;
+        }
+        root.tip-text = "";
+        root.step(back ? -1 : 1, shift);
+        return true;
+    }
+
     // A value typed into a field, set or let go: the keys are the
     // window's again, as when a sheet closes.
     // Under the export sheet, which has fields and sliders of its

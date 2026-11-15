@@ -720,8 +720,10 @@ the user.
       other filters, and the camera's own copyright and artist
       shown read-only in METADATA (discussion 147, 2026-11-14);
       `date:` in the search field is the only date filter today
-- [ ] The mouse's back and forward buttons step to the previous and
-      next frame in Cull (2026-11-15)
+- [ ] A set of several frames is hard to see in Cull: the strip's
+      mark is a 2 px ring at 15% and a 1 px border at 25%, round a
+      cell the photo fills, so Shift with an arrow looks like a plain
+      step (2026-11-15)
 - [ ] The camera's focus point read from the raw (Canon's AFInfo
       carries the frame's position and size against the image; Nikon,
       Sony, Fuji, Olympus, and Panasonic have theirs): the zoom

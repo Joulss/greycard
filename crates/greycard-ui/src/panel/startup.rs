@@ -384,6 +384,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(instance) = instance {
         crate::panel::handed::serve(&app, instance);
     }
+    // A mouse's back and forward buttons, heard before Slint routes
+    // them, so they step Cull's frames wherever the pointer is.
+    crate::panel::side_buttons::install(&app);
     // A slider turns the wheel back under natural scrolling: a
     // wheel's way here, a touchpad's set per event where they differ.
     // Read on a thread nothing waits for: on GNOME it is two

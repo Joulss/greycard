@@ -80,6 +80,9 @@ design note behind it.
 
 ### Library
 
+- In Cull, the mouse's back and forward buttons step to the previous
+  and next frame, as the arrows do
+  ([§685](https://github.com/jessolmstead/greycard/blob/master/docs/notes/685-back-and-forward-step-culls-frames.md)).
 - An Olympus or OM System High Res Shot's `.ORI` (the single frame
   saved beside the merged `.ORF`) is a raw like any other: listed,
   imported, developed, and exported. The stem's `NAME.xmp`, `NAME.pp3`,

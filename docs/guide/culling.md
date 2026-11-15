@@ -152,7 +152,8 @@ and lens, then the focal length, aperture, shutter and ISO, as
 editing does. In compare, they are the chosen frame's.
 They fill in once greycard has indexed the folder.
 
-- **← →** move between frames.
+- **← →** move between frames. A mouse's back and forward side
+  buttons do the same, wherever the pointer is.
 - **Space** zooms to 1:1 to check focus, and back. At 1:1 you always
   see the camera's full JPEG, even on an edited frame, and in compare
   every frame shows its own, versions of one frame excepted.
