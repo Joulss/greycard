@@ -621,6 +621,12 @@ comes across with its ratings and collections.
       that snap to the values the folder has, in place of a chip for
       every value; they write the `iso>=` and `iso<=` terms the filter
       reads already. After the Cull panel's rows (PR 137)
+- [ ] Several values of one number field in the filter text,
+      `focal:35,85` or `iso:400,800,1600`, for the picks a range
+      cannot make (two primes, full stops only); how a range shows
+      while a list is typed; and maybe a way to pick them in the
+      panel, the range switched to chips or a box that turns typed
+      values into tags
 - [ ] A frame renamed on one side of a backup pair keeps its old name
       in the destination's stack copy (§511): a stack's revision
       without file names, or Back up renaming the destination's file;
