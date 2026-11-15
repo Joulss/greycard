@@ -20,6 +20,9 @@ export component CurvesSection inherits Section {
     callback curve-move(float, float);
     callback curve-release();
     callback curve-double(float, float);
+    // The editor's width as laid out, in physical pixels, at every
+    // change.
+    callback curve-resized(float);
     // The point last pressed, which stays selected after the release,
     // or -1; its In and Out as the fields show them, 0 to 255.
     in property <int> curve-selected: -1;
@@ -59,6 +62,7 @@ export component CurvesSection inherits Section {
         moved(x, y) => { root.curve-move(x, y); }
         released => { root.curve-release(); }
         double-clicked(x, y) => { root.curve-double(x, y); }
+        resized(w) => { root.curve-resized(w); }
     }
     Rectangle { height: Theme.space-2; }
     // The selected point's coordinates, to type: greyed with none.

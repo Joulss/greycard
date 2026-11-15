@@ -1887,6 +1887,14 @@ pub(crate) fn decode(v: f32) -> f32 {
     }
 }
 
+/// The encoded luminance of an encoded working-space pixel, as
+/// [`pick`] reads `luma` off its pixel: where the master curve reads
+/// it.
+pub fn encoded_luma(encoded: [f32; 3]) -> f32 {
+    let c = encoded.map(|v| decode(v.clamp(0.0, 1.0)));
+    encode((LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]).clamp(0.0, 1.0))
+}
+
 /// The whole image through `to_out`, each encoded value through
 /// `quantize`, interleaved. `position` gives a pixel's place in the
 /// masks' units (the developed picture's width), through whatever

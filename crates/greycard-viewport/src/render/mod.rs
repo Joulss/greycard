@@ -30,10 +30,9 @@ mod scopes;
 #[cfg(test)]
 mod tests;
 
-use self::{
-    locals::{Brushes, LocalsGpu, locals_gpu, range_reads},
-    scopes::EditKey,
-};
+use self::locals::{Brushes, LocalsGpu, locals_gpu, range_reads};
+
+pub use self::scopes::Tap;
 
 pub use self::peaking::{MOST_RECTS, shown_rect};
 pub use self::sample::{SAMPLE_SIZES, sample_reach, sample_size, texel_of};
@@ -339,22 +338,15 @@ pub struct Renderer {
 struct Scopes {
     pipeline: gpu::ComputePipeline,
     layout: gpu::BindGroupLayout,
-    bins: gpu::Buffer,
-    staging: gpu::Buffer,
-    mode: gpu::Buffer,
-    /// The whole frame drawn small to the export space's encoded
-    /// values, which the bins and the readout read.
-    analysis: Option<gpu::Texture>,
-    /// The same through the monitor's table, for the navigator.
+    /// The scopes' analysis: the whole frame drawn small to the export
+    /// space's encoded values, which the bins and the readout read.
+    main: scopes::Readback,
+    /// A histogram taken short of the look's end
+    /// ([`Renderer::histogram_at`]), its own read back beside the
+    /// scopes'.
+    tap: scopes::Readback,
+    /// The same frame through the monitor's table, for the navigator.
     navigator: Option<gpu::Texture>,
-    /// A read back on its way, if one is.
-    in_flight: Option<std::sync::mpsc::Receiver<Result<(), gpu::BufferAsyncError>>>,
-    /// The last bins read, and which scope asked for them.
-    latest: Option<(Scope, Vec<u32>)>,
-    /// `latest` came in since `analyze` last handed it out: the bins
-    /// go to the window once, or every frame would repaint the scope
-    /// and the curve and ask for the next frame, without end.
-    fresh: bool,
     /// The analysis picture and the navigator's, read back beside the
     /// bins: their staging buffer, the two one after the other at the
     /// pictures' height, the read on its way, and the last navigator
@@ -369,11 +361,12 @@ struct Scopes {
     /// that picture is the last image's, perhaps at another shape,
     /// and is not kept for the readout.
     source_changed: bool,
-    /// The edit, scope and weighing mask the bins in flight or latest
-    /// were taken under; a new analysis only when one of those, or the
-    /// image, changes.
-    analyzed: Option<(EditKey, Scope, Option<usize>)>,
-    image_changed: bool,
+    /// How many frames have been opened.
+    pictures: u64,
+    /// `pictures` when the source came in: the frame it is of. A
+    /// tapped histogram is tagged with it, and one of an earlier frame
+    /// is let go.
+    source_picture: u64,
 }
 
 impl Renderer {

@@ -657,7 +657,7 @@ fn a_lost_scopes_read_back_is_made_again() {
         drop(tx);
         Some(rx)
     };
-    renderer.scopes.in_flight = lost();
+    renderer.scopes.main.in_flight = lost();
     renderer.scopes.picture_in_flight = lost();
     // The scopes let it go and send the analysis again at once, so the
     // window's frames do not wait on it for the rest of the session;
@@ -667,7 +667,7 @@ fn a_lost_scopes_read_back_is_made_again() {
     assert!(bins.is_none(), "nothing read from the lost one");
     assert!(in_flight, "the analysis made again");
     assert!(
-        renderer.scopes.in_flight.as_ref().unwrap().try_recv()
+        renderer.scopes.main.in_flight.as_ref().unwrap().try_recv()
             != Err(std::sync::mpsc::TryRecvError::Disconnected),
         "a live read back in place of the lost one"
     );
@@ -5777,4 +5777,519 @@ fn the_taps_against_the_exports_resize() {
             spread(&b)
         );
     }
+}
+
+/// The histogram where the curves take the picture in, as
+/// `histogram_at` reads it back: its call again until a read back
+/// lands with none behind it.
+fn tapped_bins(renderer: &mut Renderer, view: &View, tap: Tap) -> Vec<u32> {
+    let mut last = None;
+    for _ in 0..100 {
+        let (bins, in_flight) = renderer.histogram_at(view, tap, None);
+        if let Some(bins) = bins {
+            last = Some(bins.to_vec());
+        }
+        if !in_flight && let Some(bins) = last.take() {
+            return bins;
+        }
+        let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+    }
+    panic!("the tapped histogram's read back never landed");
+}
+
+/// A strong master curve: the shadows lifted hard.
+fn strong_curve() -> CurveLut {
+    let curves = greycard_edit::Curves {
+        rgb: vec![[0.0, 0.0], [0.2, 0.55], [0.6, 0.92], [1.0, 1.0]],
+        ..Default::default()
+    };
+    curves.bake()
+}
+
+/// The field, uploaded, and a view of all of it.
+fn field_view(renderer: &mut Renderer) -> View {
+    let image = field();
+    let (w, h) = (image.width, image.height);
+    renderer.upload(&Halves::from_image(&image, None));
+    let mut view = View::blank();
+    view.center = (w as f32 / 2.0, h as f32 / 2.0);
+    view.plane = (w as f32, h as f32);
+    view.frame_size = (w as f32, h as f32);
+    view
+}
+
+/// Where nothing follows the curves (no look table, the export space
+/// the working space, no grain, no output sharpen) and the curves do
+/// nothing, the histogram where they take the picture in is the
+/// scopes' own, at either tap: the same picture binned, short of a
+/// level's rounding in the encode and decode about the curve. So the
+/// tap reads what the scopes, which are checked against the CPU's
+/// reference, read there.
+#[test]
+fn the_histogram_before_the_curves_is_the_scopes_where_nothing_follows() {
+    let Some((device, queue)) = device("the tapped histogram's check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.set_output([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+    let view = field_view(&mut renderer);
+    let scopes = gpu_bins(&mut renderer, &view, Scope::Rgb, None)[..scope::HIST].to_vec();
+    let total: u32 = scopes.iter().sum();
+    for tap in [Tap::BeforeCurves, Tap::BeforeGlobalCurves] {
+        let tapped = tapped_bins(&mut renderer, &view, tap);
+        assert_eq!(tapped.len(), scope::HIST);
+        assert_eq!(tapped.iter().sum::<u32>(), total, "{tap:?}: every pixel");
+        let apart: u32 = tapped
+            .iter()
+            .zip(&scopes)
+            .map(|(a, b)| a.abs_diff(*b))
+            .sum();
+        eprintln!("{tap:?}: {apart} of {total} counts apart from the scopes'");
+        assert!(apart <= total / 500, "{tap:?}: {apart} of {total} apart");
+    }
+}
+
+/// The histogram before the curves stays where it is while the curves
+/// move, and dispatches nothing for them: the global curve is past
+/// either tap, and a local's is past the one before every curve. The
+/// global curves' tap takes in what the locals' curves make of the
+/// picture where their masks are.
+#[test]
+fn the_histogram_before_the_curves_is_unmoved_by_them() {
+    let Some((device, queue)) = device("the tapped histogram's curves check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let mut view = field_view(&mut renderer);
+    view.locals = vec![local_of(vec![(
+        Shape::Linear {
+            from: [0.2, 0.0],
+            to: [0.8, 0.0],
+        },
+        Mode::Add,
+    )])];
+    let (w, h) = (view.frame_size.0 as u32, view.frame_size.1 as u32);
+    let _ = renderer.render(w, h, &view);
+    let before = tapped_bins(&mut renderer, &view, Tap::BeforeCurves);
+    let global = tapped_bins(&mut renderer, &view, Tap::BeforeGlobalCurves);
+    // No local's curve acts yet: the same, short of a level's rounding
+    // where the local's line adds its nothing (lavapipe rounds a few
+    // pixels over; the cards here none).
+    let total: u32 = before.iter().sum();
+    let apart: u32 = before
+        .iter()
+        .zip(&global)
+        .map(|(a, b)| a.abs_diff(*b))
+        .sum();
+    eprintln!("no local's curve: {apart} of {total} counts apart");
+    assert!(apart <= total / 1000, "{apart} of {total} apart");
+    let scopes = gpu_bins(&mut renderer, &view, Scope::Rgb, None);
+
+    // The global curve: neither tap sends a thing, and the scopes move.
+    let mut curved = view.clone();
+    curved.curves = strong_curve();
+    for tap in [Tap::BeforeCurves, Tap::BeforeGlobalCurves] {
+        let _ = tapped_bins(&mut renderer, &view, tap);
+        let (bins, in_flight) = renderer.histogram_at(&curved, tap, None);
+        assert!(
+            bins.is_none() && !in_flight,
+            "{tap:?}: sent for the global curve"
+        );
+    }
+    assert_ne!(
+        gpu_bins(&mut renderer, &curved, Scope::Rgb, None),
+        scopes,
+        "the scopes follow the curve"
+    );
+
+    // The local's curve: before every curve nothing is sent; the
+    // global curves' tap takes it in, lifted where the mask is.
+    curved.locals[0].baked.curves = strong_curve();
+    let _ = renderer.render(w, h, &curved);
+    let _ = tapped_bins(&mut renderer, &view, Tap::BeforeCurves);
+    let (bins, in_flight) = renderer.histogram_at(&curved, Tap::BeforeCurves, None);
+    assert!(bins.is_none() && !in_flight, "sent for a local's curve");
+    let after_local = tapped_bins(&mut renderer, &curved, Tap::BeforeGlobalCurves);
+    assert_ne!(
+        after_local, before,
+        "the local's curve is before the global's"
+    );
+    let above = |bins: &[u32]| -> u32 {
+        (0..3)
+            .map(|c| bins[c * 256 + 128..c * 256 + 256].iter().sum::<u32>())
+            .sum()
+    };
+    assert!(above(&after_local) > above(&before), "not lifted");
+}
+
+/// A tapped read back whose map callback wgpu dropped is let go and
+/// made again, as the scopes' is
+/// (`a_lost_scopes_read_back_is_made_again`).
+#[test]
+fn a_lost_tapped_read_back_is_made_again() {
+    let Some((device, queue)) = device("the lost tapped read back's check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let mut view = field_view(&mut renderer);
+    let first = tapped_bins(&mut renderer, &view, Tap::BeforeCurves);
+    view.light.exposure = 0.5;
+    let (_, in_flight) = renderer.histogram_at(&view, Tap::BeforeCurves, None);
+    assert!(in_flight, "a read back under way");
+    let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+    let (tx, rx) = std::sync::mpsc::channel();
+    drop(tx);
+    renderer.scopes.tap.in_flight = Some(rx);
+    let (bins, in_flight) = renderer.histogram_at(&view, Tap::BeforeCurves, None);
+    assert!(bins.is_none(), "nothing read from the lost one");
+    assert!(in_flight, "made again");
+    let again = tapped_bins(&mut renderer, &view, Tap::BeforeCurves);
+    assert_ne!(again, first, "the bins of the brighter edit");
+    let (_, in_flight) = renderer.histogram_at(&view, Tap::BeforeCurves, None);
+    assert!(!in_flight, "idle once it has landed");
+}
+
+/// Bins taken of the last frame and landing after another is opened
+/// are let go by the tap: a new frame's curve never stands over the
+/// last frame's histogram, and its own follows. The scopes show them,
+/// as they always have: they are of the picture on screen.
+#[test]
+fn bins_of_another_picture_are_let_go() {
+    let Some((device, queue)) = device("the stale bins' check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let view = field_view(&mut renderer);
+    let tapped = tapped_bins(&mut renderer, &view, Tap::BeforeCurves);
+    let _ = gpu_bins(&mut renderer, &view, Scope::Rgb, None);
+    let mut darker = field();
+    for v in &mut darker.data {
+        *v *= 0.25;
+    }
+    let mut edited = view.clone();
+    edited.light.exposure = 0.3;
+    let (_, scopes_out) = renderer.analyze(&edited, Scope::Rgb, None);
+    let (_, tap_out) = renderer.histogram_at(&edited, Tap::BeforeCurves, None);
+    assert!(scopes_out && tap_out, "both sent for the edit");
+    renderer.another_picture();
+    renderer.upload(&Halves::from_image(&darker, None));
+    let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+    let (bins, _) = renderer.analyze(&edited, Scope::Rgb, None);
+    assert!(bins.is_some(), "the scopes let go of what they read");
+    let (bins, in_flight) = renderer.histogram_at(&edited, Tap::BeforeCurves, None);
+    assert!(bins.is_none(), "the tap showed the last frame's bins");
+    assert!(in_flight, "the tap sent for the new frame");
+    assert_ne!(
+        tapped_bins(&mut renderer, &edited, Tap::BeforeCurves),
+        tapped
+    );
+}
+
+/// Another frame opened, its develop not yet in: the source is still
+/// the last frame's, so the tap sends nothing over it, and a read back
+/// on its way is let go when it lands. Once the new frame's develop
+/// comes in, the tap sends for it, and that is what it shows.
+#[test]
+fn nothing_is_tapped_over_the_last_frame_before_its_develop() {
+    let Some((device, queue)) = device("the waiting frame's check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let view = field_view(&mut renderer);
+    let before = tapped_bins(&mut renderer, &view, Tap::BeforeCurves);
+    let mut edited = view.clone();
+    edited.light.exposure = 0.3;
+    let (_, out) = renderer.histogram_at(&edited, Tap::BeforeCurves, None);
+    assert!(out, "sent for the edit");
+    renderer.another_picture();
+    // The window draws its next frames before the develop lands.
+    for _ in 0..3 {
+        let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+        let (bins, out) = renderer.histogram_at(&edited, Tap::BeforeCurves, None);
+        assert!(
+            bins.is_none(),
+            "the last frame's bins drawn behind the new one's curve"
+        );
+        assert!(!out, "sent over the last frame's source");
+        let mut moved = edited.clone();
+        moved.light.exposure = 0.6;
+        let (bins, out) = renderer.histogram_at(&moved, Tap::BeforeCurves, None);
+        assert!(
+            bins.is_none() && !out,
+            "sent for an edit over the last frame's source"
+        );
+    }
+    let mut darker = field();
+    for v in &mut darker.data {
+        *v *= 0.25;
+    }
+    renderer.upload(&Halves::from_image(&darker, None));
+    let after = tapped_bins(&mut renderer, &view, Tap::BeforeCurves);
+    assert_ne!(after, before, "the new frame's own histogram");
+}
+
+/// A tapped analysis leaves the viewport's output-sharpen targets as
+/// they are: its view has the sharpen off only because it stops
+/// before it, and letting them go would have the next viewport draw
+/// make them again at full size.
+#[test]
+fn a_tapped_histogram_keeps_the_output_sharpens_targets() {
+    let Some((device, queue)) = device("the sharpen targets' tap check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let mut view = field_view(&mut renderer);
+    view.output_sharpen.amount = 1.0;
+    let (w, h) = (view.frame_size.0 as u32, view.frame_size.1 as u32);
+    let _ = renderer.render(w, h, &view);
+    let kept = renderer.osharp.kept();
+    assert!(!kept.is_empty(), "the viewport keeps its targets");
+    let (_, out) = renderer.histogram_at(&view, Tap::BeforeCurves, None);
+    assert!(out, "the tap sent");
+    assert_eq!(renderer.osharp.kept(), kept);
+}
+
+/// A stream of develops of the same frame, each landing before the
+/// last analysis's read back, holds nothing back: the scopes show
+/// each read back as it lands and send again for the next.
+#[test]
+fn a_stream_of_develops_still_shows_the_scopes() {
+    let Some((device, queue)) = device("the develop stream's check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let mut view = field_view(&mut renderer);
+    let image = field();
+    let halves = Halves::from_image(&image, None);
+    let _ = gpu_bins(&mut renderer, &view, Scope::Rgb, None);
+    let mut shown = 0;
+    for i in 0..6 {
+        view.light.exposure = 0.05 * (i + 1) as f32;
+        let (bins, _) = renderer.analyze(&view, Scope::Rgb, None);
+        shown += usize::from(bins.is_some());
+        // The next develop lands before this read back is collected.
+        renderer.upload(&halves);
+        let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+    }
+    let (bins, _) = renderer.analyze(&view, Scope::Rgb, None);
+    shown += usize::from(bins.is_some());
+    assert!(shown >= 5, "{shown} of 7 read backs shown under the stream");
+}
+
+/// Bins taken at another tap, or under another weighing, are another
+/// editor's histogram: switching between the global look's editor and
+/// a mask's draws none of them, and the new one's follows.
+#[test]
+fn bins_of_another_tap_are_let_go() {
+    let Some((device, queue)) = device("the tap switch's check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let view = field_view(&mut renderer);
+    let _ = tapped_bins(&mut renderer, &view, Tap::BeforeCurves);
+    let mut edited = view.clone();
+    edited.light.exposure = 0.4;
+    let (_, out) = renderer.histogram_at(&edited, Tap::BeforeCurves, None);
+    assert!(out);
+    let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+    let (bins, out) = renderer.histogram_at(&edited, Tap::AfterCurves, None);
+    assert!(bins.is_none(), "drew the other tap's bins");
+    assert!(out, "sent for its own");
+    let _ = tapped_bins(&mut renderer, &edited, Tap::AfterCurves);
+}
+
+/// A tapped histogram let go while its read back is out (the editor
+/// hidden) draws nothing of it when it is wanted again: it sends
+/// afresh and that one is what shows.
+#[test]
+fn a_histogram_let_go_draws_nothing_taken_before() {
+    let Some((device, queue)) = device("the let-go check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let mut view = field_view(&mut renderer);
+    let _ = tapped_bins(&mut renderer, &view, Tap::BeforeCurves);
+    view.light.exposure = 0.4;
+    let (_, out) = renderer.histogram_at(&view, Tap::BeforeCurves, None);
+    assert!(out);
+    renderer.let_histogram_go();
+    let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+    view.light.exposure = 0.8;
+    let (bins, out) = renderer.histogram_at(&view, Tap::BeforeCurves, None);
+    assert!(bins.is_none(), "drew bins taken before it was let go");
+    assert!(out, "sent afresh");
+}
+
+/// The taps stop where the curves take the picture in: a look table,
+/// another export space, and grain, all past them, leave the tapped
+/// bins as they are with those off, at every tap, while they move the
+/// scopes'. Each renderer is fresh, so nothing is carried over.
+#[test]
+fn the_histogram_before_the_curves_ignores_what_follows() {
+    let Some((device, queue)) = device("the tap's stop check") else {
+        return;
+    };
+    let look = lut::Look::new(look_tables()[0].clone(), 1.0).expect("a look");
+    let p3 = greycard_render::export::Space::DisplayP3.matrix();
+    for tap in [Tap::BeforeCurves, Tap::BeforeGlobalCurves, Tap::AfterCurves] {
+        let mut plain = Renderer::new(&device, &queue);
+        let view = field_view(&mut plain);
+        let bare = tapped_bins(&mut plain, &view, tap);
+        let bare_scopes = gpu_bins(&mut plain, &view, Scope::Rgb, None);
+        let mut followed = Renderer::new(&device, &queue);
+        let mut view = field_view(&mut followed);
+        followed.set_look(Some(&look));
+        followed.set_output(p3);
+        view.grain = Grain {
+            amount: 0.8,
+            ..Grain::default()
+        };
+        let tapped = tapped_bins(&mut followed, &view, tap);
+        let scopes = gpu_bins(&mut followed, &view, Scope::Rgb, None);
+        assert_ne!(scopes, bare_scopes, "{tap:?}: the scopes did not move");
+        let total: u32 = bare.iter().sum();
+        let apart: u32 = tapped.iter().zip(&bare).map(|(a, b)| a.abs_diff(*b)).sum();
+        eprintln!("{tap:?}: {apart} of {total} counts apart with what follows on");
+        assert!(apart <= total / 1000, "{tap:?}: {apart} of {total} apart");
+        assert_ne!(
+            tapped,
+            scopes[..scope::HIST].to_vec(),
+            "{tap:?}: the scopes' bins"
+        );
+    }
+}
+
+/// What follows the curves sends no tapped analysis: the grain and
+/// the output sharpen in the view, a look table, and another export
+/// space. The scopes, which read past them, send one for each.
+#[test]
+fn what_follows_the_curves_sends_no_tapped_histogram() {
+    let Some((device, queue)) = device("the tap's key check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let mut view = field_view(&mut renderer);
+    let look = lut::Look::new(look_tables()[0].clone(), 1.0).expect("a look");
+    type Change<'a> = &'a dyn Fn(&mut Renderer, &mut View);
+    let changes: [(&str, Change); 4] = [
+        ("grain", &|_, v| v.grain.amount = 0.6),
+        ("output sharpen", &|_, v| v.output_sharpen.amount = 1.0),
+        ("look table", &|r, _| r.set_look(Some(&look))),
+        ("export space", &|r, _| {
+            r.set_output(greycard_render::export::Space::DisplayP3.matrix())
+        }),
+    ];
+    for (what, change) in changes {
+        // Both read backs landed and nothing more to send.
+        for _ in 0..100 {
+            let (_, a) = renderer.histogram_at(&view, Tap::BeforeGlobalCurves, None);
+            let (_, b) = renderer.analyze(&view, Scope::Rgb, None);
+            if !a && !b {
+                break;
+            }
+            let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+        }
+        change(&mut renderer, &mut view);
+        let (bins, out) = renderer.histogram_at(&view, Tap::BeforeGlobalCurves, None);
+        assert!(bins.is_none() && !out, "the tap sent for the {what}");
+        let (_, out) = renderer.analyze(&view, Scope::Rgb, None);
+        assert!(out, "the scopes sent nothing for the {what}");
+    }
+}
+
+/// The global curves' tap against the scopes, which are checked
+/// against the CPU's reference: with nothing past the global curves
+/// (no global curve, the export space the working space, no look
+/// table, no grain), the scopes read what that tap reads, a local's
+/// strong curve in both. And past every point curve, with a strong
+/// global curve and nothing past it, the last tap reads what the
+/// scopes read; a color curve, past it, sends nothing.
+#[test]
+fn the_curve_taps_are_the_scopes_where_nothing_follows_them() {
+    let Some((device, queue)) = device("the taps' reference check") else {
+        return;
+    };
+    let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let apart = |a: &[u32], b: &[u32]| -> (u32, u32) {
+        let total: u32 = b.iter().sum();
+        (a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).sum(), total)
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.set_output(identity);
+    let mut view = field_view(&mut renderer);
+    let mut local = local_of(vec![(
+        Shape::Linear {
+            from: [0.2, 0.0],
+            to: [0.8, 0.0],
+        },
+        Mode::Add,
+    )]);
+    local.baked.curves = strong_curve();
+    view.locals = vec![local];
+    let (w, h) = (view.frame_size.0 as u32, view.frame_size.1 as u32);
+    let _ = renderer.render(w, h, &view);
+    let global_in = tapped_bins(&mut renderer, &view, Tap::BeforeGlobalCurves);
+    let scopes = gpu_bins(&mut renderer, &view, Scope::Rgb, None)[..scope::HIST].to_vec();
+    let (d, total) = apart(&global_in, &scopes);
+    eprintln!("the global curves' tap: {d} of {total} counts apart from the scopes'");
+    assert!(d <= total / 500, "{d} of {total}");
+    assert_ne!(
+        global_in,
+        tapped_bins(&mut renderer, &view, Tap::BeforeCurves),
+        "the local's curve acts"
+    );
+
+    view.curves = strong_curve();
+    let after = tapped_bins(&mut renderer, &view, Tap::AfterCurves);
+    let scopes = gpu_bins(&mut renderer, &view, Scope::Rgb, None)[..scope::HIST].to_vec();
+    let (d, total) = apart(&after, &scopes);
+    eprintln!("past every point curve: {d} of {total} counts apart from the scopes'");
+    assert!(d <= total / 500, "{d} of {total}");
+    assert_ne!(
+        after, global_in,
+        "the global curve acts before the last tap"
+    );
+    let shifted = greycard_edit::Curves {
+        red_green: vec![[0.0, 0.8], [1.0, 0.8]],
+        ..Default::default()
+    };
+    let mut colored = view.clone();
+    let mut lut = shifted.bake();
+    lut.tone = view.curves.tone;
+    colored.curves = lut;
+    let (bins, out) = renderer.histogram_at(&colored, Tap::AfterCurves, None);
+    assert!(
+        bins.is_none() && !out,
+        "the last tap sent for a color curve"
+    );
+    assert_ne!(
+        gpu_bins(&mut renderer, &colored, Scope::Rgb, None)[..scope::HIST].to_vec(),
+        scopes,
+        "the scopes follow the color curve"
+    );
+}
+
+/// A change to the image under both read backs sends each once: the
+/// tap does not send again while the scopes' read back is still out,
+/// as it did when it took the change from the scopes' own flag.
+#[test]
+fn an_image_change_sends_each_read_back_once() {
+    let Some((device, queue)) = device("the read backs' change check") else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let view = field_view(&mut renderer);
+    let _ = gpu_bins(&mut renderer, &view, Scope::Rgb, None);
+    let _ = tapped_bins(&mut renderer, &view, Tap::BeforeCurves);
+    renderer.scopes.image_changed();
+    let (_, scopes_out) = renderer.analyze(&view, Scope::Rgb, None);
+    assert!(scopes_out, "the scopes sent for the change");
+    let (_, tap_out) = renderer.histogram_at(&view, Tap::BeforeCurves, None);
+    assert!(tap_out, "the tap sent for the change");
+    // The tap's lands; the scopes' is left out, uncollected.
+    let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+    let (bins, in_flight) = renderer.histogram_at(&view, Tap::BeforeCurves, None);
+    assert!(bins.is_some(), "the tap's landed");
+    assert!(!in_flight, "the tap sent again for the same change");
+    assert!(renderer.scopes.main.in_flight.is_some());
 }

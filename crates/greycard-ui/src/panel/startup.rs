@@ -1558,6 +1558,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         st.develop.look_for = Some(look_key);
                     }
                     let look = crate::panel::look_preview::drawn(st, &app, &edit);
+                    // The picture on the GPU is the open frame's develop:
+                    // until it is, the curve editor takes no histogram
+                    // of it.
+                    let own = crate::panel::viewport::own_develop(st).is_some();
                     let Some(renderer) = st.develop.renderer.as_mut() else {
                         return;
                     };
@@ -1657,11 +1661,43 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         .filter(|&k| view.locals.get(k).is_some_and(|l| !l.mask.is_empty()));
                     app.set_scope_mask_active(selection.is_some());
                     let weigh_by = selection.filter(|_| app.get_scope_selection());
-                    let (bins, in_flight) = renderer.analyze(&view, st.develop.scope, weigh_by);
-                    let fresh = bins.map(|(_, b)| b.to_vec());
+                    let (bins, mut in_flight) = renderer.analyze(&view, st.develop.scope, weigh_by);
                     if let Some((taken, bins)) = bins {
                         app.set_scope_picture(scope::draw(taken, bins));
+                        clipping_read(&app, bins);
                     }
+                    // The curve editor's histogram, while it shows: of
+                    // what the curves take in (`curve::histogram_tap`;
+                    // `curve::draw_curve` moves it on to the curve
+                    // shown). Hidden, or over another frame's picture,
+                    // the one on its way is let go and the editor's last
+                    // with it; taken at another tap than the curve
+                    // shown reads, it is let go by the rule every draw
+                    // of the editor keeps (`curve::backdrop`).
+                    let mut fresh = None;
+                    if crate::panel::curve::curves_shown(&app) && own {
+                        let tap = crate::panel::curve::histogram_tap(&app, st.develop.target);
+                        if st.develop.bins.is_some()
+                            && crate::panel::curve::backdrop(&app, &st.develop).is_none()
+                        {
+                            st.develop.bins = None;
+                            app.set_curve_image(draw_curve(&app, None));
+                        }
+                        let renderer = st.develop.renderer.as_mut().expect("drawn above");
+                        let (bins, out) = renderer.histogram_at(&view, tap, weigh_by);
+                        fresh = bins.map(|b| (tap, b.to_vec()));
+                        in_flight |= out;
+                    } else {
+                        st.develop
+                            .renderer
+                            .as_mut()
+                            .expect("drawn above")
+                            .let_histogram_go();
+                        if st.develop.bins.take().is_some() {
+                            app.set_curve_image(draw_curve(&app, None));
+                        }
+                    }
+                    let renderer = st.develop.renderer.as_mut().expect("drawn above");
                     let picture = renderer.take_navigator();
                     let new_picture = picture.is_some();
                     if let Some(picture) = picture {
@@ -1728,8 +1764,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             slint::Image::try_from(texture).expect("the texture imports"),
                         );
                     }
-                    if let Some(b) = fresh {
-                        bins_read(st, &app, b);
+                    if let Some((tap, b)) = fresh {
+                        bins_read(st, &app, tap, b);
                     }
                     // A new analysis picture under a resting pointer:
                     // the color there has changed, or the scope has.
@@ -2028,14 +2064,10 @@ fn said(claimed: instance::Claimed) -> Option<instance::Instance> {
     }
 }
 
-/// A histogram read back from the analysis: the backdrop of the curve
-/// editor, whichever look it edits, and the clipping lamps at the
-/// histogram's corners. A mask's raster landing, or a new weighing,
-/// changes the analysis's key, so it comes this way with no touch of
-/// the panel.
-pub(crate) fn bins_read(st: &mut State, app: &App, bins: Vec<u32>) {
-    app.set_curve_image(draw_curve(app, Some(bins.as_slice())));
-    let clipping = scope::Clipping::of(&bins);
+/// The clipping lamps at the scope histogram's corners, read from the
+/// scope's own output bins.
+pub(crate) fn clipping_read(app: &App, bins: &[u32]) {
+    let clipping = scope::Clipping::of(bins);
     let mark = |chans: [bool; 3]| {
         let c = scope::Clipping::mark(chans).unwrap_or([0; 3]);
         slint::Color::from_rgb_u8(c[0], c[1], c[2])
@@ -2044,7 +2076,26 @@ pub(crate) fn bins_read(st: &mut State, app: &App, bins: Vec<u32>) {
     app.set_clip_shadows_mark(mark(clipping.shadows));
     app.set_clip_highlights_lit(clipping.highlights.iter().any(|&c| c));
     app.set_clip_highlights_mark(mark(clipping.highlights));
-    st.develop.bins = Some(bins);
+}
+
+/// The histogram where the curves take the picture in, read back from
+/// its analysis (`Renderer::histogram_at`): the curve editor's
+/// backdrop, whichever look it edits, moved on to the curve shown as
+/// it is drawn. A mask's raster landing, or a new weighing, changes
+/// the analysis's key, so it comes this way with no touch of the
+/// panel; a curve moved changes nothing it reads. Taken at `tap`, it
+/// is drawn by the editor's one rule (`curve::backdrop`).
+pub(crate) fn bins_read(
+    st: &mut State,
+    app: &App,
+    tap: greycard_viewport::render::Tap,
+    bins: Vec<u32>,
+) {
+    st.develop.bins = Some((tap, bins));
+    app.set_curve_image(draw_curve(
+        app,
+        crate::panel::curve::backdrop(app, &st.develop),
+    ));
 }
 
 /// The quit's saves, the window's index reader closed: the open

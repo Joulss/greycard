@@ -173,6 +173,13 @@ design note behind it.
   on their frame until quit and are never exported. A sidecar written
   by 0.12.0 does not open in 0.11.0 (discussion 59,
   [§678](https://github.com/jessolmstead/greycard/blob/master/docs/notes/678-fill-waits-for-generate.md)).
+- The histogram behind a tone curve is now of what that curve takes
+  in, so a peak sits under the part of the curve that moves it and
+  holds still while a point is dragged; the dropper's point lands on
+  it. The backdrop is sharper and the points are round. Thanks to
+  Cristian Figueiredo dos Santos, whose first pull request this was
+  (PR 150,
+  [§679](https://github.com/jessolmstead/greycard/blob/master/docs/notes/679-the-curve-editors-histogram-is-what-the-curve-takes-in.md)).
 
 ### Fixes
 

@@ -1680,10 +1680,17 @@ export component CurveEditor inherits Rectangle {
     callback moved(float, float);
     callback released();
     callback double-clicked(float, float);
+    // Its width in physical pixels as laid out, at its first layout
+    // and at every change, the window's scale's among them: the
+    // picture is drawn at that size.
+    callback resized(float);
+    property <float> physical-width: self.width / 1phx;
     // The keys held at the last press, for a caller that reads them
     // in its `pressed`.
     out property <KeyboardModifiers> press-modifiers;
     height: self.width;
+    init => { root.resized(self.physical-width); }
+    changed physical-width => { root.resized(self.physical-width); }
     border-radius: Theme.radius-sm;
     clip: true;
     background: Theme.base;

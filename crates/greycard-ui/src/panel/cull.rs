@@ -4601,7 +4601,10 @@ mod tests {
     fn a_turn_over_the_placeholder_keeps_it_up_and_turns_the_picture() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
-        state.borrow_mut().develop.bins = Some((0..768).map(|i| (i % 97) as u32 + 1).collect());
+        state.borrow_mut().develop.bins = Some((
+            greycard_viewport::render::Tap::BeforeGlobalCurves,
+            (0..768).map(|i| (i % 97) as u32 + 1).collect(),
+        ));
         app.invoke_select(1);
         let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
         deliver_preview(&app, loaded);
@@ -4877,7 +4880,10 @@ mod tests {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
         let last = (0..768).map(|i| (i % 97) as u32 + 1).collect::<Vec<u32>>();
-        state.borrow_mut().develop.bins = Some(last.clone());
+        state.borrow_mut().develop.bins = Some((
+            greycard_viewport::render::Tap::BeforeGlobalCurves,
+            last.clone(),
+        ));
         app.invoke_select(1);
         let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
         deliver_preview(&app, loaded);

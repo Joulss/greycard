@@ -120,9 +120,10 @@ pub(crate) struct Develop {
     /// develop to land on the status line once, since that develop's
     /// "developing..." covers it at once.
     pub(crate) start_note: Option<String>,
-    /// The last scope bins: the histogram, the backdrop of the curve
-    /// editor, and after it whatever `scope` asked for.
-    pub(crate) bins: Option<Vec<u32>>,
+    /// The curve editor's last histogram and where in the look it was
+    /// taken: drawn only behind a curve that reads there
+    /// (`curve::backdrop`).
+    pub(crate) bins: Option<(greycard_viewport::render::Tap, Vec<u32>)>,
     /// Which scope the panel shows.
     pub(crate) scope: scope::Scope,
     /// The pointer on the view, logical pixels, while it is there:

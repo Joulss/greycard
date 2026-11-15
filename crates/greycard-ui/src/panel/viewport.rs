@@ -2038,17 +2038,16 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         return;
                     }
                     // The pixel at the panel's white, through the
-                    // panel's look to where the curve reads it.
+                    // panel's look to where the curve reads it: past
+                    // the curves ahead of it, where its tone stands in
+                    // the editor's histogram.
                     let picked = pick_stages(&mut st, &app, px);
                     let channel = current_channel(&app);
-                    let value = match channel {
-                        Channel::Rgb => picked.luma,
-                        Channel::Red => picked.encoded[0],
-                        Channel::Green => picked.encoded[1],
-                        Channel::Blue => picked.encoded[2],
-                        Channel::RedGreen | Channel::BlueYellow => picked.lightness,
-                    }
-                    .clamp(0.0, 1.0);
+                    let value = crate::panel::curve::picked_tone(
+                        &crate::panel::curve::panel_curves(&app),
+                        channel,
+                        &picked,
+                    );
                     let mut points = curve_points(&app, channel);
                     let index = picked_point(&mut points, value);
                     st.develop.picking = Some(Picking::Curve {
@@ -2060,7 +2059,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     st.develop.curve_drag = Some(index);
                     set_curve_points(&app, channel, &points);
                     select_point(&app, Some(index));
-                    app.set_curve_image(draw_curve(&app, st.develop.bins.as_deref()));
+                    app.set_curve_image(draw_curve(&app, crate::panel::curve::backdrop(&app, &st.develop)));
                     app.window().request_redraw();
                 }
                 "Defringe" => {
@@ -2201,7 +2200,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     points[index][1] = (y0 + (at - y) / PICK_DRAG).clamp(0.0, 1.0);
                     set_curve_points(&app, channel, &points);
                     show_selected(&app);
-                    app.set_curve_image(draw_curve(&app, st.develop.bins.as_deref()));
+                    app.set_curve_image(draw_curve(
+                        &app,
+                        crate::panel::curve::backdrop(&app, &st.develop),
+                    ));
                 }
                 Some(Picking::Mixer {
                     band,

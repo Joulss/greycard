@@ -85,6 +85,171 @@ impl EditKey {
 /// Width of the image the scopes are taken from.
 pub(super) const ANALYSIS_WIDTH: u32 = 512;
 
+/// Where in the look a histogram is taken short of its end, the
+/// export space's encoded values the scopes bin: where the curves
+/// take the picture in, the encoded working-space values, before the
+/// look table, the output sharpen, the export space's matrix, and the
+/// grain ([`Renderer::histogram_at`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tap {
+    /// Before every curve: what a local's curves take in, and the
+    /// global ones when no local's curve acts.
+    BeforeCurves,
+    /// After the locals' curves are blended in, before the global
+    /// curves: what those take in.
+    BeforeGlobalCurves,
+    /// After every point curve, the locals' and the global ones,
+    /// before the color curves: what those read their lightness from.
+    AfterCurves,
+}
+
+/// What a read back's bins were taken under: the view's edit, the
+/// scope binned, where in the look (none for its end), the local the
+/// bins are weighed by, and the frame of the source they were taken
+/// of (the count of frames opened when that source came in,
+/// [`Renderer::another_picture`]). A new analysis only when one of
+/// these, or the image under it, changes.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Taken {
+    key: EditKey,
+    scope: Scope,
+    tap: Option<Tap>,
+    weigh_by: Option<usize>,
+    picture: u64,
+}
+
+/// One analysis and its read back: the whole frame drawn small,
+/// binned on the GPU, and the bins mapped back a frame or more later.
+pub(super) struct Readback {
+    bins: gpu::Buffer,
+    staging: gpu::Buffer,
+    mode: gpu::Buffer,
+    /// The whole frame drawn small, which the bins are taken of.
+    pub(super) target: Option<gpu::Texture>,
+    /// A read back on its way, if one is.
+    pub(super) in_flight: Option<std::sync::mpsc::Receiver<Result<(), gpu::BufferAsyncError>>>,
+    /// What the read back in flight, or the latest bins, were taken
+    /// under.
+    taken: Option<Taken>,
+    /// The last bins read, and which scope asked for them.
+    latest: Option<(Scope, Vec<u32>)>,
+    /// `latest` came in since it was last handed out: the bins go to
+    /// the window once, or every frame would repaint the scope and the
+    /// curve and ask for the next frame, without end.
+    fresh: bool,
+    /// The image under it changed since it was last sent (the source,
+    /// a table, a mask's raster): analyze again whatever the key says.
+    changed: bool,
+}
+
+impl Readback {
+    fn new(device: &gpu::Device, label: &str, bins: usize) -> Self {
+        let size = (bins * 4) as u64;
+        let buffer = |what: &str, usage| {
+            device.create_buffer(&gpu::BufferDescriptor {
+                label: Some(&format!("{label} {what}")),
+                size,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
+        Self {
+            bins: buffer(
+                "bins",
+                gpu::BufferUsages::STORAGE
+                    | gpu::BufferUsages::COPY_SRC
+                    | gpu::BufferUsages::COPY_DST,
+            ),
+            staging: buffer(
+                "staging",
+                gpu::BufferUsages::MAP_READ | gpu::BufferUsages::COPY_DST,
+            ),
+            mode: device.create_buffer(&gpu::BufferDescriptor {
+                label: Some(&format!("{label} mode")),
+                size: 32,
+                usage: gpu::BufferUsages::UNIFORM | gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            target: None,
+            in_flight: None,
+            taken: None,
+            latest: None,
+            fresh: false,
+            changed: false,
+        }
+    }
+
+    /// Collect a finished read back into `latest`. A lost one (its map
+    /// callback dropped, [`unmap_lost`]) is let go and the analysis
+    /// made again; one `wanted` turns down is let go too.
+    fn collect(&mut self, device: &gpu::Device, wanted: impl Fn(&Taken) -> bool) {
+        match self.in_flight.as_ref().map(|rx| rx.try_recv()) {
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.in_flight = None;
+                unmap_lost(device, &self.staging);
+                self.changed = true;
+            }
+            Some(Ok(result)) => {
+                self.in_flight = None;
+                if result.is_ok()
+                    && let Some(taken) = &self.taken
+                    && wanted(taken)
+                    && let Some(t) = &self.target
+                    && let Ok(data) = self.staging.slice(..).get_mapped_range()
+                {
+                    let mut bins =
+                        bytemuck::cast_slice::<u8, u32>(&data)[..taken.scope.bin_count()].to_vec();
+                    drop(data);
+                    if taken.weigh_by.is_some() {
+                        scope::normalize(&mut bins, (t.width() * t.height()) as usize);
+                    }
+                    self.latest = Some((taken.scope, bins));
+                    self.fresh = true;
+                }
+                self.staging.unmap();
+            }
+            Some(Err(TryRecvError::Empty)) | None => {}
+        }
+    }
+
+    /// Whether an analysis under `taken` is to be sent: the image
+    /// changed or the key did, and none is on its way.
+    fn wants(&self, taken: &Taken) -> bool {
+        self.in_flight.is_none() && (self.changed || self.taken.as_ref() != Some(taken))
+    }
+
+    /// The read back of the bins just submitted, under `taken`.
+    fn sent(&mut self, taken: Taken) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.staging
+            .slice(..)
+            .map_async(gpu::MapMode::Read, move |r| {
+                let _ = tx.send(r);
+            });
+        self.in_flight = Some(rx);
+        self.taken = Some(taken);
+        self.changed = false;
+    }
+
+    /// The bins read since the last take, once.
+    fn take_fresh(&mut self) -> Option<(Scope, &[u32])> {
+        if std::mem::take(&mut self.fresh) {
+            self.latest.as_ref().map(|(s, b)| (*s, b.as_slice()))
+        } else {
+            None
+        }
+    }
+}
+
+/// Which of the scopes' read backs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    /// The scopes', at the export space's encoded values.
+    Scopes,
+    /// [`Renderer::histogram_at`]'s.
+    Tap,
+}
+
 impl Scopes {
     pub(super) fn new(device: &gpu::Device) -> Self {
         let shader = device.create_shader_module(gpu::ShaderModuleDescriptor {
@@ -139,45 +304,56 @@ impl Scopes {
             compilation_options: Default::default(),
             cache: None,
         });
-        let size = (scope::MAX * 4) as u64;
-        let bins = device.create_buffer(&gpu::BufferDescriptor {
-            label: Some("scope bins"),
-            size,
-            usage: gpu::BufferUsages::STORAGE
-                | gpu::BufferUsages::COPY_SRC
-                | gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let staging = device.create_buffer(&gpu::BufferDescriptor {
-            label: Some("scope staging"),
-            size,
-            usage: gpu::BufferUsages::MAP_READ | gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mode = device.create_buffer(&gpu::BufferDescriptor {
-            label: Some("scope mode"),
-            size: 32,
-            usage: gpu::BufferUsages::UNIFORM | gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         Self {
             pipeline,
             layout,
-            bins,
-            staging,
-            mode,
-            analysis: None,
+            main: Readback::new(device, "scope", scope::MAX),
+            tap: Readback::new(device, "tapped histogram", scope::HIST),
             navigator: None,
-            in_flight: None,
-            latest: None,
-            fresh: false,
             picture_staging: None,
             picture_in_flight: None,
             picture: None,
             pixels: None,
             source_changed: false,
-            analyzed: None,
-            image_changed: false,
+            pictures: 0,
+            source_picture: 0,
+        }
+    }
+
+    /// The image under every analysis changed: each is made again.
+    pub(super) fn image_changed(&mut self) {
+        self.main.changed = true;
+        self.tap.changed = true;
+    }
+
+    /// What follows the curves changed (the display table, the export
+    /// space, the look table): the scopes, which read past them, are
+    /// made again; a tapped histogram, before them, is not.
+    pub(super) fn output_changed(&mut self) {
+        self.main.changed = true;
+    }
+
+    /// A new source came in: the picture in flight is the last one's
+    /// and is not kept for the readout. The source is of the frame
+    /// open now ([`Renderer::another_picture`]); a develop of the same
+    /// frame is the same frame to the tapped histogram.
+    pub(super) fn new_source(&mut self) {
+        self.image_changed();
+        self.source_changed = true;
+        self.source_picture = self.pictures;
+    }
+
+    fn slot(&self, slot: Slot) -> &Readback {
+        match slot {
+            Slot::Scopes => &self.main,
+            Slot::Tap => &self.tap,
+        }
+    }
+
+    fn slot_mut(&mut self, slot: Slot) -> &mut Readback {
+        match slot {
+            Slot::Scopes => &mut self.main,
+            Slot::Tap => &mut self.tap,
         }
     }
 }
@@ -188,8 +364,8 @@ impl Renderer {
     /// new read back dispatched if none is on its way. `true` when one
     /// is in flight and a frame later will have it.
     ///
-    /// The histogram is always in the first [`scope::HIST`] bins,
-    /// whatever `scope` asks for, because the curve editor draws it.
+    /// The histogram is in the first [`scope::HIST`] bins whatever
+    /// `scope` asks for: the clipping lamps read it.
     ///
     /// With `weigh_by`, a local of `v` by index, every bin is weighted
     /// by that local's mask: the analysis draw writes its coverage
@@ -208,29 +384,10 @@ impl Renderer {
         // Collect a finished read back, or let a lost one go and
         // analyze again ([`unmap_lost`]).
         let _ = crate::lost::poll(&self.device, gpu::PollType::Poll);
-        let bins = self.scopes.in_flight.as_ref().map(|rx| rx.try_recv());
-        if let Some(Err(TryRecvError::Disconnected)) = bins {
-            self.scopes.in_flight = None;
-            unmap_lost(&self.device, &self.scopes.staging);
-            self.scopes.image_changed = true;
-        }
-        if let Some(Ok(result)) = bins {
-            self.scopes.in_flight = None;
-            if result.is_ok()
-                && let Some((_, taken, weighed)) = self.scopes.analyzed
-                && let Some(t) = &self.scopes.analysis
-                && let Ok(data) = self.scopes.staging.slice(..).get_mapped_range()
-            {
-                let mut bins = bytemuck::cast_slice::<u8, u32>(&data)[..taken.bin_count()].to_vec();
-                drop(data);
-                if weighed.is_some() {
-                    scope::normalize(&mut bins, (t.width() * t.height()) as usize);
-                }
-                self.scopes.latest = Some((taken, bins));
-                self.scopes.fresh = true;
-            }
-            self.scopes.staging.unmap();
-        }
+        // The scopes show what lands, as they always have: they are of
+        // the picture on screen, the last frame's until the open one's
+        // develop comes in.
+        self.scopes.main.collect(&self.device, |_| true);
         let picture = self
             .scopes
             .picture_in_flight
@@ -241,13 +398,13 @@ impl Renderer {
             if let Some(staging) = &self.scopes.picture_staging {
                 unmap_lost(&self.device, staging);
             }
-            self.scopes.image_changed = true;
+            self.scopes.main.changed = true;
         }
         if let Some(Ok(result)) = picture {
             self.scopes.picture_in_flight = None;
             if let Some(staging) = &self.scopes.picture_staging {
                 if result.is_ok()
-                    && let Some(t) = &self.scopes.analysis
+                    && let Some(t) = &self.scopes.main.target
                     && let Ok(data) = staging.slice(..).get_mapped_range()
                 {
                     // The analysis picture, then the navigator's.
@@ -268,30 +425,25 @@ impl Renderer {
                 staging.unmap();
             }
         }
-        let key = (EditKey::of(v), scope, weigh_by);
-        let stale = self.scopes.image_changed || self.scopes.analyzed.as_ref() != Some(&key);
-        if stale
-            && self.scopes.in_flight.is_none()
+        let taken = Taken {
+            key: EditKey::of(v),
+            scope,
+            tap: None,
+            weigh_by,
+            picture: self.scopes.source_picture,
+        };
+        if self.scopes.main.wants(&taken)
             && self.scopes.picture_in_flight.is_none()
             && self.source.is_some()
         {
-            self.scopes.analyzed = Some(key);
-            self.scopes.image_changed = false;
             self.scopes.source_changed = false;
-            // The whole frame, small, at the view's edit.
-            let (iw, ih) = (
-                v.frame_size.0.max(1.0) as u32,
-                v.frame_size.1.max(1.0) as u32,
-            );
-            let height = (ANALYSIS_WIDTH * ih / iw).max(1);
-            let analysis = match &self.scopes.analysis {
-                Some(t) if t.height() == height => t.clone(),
-                _ => {
-                    let t = self.make_target("analysis", ANALYSIS_WIDTH, height);
-                    self.scopes.analysis = Some(t.clone());
-                    t
-                }
-            };
+            let whole = whole_frame(v, weigh_by);
+            let (mut encoder, analysis) = self.bin_frame(Slot::Scopes, &whole, &taken);
+            // The scopes and the readout read the export space's own
+            // values, what the file will hold; the navigator is what
+            // the viewport shows, through the monitor's table and the
+            // proof, and the picture whole, unweighed.
+            let height = analysis.height();
             let navigator = match &self.scopes.navigator {
                 Some(t) if t.height() == height => t.clone(),
                 _ => {
@@ -300,82 +452,15 @@ impl Renderer {
                     t
                 }
             };
-            let whole = View {
-                zoom: ANALYSIS_WIDTH as f32 / iw as f32,
-                center: (iw as f32 / 2.0, ih as f32 / 2.0),
-                show_mask: None,
-                show_sharpen: false,
-                mask_alone: false,
-                weigh_by,
-                warn: Warn::default(),
-                vignette: v.vignette,
-                grain: v.grain,
-                ..v.clone()
-            };
-            let bytes = (scope.bin_count() * 4) as u64;
-            self.queue.write_buffer(
-                &self.scopes.mode,
-                0,
-                bytemuck::cast_slice(&[
-                    scope.kind(),
-                    scope::COLUMNS as u32,
-                    scope::WHEEL as u32,
-                    scope::LEVELS as u32,
-                    u32::from(weigh_by.is_some()),
-                    0,
-                    0,
-                    0,
-                ]),
-            );
-            let mut encoder = self
-                .device
-                .create_command_encoder(&gpu::CommandEncoderDescriptor {
-                    label: Some("scope"),
-                });
-            // The scopes and the readout read the export space's own
-            // values, what the file will hold; the navigator is what
-            // the viewport shows, through the monitor's table and the
-            // proof, and the picture whole, unweighed.
-            self.draw(&mut encoder, &analysis, &whole, false);
             self.draw(
                 &mut encoder,
                 &navigator,
                 &View {
                     weigh_by: None,
-                    ..whole.clone()
+                    ..whole
                 },
                 true,
             );
-            encoder.clear_buffer(&self.scopes.bins, 0, Some(bytes));
-            {
-                let view = analysis.create_view(&Default::default());
-                let bind_group = self.device.create_bind_group(&gpu::BindGroupDescriptor {
-                    label: Some("scope"),
-                    layout: &self.scopes.layout,
-                    entries: &[
-                        gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: gpu::BindingResource::TextureView(&view),
-                        },
-                        gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: self.scopes.bins.as_entire_binding(),
-                        },
-                        gpu::BindGroupEntry {
-                            binding: 2,
-                            resource: self.scopes.mode.as_entire_binding(),
-                        },
-                    ],
-                });
-                let mut pass = encoder.begin_compute_pass(&gpu::ComputePassDescriptor {
-                    label: Some("scope"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.scopes.pipeline);
-                pass.set_bind_group(0, &bind_group, &[]);
-                pass.dispatch_workgroups(ANALYSIS_WIDTH.div_ceil(16), height.div_ceil(16), 1);
-            }
-            encoder.copy_buffer_to_buffer(&self.scopes.bins, 0, &self.scopes.staging, 0, bytes);
             // The pictures too, the analysis for the readout and the
             // navigator's, one after the other. Their rows are 2048
             // bytes, a multiple of the 256 a copy wants, so they land
@@ -418,14 +503,7 @@ impl Renderer {
                 );
             }
             self.queue.submit(Some(encoder.finish()));
-            let (tx, rx) = std::sync::mpsc::channel();
-            self.scopes
-                .staging
-                .slice(..)
-                .map_async(gpu::MapMode::Read, move |r| {
-                    let _ = tx.send(r);
-                });
-            self.scopes.in_flight = Some(rx);
+            self.scopes.main.sent(taken);
             let (tx, rx) = std::sync::mpsc::channel();
             picture_staging
                 .slice(..)
@@ -434,14 +512,189 @@ impl Renderer {
                 });
             self.scopes.picture_in_flight = Some(rx);
         }
+        let in_flight =
+            self.scopes.main.in_flight.is_some() || self.scopes.picture_in_flight.is_some();
+        (self.scopes.main.take_fresh(), in_flight)
+    }
+
+    /// The histogram of the whole frame under `v` where `tap` says the
+    /// curves take the picture in, weighed as [`Self::analyze`] weighs
+    /// it: its first [`scope::HIST`] bins, of the encoded working-space
+    /// values rather than the export space's. The bins from the last
+    /// read back, once, and `true` while one is in flight.
+    ///
+    /// Its own read back beside the scopes', keyed on the edit without
+    /// what lies past the tap (the curves after it, the grain, the
+    /// output sharpen), so an edit of those dispatches nothing; nor
+    /// does a new display table, export space, or look table.
+    pub fn histogram_at(
+        &mut self,
+        v: &View,
+        tap: Tap,
+        weigh_by: Option<usize>,
+    ) -> (Option<&[u32]>, bool) {
+        self.sync_sample(v);
+        let weigh_by = weigh_by.filter(|&k| k < v.locals.len().min(MAX_LOCALS));
+        let _ = crate::lost::poll(&self.device, gpu::PollType::Poll);
+        // What is past the tap does nothing to what it reads: the
+        // curves past it (the global ones, the locals' too before
+        // every curve, only the color curves after every point curve),
+        // and the grain and the output sharpen past all of them.
+        let mut before = View {
+            grain: Grain::default(),
+            output_sharpen: OutputSharpen::default(),
+            ..v.clone()
+        };
+        let level = greycard_edit::Curves::default().bake();
+        let colorless = |lut: &mut CurveLut| {
+            lut.color = level.color;
+            lut.shaded = false;
+        };
+        match tap {
+            Tap::BeforeCurves => {
+                before.curves = level;
+                for local in &mut before.locals {
+                    local.baked.curves = level;
+                }
+            }
+            Tap::BeforeGlobalCurves => before.curves = level,
+            Tap::AfterCurves => {
+                colorless(&mut before.curves);
+                for local in &mut before.locals {
+                    colorless(&mut local.baked.curves);
+                }
+            }
+        }
+        let taken = Taken {
+            key: EditKey::of(&before),
+            scope: Scope::Rgb,
+            tap: Some(tap),
+            weigh_by,
+            picture: self.scopes.source_picture,
+        };
+        // Bins taken of another frame's source, at another tap, or
+        // under another weighing are of another curve's input: let go,
+        // never drawn behind this one.
+        let open = self.scopes.pictures;
+        self.scopes.tap.collect(&self.device, |landed| {
+            landed.picture == open && landed.tap == taken.tap && landed.weigh_by == taken.weigh_by
+        });
+        // Nothing is sent over the last frame's source after another
+        // is opened: its own develop is waited for.
+        if self.scopes.tap.wants(&taken)
+            && self.source.is_some()
+            && self.scopes.source_picture == open
+        {
+            let whole = whole_frame(&before, weigh_by);
+            let (encoder, _) = self.bin_frame(Slot::Tap, &whole, &taken);
+            self.queue.submit(Some(encoder.finish()));
+            self.scopes.tap.sent(taken);
+        }
+        let in_flight = self.scopes.tap.in_flight.is_some();
         (
-            if std::mem::take(&mut self.scopes.fresh) {
-                self.scopes.latest.as_ref().map(|(s, b)| (*s, b.as_slice()))
-            } else {
-                None
-            },
-            self.scopes.in_flight.is_some() || self.scopes.picture_in_flight.is_some(),
+            self.scopes.tap.take_fresh().map(|(_, b)| &b[..scope::HIST]),
+            in_flight,
         )
+    }
+
+    /// Another frame is opened: until its develop comes in as the
+    /// source, the tapped histogram sends nothing, and one on its way,
+    /// of the last frame's source, is let go when it lands rather than
+    /// drawn behind this frame's curve. The scopes are unchanged: they
+    /// describe the picture on screen.
+    pub fn another_picture(&mut self) {
+        self.scopes.pictures += 1;
+    }
+
+    /// The tapped histogram is not wanted for now (the curve editor
+    /// hidden): one on its way is let go when it lands, and the next
+    /// call takes its own afresh, so it never draws bins taken before.
+    pub fn let_histogram_go(&mut self) {
+        let tap = &mut self.scopes.tap;
+        tap.taken = None;
+        tap.latest = None;
+        tap.fresh = false;
+    }
+
+    /// Draw `whole` into `slot`'s target, made at the frame's shape,
+    /// bin it for `taken`'s scope and weighing, and copy the bins to
+    /// the staging buffer: the encoder, for more before the submit,
+    /// and the target drawn.
+    fn bin_frame(
+        &mut self,
+        slot: Slot,
+        whole: &View,
+        taken: &Taken,
+    ) -> (gpu::CommandEncoder, gpu::Texture) {
+        let (iw, ih) = (
+            whole.frame_size.0.max(1.0) as u32,
+            whole.frame_size.1.max(1.0) as u32,
+        );
+        let height = (ANALYSIS_WIDTH * ih / iw).max(1);
+        let target = match &self.scopes.slot(slot).target {
+            Some(t) if t.height() == height => t.clone(),
+            _ => {
+                let t = self.make_target("analysis", ANALYSIS_WIDTH, height);
+                self.scopes.slot_mut(slot).target = Some(t.clone());
+                t
+            }
+        };
+        let readback = self.scopes.slot(slot);
+        let bytes = (taken.scope.bin_count() * 4) as u64;
+        self.queue.write_buffer(
+            &readback.mode,
+            0,
+            bytemuck::cast_slice(&[
+                taken.scope.kind(),
+                scope::COLUMNS as u32,
+                scope::WHEEL as u32,
+                scope::LEVELS as u32,
+                u32::from(taken.weigh_by.is_some()),
+                0,
+                0,
+                0,
+            ]),
+        );
+        let mut encoder = self
+            .device
+            .create_command_encoder(&gpu::CommandEncoderDescriptor {
+                label: Some("scope"),
+            });
+        match taken.tap {
+            None => self.draw(&mut encoder, &target, whole, false),
+            Some(tap) => self.draw_tap(&mut encoder, &target, whole, tap),
+        }
+        encoder.clear_buffer(&readback.bins, 0, Some(bytes));
+        {
+            let view = target.create_view(&Default::default());
+            let bind_group = self.device.create_bind_group(&gpu::BindGroupDescriptor {
+                label: Some("scope"),
+                layout: &self.scopes.layout,
+                entries: &[
+                    gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: gpu::BindingResource::TextureView(&view),
+                    },
+                    gpu::BindGroupEntry {
+                        binding: 1,
+                        resource: readback.bins.as_entire_binding(),
+                    },
+                    gpu::BindGroupEntry {
+                        binding: 2,
+                        resource: readback.mode.as_entire_binding(),
+                    },
+                ],
+            });
+            let mut pass = encoder.begin_compute_pass(&gpu::ComputePassDescriptor {
+                label: Some("scope"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.scopes.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(ANALYSIS_WIDTH.div_ceil(16), height.div_ceil(16), 1);
+        }
+        encoder.copy_buffer_to_buffer(&readback.bins, 0, &readback.staging, 0, bytes);
+        (encoder, target)
     }
 
     /// The navigator's picture read back since the last take: the
@@ -468,5 +721,22 @@ impl Renderer {
             v,
             radius,
         )
+    }
+}
+
+/// `v`'s whole frame drawn [`ANALYSIS_WIDTH`] wide for an analysis,
+/// weighed by `weigh_by`, with none of the overlays the viewport
+/// paints over it.
+fn whole_frame(v: &View, weigh_by: Option<usize>) -> View {
+    let (iw, ih) = (v.frame_size.0.max(1.0), v.frame_size.1.max(1.0));
+    View {
+        zoom: ANALYSIS_WIDTH as f32 / iw.floor(),
+        center: (iw.floor() / 2.0, ih.floor() / 2.0),
+        show_mask: None,
+        show_sharpen: false,
+        mask_alone: false,
+        weigh_by,
+        warn: Warn::default(),
+        ..v.clone()
     }
 }

@@ -19,7 +19,8 @@ struct Params {
     /// z says the source is encoded sRGB already (the camera's JPEG
     /// in the culling loupe) and goes to the monitor's table and
     /// nowhere else; w says the picture goes through no table at all
-    /// (`Through::Nothing`).
+    /// (`Through::Nothing`), or stops where the curves take it in
+    /// (`Through::Tap`).
     cubic: [f32; 4],
     /// Its x: which clipping warnings to paint, 1 the shadows, 2 the
     /// highlights, 3 both (`Warn::bits`).
@@ -180,6 +181,9 @@ enum Through {
     Nothing,
     /// An encoded sRGB picture through its own table.
     Encoded,
+    /// The developed picture stopped where the curves take it in: the
+    /// encoded working-space values `tap` names, through no table.
+    Tap(Tap),
 }
 
 impl Renderer {
@@ -213,6 +217,30 @@ impl Renderer {
         table: bool,
     ) {
         self.draw_layer(encoder, target, v, table, Layer::Both);
+    }
+
+    /// Draw the view into `target` stopped where `tap` says the curves
+    /// take it in; an encoded source as [`Self::draw`] draws it.
+    pub(super) fn draw_tap(
+        &self,
+        encoder: &mut gpu::CommandEncoder,
+        target: &gpu::Texture,
+        v: &View,
+        tap: Tap,
+    ) {
+        let through = if self.encoded {
+            Through::Encoded
+        } else {
+            Through::Tap(tap)
+        };
+        self.draw_source(
+            encoder,
+            target,
+            v,
+            self.source.as_ref(),
+            through,
+            Part::WHOLE,
+        );
     }
 
     /// [`Self::draw`], of `layer` alone.
@@ -285,10 +313,12 @@ impl Renderer {
                 if v.cubic { 1.0 } else { 0.0 },
                 if v.show_sharpen { 1.0 } else { 0.0 },
                 if encoded { 1.0 } else { 0.0 },
-                if through == Through::Nothing {
-                    1.0
-                } else {
-                    0.0
+                match through {
+                    Through::Nothing => 1.0,
+                    Through::Tap(Tap::BeforeCurves) => 2.0,
+                    Through::Tap(Tap::BeforeGlobalCurves) => 3.0,
+                    Through::Tap(Tap::AfterCurves) => 4.0,
+                    Through::Monitor | Through::Encoded => 0.0,
                 },
             ],
             clip: [v.warn.bits() as f32, 0.0, 0.0, 0.0],
@@ -420,8 +450,9 @@ impl Renderer {
         let taps = source
             .filter(|_| !encoded && rect.is_none())
             .and_then(|_| osharp::Taps::of(v));
-        // Off, its targets are let go of.
-        if v.output_sharpen.acting().is_none() {
+        // Off, its targets are let go of; not by a tapped analysis,
+        // whose view has it off only because it stops before it.
+        if v.output_sharpen.acting().is_none() && !matches!(through, Through::Tap(_)) {
             self.osharp.release();
         }
         // The overlays alone keep what they paint and discard every
@@ -641,11 +672,11 @@ impl Renderer {
     pub fn set_source(&mut self, texture: gpu::Texture) {
         self.source = Some(texture);
         self.encoded = false;
-        self.scopes.image_changed = true;
         // A new picture, perhaps of another shape: the readout under
-        // the pointer reads nothing until its own analysis is back.
+        // the pointer reads nothing until its own analysis is back,
+        // and no analysis taken of the last one is shown.
         self.scopes.pixels = None;
-        self.scopes.source_changed = true;
+        self.scopes.new_source();
         self.redraw = true;
     }
 
@@ -812,11 +843,11 @@ impl Renderer {
         );
         self.source = Some(texture);
         self.encoded = false;
-        self.scopes.image_changed = true;
         // A new picture, perhaps of another shape: the readout under
-        // the pointer reads nothing until its own analysis is back.
+        // the pointer reads nothing until its own analysis is back,
+        // and no analysis taken of the last one is shown.
         self.scopes.pixels = None;
-        self.scopes.source_changed = true;
+        self.scopes.new_source();
         self.redraw = true;
     }
 

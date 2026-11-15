@@ -38,9 +38,12 @@ struct Params {
     // Its x: which clipping warnings to paint over the picture, 1 the
     // shadows, 2 the highlights, 3 both. (cubic.z: the source is
     // encoded sRGB already, the camera's JPEG, and takes the second
-    // path below, to the display table and nowhere else. cubic.w: the
+    // path below, to the display table and nowhere else. cubic.w: 1 the
     // scopes' analysis draw, which stops at the export space's encoded
-    // values and goes through no table.)
+    // values and goes through no table; 2 to 4 an analysis draw that
+    // stops where the curves take the picture in, 2 before every
+    // curve, 3 after the locals' curves and before the global one, 4
+    // after every point curve and before the color curves (`Tap`).)
     clip: vec4<f32>,
     zoom: f32,
     // Stops.
@@ -674,7 +677,22 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     }
     // The point curves, on the encoded working-space value, before the
     // matrix, as `finish.rs` does; then the color curves.
-    c = decode(curve(encode(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0))), count, weights));
+    let curves_in = encode(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)));
+    // An analysis draw tapped here: what the curves take in, a local's
+    // or, past the locals' own, the global one's.
+    if (p.cubic.w > 2.5 && p.cubic.w < 3.5) {
+        return vec4<f32>(locals_curved(curves_in, count, weights), scope_weight(count, weights));
+    }
+    if (p.cubic.w > 1.5 && p.cubic.w < 2.5) {
+        return vec4<f32>(curves_in, scope_weight(count, weights));
+    }
+    let curved = curve(curves_in, count, weights);
+    // Tapped past every point curve: what the color curves read their
+    // lightness from.
+    if (p.cubic.w > 3.5) {
+        return vec4<f32>(curved, scope_weight(count, weights));
+    }
+    c = decode(curved);
     if (look.shaded) {
         c = shade(c, count, weights);
     }
@@ -775,14 +793,18 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (p.tile.w > 0.5 && !overlaid) {
         discard;
     }
-    // The scopes weighed by a mask: its coverage in the alpha, which
-    // the analysis texture holds in eight bits and `scope.wgsl` reads.
-    var alpha = 1.0;
+    return vec4<f32>(d, scope_weight(count, weights));
+}
+
+// The scopes weighed by a mask: its coverage in the alpha, which the
+// analysis texture holds in eight bits and `scope.wgsl` reads; one
+// otherwise.
+fn scope_weight(count: u32, weights: array<f32, 16>) -> f32 {
     if (p.range.w > 0.5) {
         let k = u32(p.range.w) - 1u;
-        alpha = select(0.0, weights[min(k, 15u)], k < count);
+        return select(0.0, weights[min(k, 15u)], k < count);
     }
-    return vec4<f32>(d, alpha);
+    return 1.0;
 }
 
 // The grain, as `grain.rs` has it: the hash, a cell's crystals from
@@ -1709,9 +1731,9 @@ fn decode(v: vec3<f32>) -> vec3<f32> {
 }
 
 // Each channel through the locals' tables, each adding its departure
-// from the line by its weight, then through the global table,
-// linearly between entries.
-fn curve(e: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
+// from the line by its weight, held to 0 to 1: what the global table
+// takes in.
+fn locals_curved(e: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
     var x = e;
     for (var k = 0u; k < count; k = k + 1u) {
         let w = weights[k] * f32(locals[k].enabled) * locals[k].tone.y;
@@ -1724,7 +1746,13 @@ fn curve(e: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
         let b = vec3<f32>(local_tables[base + i.x + 1u].x, local_tables[base + i.y + 1u].y, local_tables[base + i.z + 1u].z);
         x = x + w * (a + f * (b - a) - e);
     }
-    let v = clamp(x, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0;
+    return clamp(x, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// Each channel through the locals' tables (`locals_curved`), then
+// through the global table, linearly between entries.
+fn curve(e: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
+    let v = locals_curved(e, count, weights) * 255.0;
     let i = min(vec3<u32>(v), vec3<u32>(254u));
     let f = v - vec3<f32>(i);
     let a = vec3<f32>(curves[i.x].x, curves[i.y].y, curves[i.z].z);

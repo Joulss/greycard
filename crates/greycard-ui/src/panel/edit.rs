@@ -980,7 +980,10 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     // the thread's handle would find nothing and draw the editor bare
     // until the next analysis, which a switch of target alone does
     // not bring.
-    app.set_curve_image(draw_curve(app, st.develop.bins.as_deref()));
+    app.set_curve_image(draw_curve(
+        app,
+        crate::panel::curve::backdrop(app, &st.develop),
+    ));
     app.set_lens_enabled(edit.lens.enabled);
     app.set_lens_profile_on(edit.lens.profile);
     crate::panel::assets::show_lens(

@@ -1159,6 +1159,10 @@ export component App inherits Window {
     in-out property <[float]> curve-red-green: [0, 0.5, 1, 0.5];
     in-out property <[float]> curve-blue-yellow: [0, 0.5, 1, 0.5];
     in property <image> curve-image;
+    // The curve editor's width as last laid out, in physical pixels,
+    // which its picture is drawn at; zero before it is first laid out.
+    in-out property <float> curve-side;
+    callback curve-resized();
     // How far the panel's sections are scrolled, the ScrollPane's
     // own content-y (so down is negative); set from Rust for a
     // snapshot of a section below the fold, once the sections have
@@ -1198,7 +1202,7 @@ export component App inherits Window {
     callback queue-menu-remove();
     /// The tab whose sections the panel shows: none of the develop
     /// tabs' over a frozen frame, Cull's as ever.
-    property <string> shown-tab: root.frozen && root.panel-tab != "Cull" ? "" : root.panel-tab;
+    out property <string> shown-tab: root.frozen && root.panel-tab != "Cull" ? "" : root.panel-tab;
     // A tab chosen, by the bar or by a tool's key.
     function tab-chosen(t: string) {
         root.panel-tab = t;
@@ -4313,6 +4317,12 @@ export component App inherits Window {
                             curve-reset => { root.curve-reset(); }
                             curve-channel-changed => { root.curve-channel-changed(); }
                             curve-mode-changed => { root.curve-mode-changed(); }
+                            curve-resized(w) => {
+                                if (w != root.curve-side) {
+                                    root.curve-side = w;
+                                    root.curve-resized();
+                                }
+                            }
                             parametric-changed => { root.parametric-changed(); }
                             view-changed => { root.view-changed(); }
                         }

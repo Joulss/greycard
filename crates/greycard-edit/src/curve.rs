@@ -313,6 +313,27 @@ impl Curves {
         }
     }
 
+    /// Where `v`, color channel `c`'s value before every curve (0 red,
+    /// 1 green, 2 blue), stands by the time `curve` takes it in, in the
+    /// order [`Curves::bake_with`] composes them: the parametric curve
+    /// first (`None` here), then each channel's own curve, then the
+    /// master; the color curves read the lightness of what all three
+    /// made. Switched off, the curves take in what comes. For many
+    /// values, [`Curves::taken_in_by`] builds the curves once.
+    pub fn taken_in(&self, curve: Option<Channel>, c: usize, v: f32) -> f32 {
+        self.taken_in_by(curve).at(c, v)
+    }
+
+    /// [`Curves::taken_in`] for `curve`, its splines built once.
+    pub fn taken_in_by(&self, curve: Option<Channel>) -> TakenIn {
+        TakenIn {
+            curve: curve.filter(|_| self.enabled),
+            parametric: self.parametric,
+            own: [&self.red, &self.green, &self.blue].map(|points| Spline::new(points)),
+            master: Spline::new(&self.rgb),
+        }
+    }
+
     /// The tables with no grading.
     pub fn bake(&self) -> CurveLut {
         self.bake_with(&Grading::default())
@@ -379,6 +400,33 @@ impl Curves {
 /// The value of a curve through `points` at `x`, in 0 to 1.
 pub fn evaluate(points: &[Point], x: f32) -> f32 {
     Spline::new(points).at(x)
+}
+
+/// What one curve of a set takes in ([`Curves::taken_in_by`]): the
+/// curves ahead of it, built once.
+pub struct TakenIn {
+    /// The curve, or none when the set is switched off and takes in
+    /// what comes.
+    curve: Option<Channel>,
+    parametric: Parametric,
+    own: [Spline; 3],
+    master: Spline,
+}
+
+impl TakenIn {
+    /// Where `v`, color channel `c`'s value before every curve, stands
+    /// by the time the curve takes it in.
+    pub fn at(&self, c: usize, v: f32) -> f32 {
+        let own = &self.own[c.min(2)];
+        match self.curve {
+            None => v,
+            Some(Channel::Red | Channel::Green | Channel::Blue) => self.parametric.at(v),
+            Some(Channel::Rgb) => own.at(self.parametric.at(v)),
+            Some(Channel::RedGreen | Channel::BlueYellow) => {
+                self.master.at(own.at(self.parametric.at(v)))
+            }
+        }
+    }
 }
 
 /// A monotone cubic through points sorted by x: Fritsch and Carlson's
@@ -484,6 +532,82 @@ fn place(x: f32) -> (usize, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Curves with something in every stage: a parametric curve; a
+    /// red, a green, and a blue curve; and a master.
+    fn every_stage() -> Curves {
+        Curves {
+            parametric: Parametric {
+                highlights: -0.4,
+                lights: 0.2,
+                darks: 0.3,
+                shadows: -0.2,
+                ..Default::default()
+            },
+            rgb: vec![[0.0, 0.0], [0.3, 0.45], [0.7, 0.8], [1.0, 1.0]],
+            red: vec![[0.0, 0.1], [0.5, 0.6], [1.0, 1.0]],
+            green: vec![[0.0, 0.0], [0.5, 0.4], [1.0, 0.95]],
+            blue: vec![[0.1, 0.0], [1.0, 1.0]],
+            ..Default::default()
+        }
+    }
+
+    /// What each curve takes in is what the stages before it make of
+    /// a value, in the order the tables compose them: the parametric
+    /// curve the value itself, a channel's curve the parametric's
+    /// output, the master the channel's, and the color curves the
+    /// master's. So the master's output at what it takes in is the
+    /// table's entry, and so is what the color curves take in.
+    #[test]
+    fn each_curve_takes_in_what_the_curves_before_it_make() {
+        let curves = every_stage();
+        let lut = curves.bake();
+        for (i, entry) in lut.tone.iter().enumerate() {
+            let v = i as f32 / (LUT_SIZE - 1) as f32;
+            let p = curves.parametric.at(v);
+            for c in 0..3 {
+                let own = curves.channel([Channel::Red, Channel::Green, Channel::Blue][c]);
+                assert_eq!(curves.taken_in(None, c, v), v);
+                for ch in [Channel::Red, Channel::Green, Channel::Blue] {
+                    assert_eq!(curves.taken_in(Some(ch), c, v), p);
+                }
+                let master_in = curves.taken_in(Some(Channel::Rgb), c, v);
+                assert_eq!(master_in, evaluate(own, p));
+                let made = evaluate(&curves.rgb, master_in);
+                assert!(
+                    (made - entry[c]).abs() < 1e-6,
+                    "level {i}, channel {c}: {made} against the table's {}",
+                    entry[c]
+                );
+                for color in [Channel::RedGreen, Channel::BlueYellow] {
+                    assert_eq!(curves.taken_in(Some(color), c, v), made);
+                }
+            }
+        }
+        // The stages move the value: the test is not of the identity.
+        assert_ne!(curves.taken_in(Some(Channel::Red), 0, 0.5), 0.5);
+        assert_ne!(
+            curves.taken_in(Some(Channel::Rgb), 0, 0.5),
+            curves.taken_in(Some(Channel::Red), 0, 0.5)
+        );
+    }
+
+    /// Switched off, the curves do nothing, so each takes in the value.
+    #[test]
+    fn switched_off_each_curve_takes_in_the_value() {
+        let curves = Curves {
+            enabled: false,
+            ..every_stage()
+        };
+        for curve in [
+            None,
+            Some(Channel::Rgb),
+            Some(Channel::Red),
+            Some(Channel::BlueYellow),
+        ] {
+            assert_eq!(curves.taken_in(curve, 1, 0.3), 0.3);
+        }
+    }
 
     #[test]
     fn a_press_takes_the_nearest_point_or_split_in_reach() {

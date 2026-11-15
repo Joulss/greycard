@@ -2669,6 +2669,10 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // Its people are not the last picture's, nor is an offer of one.
     crate::panel::parts::another_picture(st);
     crate::panel::parts_all::another_picture(st, app);
+    // Nor are the analyses on their way: let go when they land.
+    if let Some(renderer) = st.develop.renderer.as_mut() {
+        renderer.another_picture();
+    }
     // Another picture: a guide stroke drawn on the last one
     // means nothing here, and the source's size is not known
     // again until this frame's develop lands — a turn before

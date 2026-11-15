@@ -690,3 +690,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§676. The lightbox's bar, the tile size slider, and the canvas surround](notes/676-the-lightboxs-bar-the-tile-size-slider-and-the-canvas-surround.md) (2026-11-14)
 - [§677. A benchmark for highlight reconstruction](notes/677-a-benchmark-for-highlight-reconstruction.md) (2026-11-14)
 - [§678. Fill waits for Generate](notes/678-fill-waits-for-generate.md) (2026-11-14)
+- [§679. The curve editor's histogram is what the curve takes in](notes/679-the-curve-editors-histogram-is-what-the-curve-takes-in.md) (2026-11-14)

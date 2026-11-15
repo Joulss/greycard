@@ -68,7 +68,7 @@ impl Renderer {
     pub fn set_display_lut(&mut self, lut: &Lut3d) {
         self.lut = Self::lut_texture(&self.device, &self.queue, lut);
         self.gamut_marks = !lut.warn.is_empty();
-        self.scopes.image_changed = true;
+        self.scopes.output_changed();
         self.redraw = true;
     }
 
@@ -82,7 +82,7 @@ impl Renderer {
     pub fn set_output(&mut self, matrix: [[f32; 3]; 3]) {
         if self.output != matrix {
             self.output = matrix;
-            self.scopes.image_changed = true;
+            self.scopes.output_changed();
             self.redraw = true;
         }
     }
@@ -167,7 +167,7 @@ impl Renderer {
                 if !same {
                     self.look.texture = Self::look_texture(&self.device, &self.queue, table);
                     self.look.of = Some(table.clone());
-                    self.scopes.image_changed = true;
+                    self.scopes.output_changed();
                     self.redraw = true;
                 }
                 let (which, gamma) = match table.encoding {
@@ -201,7 +201,7 @@ impl Renderer {
             }
         }
         if was != self.look.params {
-            self.scopes.image_changed = true;
+            self.scopes.output_changed();
             self.redraw = true;
         }
     }
@@ -265,7 +265,7 @@ impl Renderer {
         );
         let cover = guide.scale as f32;
         self.guide_cover = [w as f32 * cover, h as f32 * cover, 1.0, 0.0];
-        self.scopes.image_changed = true;
+        self.scopes.image_changed();
         self.redraw = true;
     }
 
@@ -341,7 +341,7 @@ impl Renderer {
         self.sample = Self::sample_texture(&self.device, 1, 1);
         self.sample_of = None;
         self.redraw = true;
-        self.scopes.image_changed = true;
+        self.scopes.image_changed();
     }
 
     /// The range masks' picture on the GPU while `v` draws a mask that
@@ -397,7 +397,7 @@ impl Renderer {
         );
         self.sample_of = Some(Arc::downgrade(&sample));
         self.redraw = true;
-        self.scopes.image_changed = true;
+        self.scopes.image_changed();
     }
 
     /// Whether the range masks read a picture of their own.
@@ -429,7 +429,7 @@ impl Renderer {
             return;
         }
         self.redraw = true;
-        self.scopes.image_changed = true;
+        self.scopes.image_changed();
         self.detail_of = planes.map(|p| {
             (
                 Arc::downgrade(&p.data),
