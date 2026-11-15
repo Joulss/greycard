@@ -294,6 +294,9 @@ design note behind it.
   to open no longer shows the last frame's picture. A frame whose
   file moves while it is open is read again under its new path
   ([§674](https://github.com/jessolmstead/greycard/blob/master/docs/notes/674-an-open-dropped-by-a-develop-asked-while-it-decodes.md)).
+- `greycard rawtherapee --write` puts a new sidecar where the
+  editor's setting says, in the folder's `.greycard` when that is
+  on; it always wrote beside the raw.
 
 ## 0.11.0, 2026-11-09
 

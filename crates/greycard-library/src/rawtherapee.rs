@@ -39,7 +39,8 @@ pub struct Options {
     /// Where a frame with no sidecar yet gets one: under the folder's
     /// `.greycard` (`Some(true)`), as the editor's setting says, or
     /// beside it unless the folder has a `.greycard` (`Some(false)`); or
-    /// with none, beside it, for the command, which has no setting.
+    /// with none, beside it. The window and the command both pass the
+    /// setting.
     /// A sidecar there already is written where it is either way.
     pub sidecars_in_folder: Option<bool>,
 }
