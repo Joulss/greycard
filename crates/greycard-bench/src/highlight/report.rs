@@ -46,6 +46,38 @@ impl CaseResult {
     }
 }
 
+/// A case as a log names it: "f01 at +2", or "b05 at bracket 1.0".
+pub fn case_label(info: &CaseInfo) -> String {
+    if info.stops.starts_with("bracket") {
+        format!("{} at {}", info.frame, info.stops)
+    } else {
+        format!("{} at +{}", info.frame, info.stops)
+    }
+}
+
+/// The synthetic cases missing a method some other synthetic case has
+/// (an outside tool that failed on them), by [`case_label`]. A table
+/// pooled over them would pool each method over different cases, so the
+/// run leaves them out of the summary and fails at its end. Brackets are
+/// not held to it: the outside tools never run on them.
+pub fn incomplete(cases: &[CaseResult]) -> Vec<String> {
+    let synthetic: Vec<&CaseResult> = cases.iter().filter(|c| !c.is_bracket()).collect();
+    let mut all: Vec<&str> = synthetic
+        .iter()
+        .flat_map(|c| c.records.iter().map(|r| r.method.as_str()))
+        .collect();
+    all.sort_unstable();
+    all.dedup();
+    synthetic
+        .iter()
+        .filter(|c| {
+            all.iter()
+                .any(|m| !c.records.iter().any(|r| r.method == *m))
+        })
+        .map(|c| case_label(&c.info))
+        .collect()
+}
+
 /// Which buckets a row pools: a regime (1 to 3) or all, a size class or
 /// all.
 pub type Slice = (Option<usize>, Option<usize>);
@@ -274,7 +306,7 @@ pub fn summary_csv(cases: &[CaseResult]) -> String {
     for (group, members) in groups(cases) {
         for (method, domain) in methods(cases) {
             let ring = (domain == Domain::Image).then(|| pooled_ring(&members, &method));
-            for truth in Truth::BOTH {
+            for truth in Truth::ALL {
                 let c = members
                     .iter()
                     .flat_map(|c| c.records.iter())
@@ -593,5 +625,43 @@ mod tests {
         assert_eq!(picked(&b, (Some(1), None)).map(|b| b.n).sum::<usize>(), 5);
         assert_eq!(picked(&b, (None, Some(2))).map(|b| b.n).sum::<usize>(), 5);
         assert_eq!(picked(&b, (Some(0), None)).map(|b| b.n).sum::<usize>(), 0);
+    }
+
+    /// A case an outside tool failed on lacks its methods and is named;
+    /// a bracket, which the tools never see, is not.
+    #[test]
+    fn a_case_missing_a_method_is_incomplete() {
+        let case = |frame: &str, stops: &str, methods: &[&str]| CaseResult {
+            info: CaseInfo {
+                frame: frame.into(),
+                camera: String::new(),
+                maker: String::new(),
+                sensor: "bayer",
+                kind: String::new(),
+                stops: stops.into(),
+                clipped_share: 0.0,
+                counts: Default::default(),
+                segments: None,
+            },
+            records: methods
+                .iter()
+                .map(|m| Record {
+                    method: (*m).into(),
+                    domain: Domain::Image,
+                    truth: Truth::Raw,
+                    ceiling: 1.0,
+                    buckets: Default::default(),
+                    ring: None,
+                })
+                .collect(),
+        };
+        let cases = [
+            case("f01", "1", &["opposed", "dt-opposed"]),
+            case("f01", "2", &["opposed"]),
+            case("f02", "2", &["opposed", "dt-opposed"]),
+            case("b01", "bracket 1.0", &["opposed"]),
+        ];
+        assert_eq!(incomplete(&cases), ["f01 at +2"]);
+        assert!(incomplete(&cases[2..]).is_empty());
     }
 }

@@ -10,18 +10,30 @@
 //! has one), aligned to the engine's frame, and put through one 3x3
 //! matrix fitted per frame on an unclipped round trip ([`Fit`]): the
 //! frame's own mosaic as a DNG, developed by the tool and by the engine,
-//! compared outside the highlights. The residual of that fit is the
-//! floor under any difference the scores then show.
+//! compared outside the highlights. The fit must find the output linear
+//! (its log slope within 5% of 1). The tool's own develop of that
+//! unclipped frame, scaled by a case's overexposure, is scored where the
+//! input clipped as `dt-unclipped` and `rt-unclipped`: the floor under
+//! any difference the scores then show; and every method is also scored
+//! against it, its own truth.
 //!
 //! The sidecars are written where the case's files go, so a comparison
-//! repeats from what is on disk. Neither tool was installed when this
-//! was written, and the darktable history blobs are from memory of
-//! `dt_iop_highlights_params_t` v4 and `dt_iop_exposure_params_t` v6, so
-//! a run fails loudly rather than score a sidecar a tool ignored: a
-//! darktable export must carry the highlights mode asked for in its
-//! embedded history ([`check_darktable_history`]), and no two methods of
-//! one tool may give the same picture where the input clipped
-//! ([`require_distinct`]).
+//! repeats from what is on disk. Checked against darktable 5.6.2 and
+//! RawTherapee 5.13, and still held to account on every run, so a run
+//! fails loudly rather than score a sidecar a tool ignored: a darktable
+//! export must carry in its embedded history the demosaic, highlights,
+//! and exposure entries written and no module beyond the plumbing
+//! ([`check_darktable_history`]); RawTherapee's own copy of the profile
+//! it ran must say what was asked and have nothing else on
+//! ([`check_rawtherapee_profile`]). Two methods of different algorithms
+//! that give the same picture where the input clipped are logged
+//! ([`require_distinct`]); they may agree on a case, legitimately.
+//!
+//! The parameter layouts are read from darktable 5.6.2's
+//! `src/iop/highlights.c`, `exposure.c`, and `demosaic.c` (the darktable
+//! developers, GPL-3.0-or-later), and the profile keys from RawTherapee
+//! 5.13's `rtengine/procparams.cc` (the RawTherapee developers,
+//! GPL-3.0-or-later).
 
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
@@ -51,11 +63,21 @@ impl Tool {
         }
     }
 
+    /// The prefix its methods' labels carry.
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Tool::Darktable => "dt",
+            Tool::RawTherapee => "rt",
+        }
+    }
+
     /// What to install for it.
     pub fn package(self) -> &'static str {
         match self {
-            Tool::Darktable => "darktable (4.4 or later, for inpaint opposed and segmentation)",
-            Tool::RawTherapee => "rawtherapee (5.10 or later: its CLI, float TIFF, and Coloropp)",
+            Tool::Darktable => {
+                "darktable (5.x: checked with 5.6, whose exposure module is version 7)"
+            }
+            Tool::RawTherapee => "rawtherapee (5.10 or later for Coloropp: checked with 5.13)",
         }
     }
 
@@ -87,46 +109,115 @@ pub struct Method {
     pub tool: Tool,
     /// The name the tables give it.
     pub label: &'static str,
-    /// darktable's `dt_iop_highlights_mode_t`, or RawTherapee's
+    /// darktable's highlights parameters, or RawTherapee's
     /// `[HLRecovery] Method`.
     pub code: Code,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Code {
-    Darktable(i32),
+    Darktable(DtHighlights),
     RawTherapee(&'static str),
 }
 
-const DARKTABLE: [Method; 5] = [
+impl Code {
+    /// The algorithm without its settings. Two methods of one family may
+    /// give the same picture where they differ only in a setting a case
+    /// does not exercise (a rebuild where no cell clipped in every
+    /// color), so only methods of different families are held apart.
+    pub fn family(&self) -> (i32, &'static str) {
+        match *self {
+            Code::Darktable(h) => (h.mode, ""),
+            Code::RawTherapee(m) => (-1, m),
+        }
+    }
+}
+
+/// The fields of darktable's `dt_iop_highlights_params_t` (version 4,
+/// darktable 4.4 to 5.6) a method sets; the rest are the module's
+/// defaults.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DtHighlights {
+    /// `dt_iop_highlights_mode_t`: clip 0, reconstruct in LCh 1,
+    /// reconstruct color 2, guided laplacians 3, segmentation based 4,
+    /// inpaint opposed 5.
+    pub mode: i32,
+    /// The laplacians' iterations, 1 to 256 (default 30).
+    pub iterations: i32,
+    /// The laplacians' diameter, `dt_atrous_wavelets_scales_t`: index k
+    /// is 2^(k+1) px; the default 6 is 128 px.
+    pub scales: i32,
+    /// The segmentation's rebuild of fully clipped segments,
+    /// `dt_recovery_mode_t`: off 0 (the default), generic 5.
+    pub recovery: i32,
+    /// The rebuild's strength, 0 to 1 (default 0).
+    pub strength: f32,
+}
+
+impl DtHighlights {
+    /// `mode` with the module's defaults.
+    pub const fn mode(mode: i32) -> Self {
+        Self {
+            mode,
+            iterations: 30,
+            scales: 6,
+            recovery: 0,
+            strength: 0.0,
+        }
+    }
+}
+
+const DARKTABLE: [Method; 7] = [
     Method {
         tool: Tool::Darktable,
         label: "dt-opposed",
-        code: Code::Darktable(5),
+        code: Code::Darktable(DtHighlights::mode(5)),
     },
     Method {
         tool: Tool::Darktable,
         label: "dt-segments",
-        code: Code::Darktable(4),
+        code: Code::Darktable(DtHighlights::mode(4)),
+    },
+    // The segmentation with its rebuild of fully clipped segments on,
+    // "generic", at full strength.
+    Method {
+        tool: Tool::Darktable,
+        label: "dt-segments-rebuild",
+        code: Code::Darktable(DtHighlights {
+            recovery: 5,
+            strength: 1.0,
+            ..DtHighlights::mode(4)
+        }),
     },
     Method {
         tool: Tool::Darktable,
         label: "dt-laplacians",
-        code: Code::Darktable(3),
+        code: Code::Darktable(DtHighlights::mode(3)),
+    },
+    // Guided laplacians at a high-quality setting: 128 iterations over a
+    // 512 px diameter.
+    Method {
+        tool: Tool::Darktable,
+        label: "dt-laplacians-hq",
+        code: Code::Darktable(DtHighlights {
+            iterations: 128,
+            scales: 8,
+            ..DtHighlights::mode(3)
+        }),
     },
     Method {
         tool: Tool::Darktable,
         label: "dt-lch",
-        code: Code::Darktable(1),
+        code: Code::Darktable(DtHighlights::mode(1)),
     },
     Method {
         tool: Tool::Darktable,
         label: "dt-clip",
-        code: Code::Darktable(0),
+        code: Code::Darktable(DtHighlights::mode(0)),
     },
 ];
 
-const RAWTHERAPEE: [Method; 4] = [
+const RAWTHERAPEE: [Method; 6] = [
     Method {
         tool: Tool::RawTherapee,
         label: "rt-coloropp",
@@ -147,7 +238,21 @@ const RAWTHERAPEE: [Method; 4] = [
         label: "rt-luminance",
         code: Code::RawTherapee("Luminance"),
     },
+    Method {
+        tool: Tool::RawTherapee,
+        label: "rt-cielab",
+        code: Code::RawTherapee("CIELab blending"),
+    },
+    Method {
+        tool: Tool::RawTherapee,
+        label: "rt-off",
+        code: Code::RawTherapee(RT_OFF),
+    },
 ];
+
+/// The RawTherapee "method" that turns highlight recovery off: what it
+/// does to a clipped highlight without one, its clip.
+pub const RT_OFF: &str = "off";
 
 /// The stops both tools' exposure is pulled down by, after their
 /// highlight reconstruction, so their float output stays under 1 even if
@@ -186,45 +291,118 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// darktable's `dt_iop_highlights_params_t`, version 4, as its history
-/// stores it: little-endian, hex. Mode, then the defaults: blendL 1,
-/// blendC 0, strength 0, clip 1, noise level 0, 30 iterations, scales
-/// index 6, candidating 0.4, combine 2, recovery off, solid color 0.
-/// Unverified against a darktable build: see the notes' list.
-pub fn darktable_params(mode: i32) -> String {
+/// darktable's `dt_iop_highlights_params_t`, version 4 (darktable 4.4 to
+/// 5.6, checked against 5.6.2's `src/iop/highlights.c`), as its history
+/// stores it: little-endian, hex, 48 bytes. Mode, blendL 1, blendC 0
+/// (both unused), the rebuild's strength, clip 1, noise level 0,
+/// iterations, scales, candidating 0.4, combine 2, the rebuild's mode,
+/// solid color 0.
+pub fn darktable_params(h: &DtHighlights) -> String {
     let mut bytes = Vec::with_capacity(48);
-    bytes.extend(mode.to_le_bytes());
-    for v in [1.0f32, 0.0, 0.0, 1.0, 0.0] {
+    bytes.extend(h.mode.to_le_bytes());
+    for v in [1.0f32, 0.0, h.strength, 1.0, 0.0] {
         bytes.extend(v.to_le_bytes());
     }
-    bytes.extend(30i32.to_le_bytes());
-    bytes.extend(6i32.to_le_bytes());
+    bytes.extend(h.iterations.to_le_bytes());
+    bytes.extend(h.scales.to_le_bytes());
     for v in [0.4f32, 2.0] {
         bytes.extend(v.to_le_bytes());
     }
-    bytes.extend(0i32.to_le_bytes());
+    bytes.extend(h.recovery.to_le_bytes());
     bytes.extend(0.0f32.to_le_bytes());
     hex(&bytes)
 }
 
-/// darktable's `dt_iop_exposure_params_t`, version 6: manual mode, black
-/// 0, `stops` of exposure, the deflicker defaults (50, −4), no
-/// compensation of the camera's exposure bias. Unverified, as above.
+/// darktable's `dt_iop_exposure_params_t`, version 7 (5.6.2's
+/// `src/iop/exposure.c`), 28 bytes: manual mode, black 0, `stops` of
+/// exposure, the deflicker defaults (50, −4), no compensation of the
+/// camera's exposure bias, no compensation of a highlight preservation
+/// mode's bias.
 pub fn darktable_exposure(stops: f32) -> String {
-    let mut bytes = Vec::with_capacity(24);
+    let mut bytes = Vec::with_capacity(28);
     bytes.extend(0i32.to_le_bytes());
     for v in [0.0f32, stops, 50.0, -4.0] {
         bytes.extend(v.to_le_bytes());
     }
     bytes.extend(0i32.to_le_bytes());
+    bytes.extend(0i32.to_le_bytes());
     hex(&bytes)
 }
 
-/// The darktable sidecar: a history of the highlights module and the
-/// exposure pull, and the automatic presets marked applied so the
-/// workflow's own exposure, filmic or sigmoid and color calibration
-/// stay off. The demosaic is darktable's default: no setting pins it.
-pub fn darktable_xmp(mode: i32) -> String {
+/// darktable's demosaic method codes: RCD for Bayer (its default too),
+/// Markesteijn 3-pass for X-Trans (its default is 1-pass), the engine's
+/// pair.
+pub fn darktable_demosaic_method(xtrans: bool) -> i32 {
+    if xtrans { 1024 | 2 } else { 5 }
+}
+
+/// darktable's `dt_iop_demosaic_params_t`, version 6, 48 bytes: no green
+/// equilibration, edge threshold 0, no color smoothing, the method, LMMSE
+/// refine 1, dual threshold 0.2, and capture sharpening off (its radius
+/// 0, threshold 0.4, boost 0, 8 iterations, center 0).
+pub fn darktable_demosaic(xtrans: bool) -> String {
+    let mut bytes = Vec::with_capacity(48);
+    bytes.extend(0i32.to_le_bytes());
+    bytes.extend(0.0f32.to_le_bytes());
+    bytes.extend(0i32.to_le_bytes());
+    bytes.extend(darktable_demosaic_method(xtrans).to_le_bytes());
+    bytes.extend(1i32.to_le_bytes());
+    for v in [0.2f32, 0.0, 0.4, 0.0] {
+        bytes.extend(v.to_le_bytes());
+    }
+    bytes.extend(8i32.to_le_bytes());
+    bytes.extend(0.0f32.to_le_bytes());
+    bytes.extend(0i32.to_le_bytes());
+    hex(&bytes)
+}
+
+/// The history entries the sidecar sets: operation, module version,
+/// params.
+pub fn darktable_history(h: &DtHighlights, xtrans: bool) -> [(&'static str, u32, String); 3] {
+    [
+        ("demosaic", 6, darktable_demosaic(xtrans)),
+        ("highlights", 4, darktable_params(h)),
+        ("exposure", 7, darktable_exposure(-PULL)),
+    ]
+}
+
+/// The modules a raw's export may run besides those: what darktable
+/// always runs on a raw (the black and white levels, the white balance,
+/// the input and output profiles, the orientation, the final gamma
+/// stage), none of which changes a linear export's tone. Anything else
+/// in the history (filmic, sigmoid, color calibration, a lens
+/// correction, a denoise, a sharpen, a second exposure) fails the check.
+pub const DARKTABLE_PLUMBING: [&str; 6] = [
+    "rawprepare",
+    "temperature",
+    "colorin",
+    "colorout",
+    "flip",
+    "gamma",
+];
+
+/// The darktable sidecar: a history of the demosaic, the highlights
+/// module, and the exposure pull, and the automatic presets marked
+/// applied so the workflow's own exposure, filmic or sigmoid, and color
+/// calibration stay off.
+pub fn darktable_xmp(h: &DtHighlights, xtrans: bool) -> String {
+    let entries: String = darktable_history(h, xtrans)
+        .iter()
+        .enumerate()
+        .map(|(num, (op, version, params))| {
+            format!(
+                r#"     <rdf:li
+      darktable:num="{num}"
+      darktable:operation="{op}"
+      darktable:enabled="1"
+      darktable:modversion="{version}"
+      darktable:params="{params}"
+      darktable:multi_name=""
+      darktable:multi_priority="0"/>
+"#
+            )
+        })
+        .collect();
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 4.4.0-Exiv2">
@@ -235,64 +413,115 @@ pub fn darktable_xmp(mode: i32) -> String {
    darktable:xmp_version="5"
    darktable:raw_params="0"
    darktable:auto_presets_applied="1"
-   darktable:history_end="2"
+   darktable:history_end="3"
    darktable:iop_order_version="4">
    <darktable:history>
     <rdf:Seq>
-     <rdf:li
-      darktable:num="0"
-      darktable:operation="highlights"
-      darktable:enabled="1"
-      darktable:modversion="4"
-      darktable:params="{}"
-      darktable:multi_name=""
-      darktable:multi_priority="0"/>
-     <rdf:li
-      darktable:num="1"
-      darktable:operation="exposure"
-      darktable:enabled="1"
-      darktable:modversion="6"
-      darktable:params="{}"
-      darktable:multi_name=""
-      darktable:multi_priority="0"/>
-    </rdf:Seq>
+{entries}    </rdf:Seq>
    </darktable:history>
   </rdf:Description>
  </rdf:RDF>
 </x:xmpmeta>
-"#,
-        darktable_params(mode),
-        darktable_exposure(-PULL)
+"#
     )
 }
 
-/// Confirm from the history darktable embeds in its export that the
-/// highlights module ran in `mode`: the first `highlights` entry's
-/// params must start with the mode. A file with no history, or with
-/// another mode, fails: a sidecar darktable ignored would otherwise
-/// score as its default.
-pub fn check_darktable_history(tif: &Path, mode: i32) -> Result<()> {
+/// One entry of a darktable history.
+#[derive(Debug, Clone, PartialEq)]
+struct DtEntry {
+    num: usize,
+    operation: String,
+    enabled: bool,
+    modversion: u32,
+    params: String,
+}
+
+fn attribute<'a>(entry: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!("darktable:{name}=\"");
+    let at = entry.find(&key)? + key.len();
+    let rest = &entry[at..];
+    Some(&rest[..rest.find('"')?])
+}
+
+/// The entries of the history darktable embeds in an export, those under
+/// its `history_end` only (the rest are undone steps), and that end.
+fn darktable_entries(text: &str) -> Option<Vec<DtEntry>> {
+    let start = text.find("<darktable:history>")?;
+    let end = text[start..]
+        .find("</darktable:history>")
+        .map_or(text.len(), |e| start + e);
+    let history_end: Option<usize> = attribute(text, "history_end").and_then(|v| v.parse().ok());
+    let mut out = Vec::new();
+    for li in text[start..end].split("<rdf:li").skip(1) {
+        let (Some(num), Some(operation)) = (
+            attribute(li, "num").and_then(|v| v.parse().ok()),
+            attribute(li, "operation"),
+        ) else {
+            continue;
+        };
+        if history_end.is_some_and(|e| num >= e) {
+            continue;
+        }
+        out.push(DtEntry {
+            num,
+            operation: operation.to_string(),
+            enabled: attribute(li, "enabled") == Some("1"),
+            modversion: attribute(li, "modversion")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            params: attribute(li, "params").unwrap_or("").to_string(),
+        });
+    }
+    Some(out)
+}
+
+/// Confirm from the history darktable embeds in its export that it ran
+/// what the sidecar asked and nothing else: the last entry of each of
+/// the sidecar's modules must be enabled with the version and params
+/// written (the highlights module's whole blob, so a laplacians setting
+/// darktable ignored fails too), and every other enabled module must be
+/// plumbing ([`DARKTABLE_PLUMBING`]). A file with no history fails: a
+/// sidecar darktable ignored would otherwise score as its default.
+pub fn check_darktable_history(tif: &Path, h: &DtHighlights, xtrans: bool) -> Result<()> {
     let bytes = std::fs::read(tif).with_context(|| format!("reading {}", tif.display()))?;
     let text = String::from_utf8_lossy(&bytes);
-    let entry = text
-        .find("darktable:operation=\"highlights\"")
-        .with_context(|| {
-            format!(
-                "{} carries no darktable history: cannot confirm the highlight method (export with the develop history in the metadata)",
+    let entries = darktable_entries(&text).with_context(|| {
+        format!(
+            "{} carries no darktable history: cannot confirm the highlight method (export with the develop history in the metadata)",
+            tif.display()
+        )
+    })?;
+    let last = |op: &str| {
+        entries
+            .iter()
+            .filter(|e| e.operation == op)
+            .max_by_key(|e| e.num)
+    };
+    let wanted = darktable_history(h, xtrans);
+    for (op, version, params) in &wanted {
+        let e = last(op)
+            .with_context(|| format!("{}: darktable's history has no {op} entry", tif.display()))?;
+        if !e.enabled || e.modversion != *version || e.params != *params {
+            bail!(
+                "{}: darktable ran {op} v{} {} with params {}, not v{version} with {params}: the sidecar was not honored",
+                tif.display(),
+                e.modversion,
+                if e.enabled { "on" } else { "off" },
+                e.params
+            );
+        }
+    }
+    let mut ops: Vec<&str> = entries.iter().map(|e| e.operation.as_str()).collect();
+    ops.sort_unstable();
+    ops.dedup();
+    for op in ops {
+        let on = last(op).is_some_and(|e| e.enabled);
+        if on && !DARKTABLE_PLUMBING.contains(&op) && !wanted.iter().any(|(w, _, _)| *w == op) {
+            bail!(
+                "{}: darktable also ran {op}, which the comparison wants off",
                 tif.display()
-            )
-        })?;
-    let rest = &text[entry..];
-    let at = rest
-        .find("darktable:params=\"")
-        .context("the highlights entry has no params")?;
-    let params = &rest[at + 18..];
-    let want = hex(&mode.to_le_bytes());
-    if !params.starts_with(&want) {
-        bail!(
-            "darktable ran highlights with params {}…, not mode {mode} ({want}…): the sidecar was not honored",
-            &params[..params.len().min(16)]
-        );
+            );
+        }
     }
     Ok(())
 }
@@ -301,8 +530,14 @@ pub fn check_darktable_history(tif: &Path, mode: i32) -> Result<()> {
 /// recovery on with its own defaults (no `Hlbl` or `Hlth`), the same
 /// demosaic as the engine's cases, the file's matrix, Rec.2020 working
 /// and output space, exposure pulled down by [`PULL`]. `Coloropp`
-/// (inpaint opposed) needs RawTherapee 5.10.
+/// (inpaint opposed) needs RawTherapee 5.10. [`RT_OFF`] turns the
+/// recovery off: RawTherapee's clip.
 pub fn rawtherapee_pp3(method: &str, xtrans: bool) -> String {
+    let (enabled, named) = if method == RT_OFF {
+        (false, "Coloropp")
+    } else {
+        (true, method)
+    };
     let demosaic = if xtrans {
         "[RAW X-Trans]\nMethod=3-pass (best)\nCcSteps=0\n"
     } else {
@@ -311,7 +546,7 @@ pub fn rawtherapee_pp3(method: &str, xtrans: bool) -> String {
     format!(
         "[Version]\nAppVersion=5.10\nVersion=351\n\n\
 [Exposure]\nAuto=false\nClip=0.02\nCompensation=-{PULL}\nBrightness=0\nContrast=0\nSaturation=0\nBlack=0\nHighlightCompr=0\nHighlightComprThreshold=0\nShadowCompr=0\nHistogramMatching=false\nCurveMode=Standard\nCurveMode2=Standard\nCurve=0;\nCurve2=0;\n\n\
-[HLRecovery]\nEnabled=true\nMethod={method}\n\n\
+[HLRecovery]\nEnabled={enabled}\nMethod={named}\n\n\
 [White Balance]\nEnabled=true\nSetting=Camera\n\n\
 [Color Management]\nInputProfile=(camera)\nToneCurve=false\nApplyLookTable=false\nApplyBaselineExposureOffset=false\nApplyHueSatMap=false\nWorkingProfile=Rec2020\nWorkingTRC=none\nOutputProfile=RTv4_Rec2020\nOutputProfileIntent=Relative\nOutputBPC=true\n\n\
 [RAW]\nCA=false\nCAAvoidColourshift=true\nHotPixelFilter=false\nDeadPixelFilter=false\nHotDeadPixelThresh=100\nPreExposure=1\n\n\
@@ -319,15 +554,102 @@ pub fn rawtherapee_pp3(method: &str, xtrans: bool) -> String {
 [Sharpening]\nEnabled=false\n\n[SharpenMicro]\nEnabled=false\n\n[Vibrance]\nEnabled=false\n\n\
 [Luminance Curve]\nEnabled=false\n\n[Shadows & Highlights]\nEnabled=false\n\n\
 [Directional Pyramid Denoising]\nEnabled=false\n\n[Impulse Denoising]\nEnabled=false\n\n\
-[Defringing]\nEnabled=false\n\n[LensProfile]\nLcMode=lfnone\n\n[Dehaze]\nEnabled=false\n\n\
+[Defringing]\nEnabled=false\n\n[LensProfile]\nLcMode=none\n\n[Dehaze]\nEnabled=false\n\n\
 [Local Contrast]\nEnabled=false\n\n[Color appearance]\nEnabled=false\n\n[RGB Curves]\nEnabled=false\n\n\
 [Black & White]\nEnabled=false\n\n[Film Simulation]\nEnabled=false\n\n[Resize]\nEnabled=false\n"
     )
 }
 
+/// What RawTherapee's own copy of the profile it ran (`-O` writes it
+/// beside the output, every key merged over its neutral defaults) must
+/// say: section, key, value.
+pub fn rawtherapee_expected(
+    method: &str,
+    xtrans: bool,
+) -> Vec<(&'static str, &'static str, String)> {
+    let mut v = vec![
+        ("Exposure", "Compensation", format!("-{PULL}")),
+        ("Exposure", "Auto", "false".into()),
+        ("Exposure", "HighlightCompr", "0".into()),
+        ("HLRecovery", "Enabled", (method != RT_OFF).to_string()),
+        ("White Balance", "Setting", "Camera".into()),
+        ("Color Management", "InputProfile", "(camera)".into()),
+        ("Color Management", "ToneCurve", "false".into()),
+        ("Color Management", "ApplyLookTable", "false".into()),
+        ("Color Management", "WorkingProfile", "Rec2020".into()),
+        ("Color Management", "WorkingTRC", "none".into()),
+        ("Color Management", "OutputProfile", "RTv4_Rec2020".into()),
+        ("LensProfile", "LcMode", "none".into()),
+        ("RAW", "CA", "false".into()),
+        ("RAW", "HotPixelFilter", "false".into()),
+        ("RAW", "DeadPixelFilter", "false".into()),
+    ];
+    if method != RT_OFF {
+        v.push(("HLRecovery", "Method", method.to_string()));
+    }
+    v.push(if xtrans {
+        ("RAW X-Trans", "Method", "3-pass (best)".into())
+    } else {
+        ("RAW Bayer", "Method", "rcd".into())
+    });
+    v
+}
+
+/// The sections RawTherapee may have on (`Enabled=true`) besides the
+/// highlight recovery: the white balance and the crop guide (a display
+/// aid). Anything else fails the check.
+pub const RAWTHERAPEE_ON: [&str; 2] = ["White Balance", "CropGuide"];
+
+/// Confirm from the profile RawTherapee wrote beside its output that it
+/// ran what was asked and nothing else: every key of
+/// [`rawtherapee_expected`], and no other section on.
+pub fn check_rawtherapee_profile(pp3: &Path, method: &str, xtrans: bool) -> Result<()> {
+    let text =
+        std::fs::read_to_string(pp3).with_context(|| format!("reading {}", pp3.display()))?;
+    let mut section = "";
+    let mut values: Vec<(&str, &str, &str)> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(s) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            section = s;
+        } else if let Some((k, v)) = line.split_once('=') {
+            values.push((section, k, v));
+        }
+    }
+    let get = |s: &str, k: &str| {
+        values
+            .iter()
+            .find(|(vs, vk, _)| *vs == s && *vk == k)
+            .map(|(_, _, v)| *v)
+    };
+    for (s, k, want) in rawtherapee_expected(method, xtrans) {
+        let got = get(s, k);
+        // A number may come back as "-4" or "-4.0".
+        let same = got.is_some_and(|g| {
+            g == want || matches!((g.parse::<f64>(), want.parse::<f64>()), (Ok(a), Ok(b)) if a == b)
+        });
+        if !same {
+            bail!(
+                "{}: RawTherapee ran [{s}] {k}={}, not {want}: the profile was not honored",
+                pp3.display(),
+                got.unwrap_or("(missing)")
+            );
+        }
+    }
+    for (s, k, v) in &values {
+        if *k == "Enabled" && *v == "true" && *s != "HLRecovery" && !RAWTHERAPEE_ON.contains(s) {
+            bail!(
+                "{}: RawTherapee also ran [{s}], which the comparison wants off",
+                pp3.display()
+            );
+        }
+    }
+    Ok(())
+}
+
 /// A tool's picture where the input clipped, sampled: luminance and
 /// Oklab ab at unit luminance, every few pixels. Two methods of one tool
-/// compared on these must differ, or the tool did not take its sidecar.
+/// compared on these that agree are logged.
 pub fn fingerprint(rgb: &[f32], clipped: &[bool]) -> Vec<[f32; 3]> {
     let lab = greycard_core::color::Oklab::for_working_space();
     (0..clipped.len())
@@ -358,7 +680,7 @@ pub fn require_distinct(a: (&str, &[[f32; 3]]), b: (&str, &[[f32; 3]])) -> Resul
     let d = *ab.select_nth_unstable_by(k, f32::total_cmp).1;
     if s < 0.01 && d < 0.001 {
         bail!(
-            "{} and {} give the same picture where the input clipped (median {s:.4} stop, ab {d:.5}): the tool did not take its sidecar",
+            "{} and {} give the same picture where the input clipped (median {s:.4} stop, ab {d:.5})",
             a.0,
             b.0
         );
@@ -369,7 +691,7 @@ pub fn require_distinct(a: (&str, &[[f32; 3]]), b: (&str, &[[f32; 3]])) -> Resul
 /// Write `method`'s sidecar beside `dng` and return its path.
 pub fn write_sidecar(method: &Method, dir: &Path, xtrans: bool) -> Result<PathBuf> {
     let (name, body) = match method.code {
-        Code::Darktable(mode) => (format!("{}.xmp", method.label), darktable_xmp(mode)),
+        Code::Darktable(h) => (format!("{}.xmp", method.label), darktable_xmp(&h, xtrans)),
         Code::RawTherapee(m) => (format!("{}.pp3", method.label), rawtherapee_pp3(m, xtrans)),
     };
     let path = dir.join(name);
@@ -378,8 +700,15 @@ pub fn write_sidecar(method: &Method, dir: &Path, xtrans: bool) -> Result<PathBu
 }
 
 /// The command that develops `dng` with `sidecar` into `out` (a float
-/// TIFF). darktable runs on a configuration and cache of its own under
-/// `scratch`, never the user's, with an in-memory library.
+/// TIFF). Both run on a configuration and cache of their own under
+/// `scratch`, never the user's. darktable by its own flags, on every
+/// platform: a configuration and cache folder, an in-memory library, and
+/// the CPU (its OpenCL path is another implementation, and failed on one
+/// driver here). RawTherapee by `RT_SETTINGS` and `RT_CACHE`, which its
+/// `Options::load` reads before any platform default (`%LOCALAPPDATA%`
+/// on Windows, `~/Library/Application Support` on macOS, the XDG folders
+/// elsewhere) and which must be absolute; the XDG variables are moved
+/// too, for anything else of its that reads them on Linux.
 pub fn command(method: &Method, dng: &Path, sidecar: &Path, out: &Path, scratch: &Path) -> Command {
     match method.tool {
         Tool::Darktable => {
@@ -390,6 +719,7 @@ pub fn command(method: &Method, dng: &Path, sidecar: &Path, out: &Path, scratch:
                 .args(["--apply-custom-presets", "false"])
                 .args(["--icc-type", "LIN_REC2020"])
                 .arg("--core")
+                .arg("--disable-opencl")
                 .arg("--configdir")
                 .arg(scratch.join("darktable-config"))
                 .arg("--cachedir")
@@ -403,7 +733,15 @@ pub fn command(method: &Method, dng: &Path, sidecar: &Path, out: &Path, scratch:
         }
         Tool::RawTherapee => {
             let mut c = Command::new(Tool::RawTherapee.binary());
-            c.arg("-o")
+            // RawTherapee refuses a relative RT_SETTINGS or RT_CACHE.
+            let scratch = std::path::absolute(scratch).unwrap_or_else(|_| scratch.to_path_buf());
+            c.env("RT_SETTINGS", scratch.join("rawtherapee-config"))
+                .env("RT_CACHE", scratch.join("rawtherapee-cache"))
+                .env("XDG_CONFIG_HOME", scratch.join("rawtherapee-config"))
+                .env("XDG_CACHE_HOME", scratch.join("rawtherapee-cache"))
+                // -O, not -o: the profile it ran is written beside the
+                // output, for check_rawtherapee_profile.
+                .arg("-O")
                 .arg(out)
                 .args(["-t", "-b32", "-Y", "-p"])
                 .arg(sidecar)
@@ -449,11 +787,24 @@ pub fn run(mut c: Command) -> Result<()> {
 /// A TIFF with an embedded profile is converted from it (unbounded, in
 /// floating point); one without is taken to be linear Rec.2020.
 pub fn read_output(path: &Path) -> Result<(Vec<f32>, usize, usize)> {
+    read_output_within(path, READ_LIMIT)
+}
+
+/// The most a tool's TIFF may decode to, bytes: 2 GiB, over a float
+/// TIFF of a 100 MP frame (1.2 GB). The TIFF decoder's own default, 256
+/// MiB, is under one of a 24 MP frame (288 MB).
+pub const READ_LIMIT: u64 = 2 << 30;
+
+/// [`read_output`] with the decoder held to `limit` bytes.
+pub fn read_output_within(path: &Path, limit: u64) -> Result<(Vec<f32>, usize, usize)> {
     use image::ImageDecoder;
     let file = std::io::BufReader::new(
         std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?,
     );
     let mut decoder = image::codecs::tiff::TiffDecoder::new(file)?;
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(limit);
+    decoder.set_limits(limits)?;
     let icc = decoder.icc_profile()?;
     let img = image::DynamicImage::from_decoder(decoder)?;
     let (w, h) = (img.width() as usize, img.height() as usize);
@@ -593,6 +944,14 @@ pub struct Fit {
     pub stops_after: f64,
     /// Median Oklab ab distance at matched lightness, after.
     pub dab_after: f64,
+    /// The slope of the tool's log luminance, after, against the
+    /// engine's: 1 for a linear output, about 0.45 for a gamma-encoded
+    /// one read as linear, below 1 for one through a tone curve.
+    pub log_slope: f64,
+    /// Median signed difference, stops, after, in four bands of the
+    /// engine's luminance: 0.01 to 0.03, to 0.1, to 0.3, to 0.8. A
+    /// linear output holds them together.
+    pub bands: [f64; 4],
 }
 
 impl Fit {
@@ -652,7 +1011,11 @@ pub fn fit(tool: &[f32], ours: &[f32], (w, h): (usize, usize)) -> Result<Fit> {
         stops_before: 0.0,
         stops_after: 0.0,
         dab_after: 0.0,
+        log_slope: 1.0,
+        bands: [0.0; 4],
     };
+    let mut bands: [Vec<f32>; 4] = Default::default();
+    let (mut sx, mut sy, mut sxx, mut sxy, mut n) = (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
     for &i in &picks {
         let o = [ours[i], ours[i + 1], ours[i + 2]];
         let t = [tool[i], tool[i + 1], tool[i + 2]];
@@ -660,11 +1023,19 @@ pub fn fit(tool: &[f32], ours: &[f32], (w, h): (usize, usize)) -> Result<Fit> {
         draft.apply(&mut f);
         let (yo, yt, yf) = (luma(o), luma(t), luma(f).max(1e-6));
         before.push((yt / yo).log2().abs());
-        after.push((yf / yo).log2().abs());
+        let d = (yf / yo).log2();
+        after.push(d.abs());
+        let band = [0.03, 0.1, 0.3].iter().filter(|&&b| yo >= b).count();
+        bands[band].push(d);
+        let (lx, ly) = (f64::from(yo.log2()), f64::from(yf.log2()));
+        (sx, sy, sxx, sxy, n) = (sx + lx, sy + ly, sxx + lx * lx, sxy + lx * ly, n + 1.0);
         let (lo, lf) = (lab.of(o.map(|v| v / yo)), lab.of(f.map(|v| v / yf)));
         dab.push((lo[1] - lf[1]).hypot(lo[2] - lf[2]));
     }
     let median = |v: &mut Vec<f32>| {
+        if v.is_empty() {
+            return f64::NAN;
+        }
         let k = v.len() / 2;
         f64::from(*v.select_nth_unstable_by(k, f32::total_cmp).1)
     };
@@ -674,6 +1045,8 @@ pub fn fit(tool: &[f32], ours: &[f32], (w, h): (usize, usize)) -> Result<Fit> {
         stops_before: median(&mut before),
         stops_after: median(&mut after),
         dab_after: median(&mut dab),
+        log_slope: (n * sxy - sx * sy) / (n * sxx - sx * sx),
+        bands: bands.each_mut().map(median),
     })
 }
 
@@ -709,19 +1082,36 @@ pub fn residual(a: &[f32], b: &[f32], (w, h): (usize, usize)) -> (f64, f64) {
 }
 
 /// Run a method's command and, for darktable, confirm from the file's
-/// embedded history that it ran the method asked for.
-fn run_checked(method: &Method, dng: &Path, sidecar: &Path, out: &Path, dir: &Path) -> Result<()> {
+/// embedded history that it ran the method asked for and nothing else.
+fn run_checked(
+    method: &Method,
+    dng: &Path,
+    sidecar: &Path,
+    out: &Path,
+    dir: &Path,
+    xtrans: bool,
+) -> Result<()> {
+    let pp3 = rawtherapee_profile_of(out);
+    let _ = std::fs::remove_file(&pp3);
     run(command(method, dng, sidecar, out, dir))?;
-    if let Code::Darktable(mode) = method.code {
-        check_darktable_history(out, mode)
-            .with_context(|| format!("{} on {}", method.label, dng.display()))?;
+    match method.code {
+        Code::Darktable(h) => check_darktable_history(out, &h, xtrans),
+        Code::RawTherapee(m) => check_rawtherapee_profile(&pp3, m, xtrans),
     }
-    Ok(())
+    .with_context(|| format!("{} on {}", method.label, dng.display()))
+}
+
+/// Where `rawtherapee-cli -O` writes the profile of an output.
+pub fn rawtherapee_profile_of(out: &Path) -> PathBuf {
+    let mut s = out.as_os_str().to_owned();
+    s.push(".pp3");
+    PathBuf::from(s)
 }
 
 /// Develop `dng` with a tool's `method` into `dir`, read it back and
-/// put it on the engine's frame: placed at the fit's offset, through its
-/// matrix when there is a fit, the gaps filled from `fill`.
+/// put it on the engine's frame: through the fit's matrix when there is
+/// a fit, placed at its offset, the gaps (only ever in the border no
+/// score reads) filled from `fill` as it is.
 pub fn develop_with(
     method: &Method,
     dng: &Path,
@@ -738,22 +1128,28 @@ pub fn develop_with(
         .unwrap_or_default();
     let out = dir.join(format!("{stem}-{}.tif", method.label));
     let _ = std::fs::remove_file(&out);
-    run_checked(method, dng, &sidecar, &out, dir)?;
-    let (rgb, tw, th) = read_output(&out)?;
+    run_checked(method, dng, &sidecar, &out, dir, xtrans)?;
+    let (mut rgb, tw, th) = read_output(&out)?;
+    // A float TIFF is 12 bytes a pixel; once read and checked it is
+    // dropped (the sidecar and the DNG remain to repeat it).
+    let _ = std::fs::remove_file(&out);
     let offset = match fit {
         Some(f) => f.offset,
         None => align(&rgb, (tw, th), fill, size)?,
     };
-    let mut placed = placed(&rgb, (tw, th), offset, fill, size);
+    // The matrix acts on the tool's pixels alone: applied after placing,
+    // it would also move the fill's.
     if let Some(f) = fit {
-        f.apply(&mut placed);
+        f.apply(&mut rgb);
     }
-    Ok(placed)
+    Ok(placed(&rgb, (tw, th), offset, fill, size))
 }
 
 /// The per-frame fit of a tool: its default method on the unclipped
 /// round trip `dng`, against `ours`, the engine's develop of the same
-/// file.
+/// file. Also returns the tool's picture of that file through the fit,
+/// on the engine's frame: the tool's own unclipped develop, which, scaled
+/// by a case's overexposure, is its truth.
 pub fn validate(
     tool: Tool,
     dng: &Path,
@@ -761,18 +1157,31 @@ pub fn validate(
     xtrans: bool,
     ours: &[f32],
     size: (usize, usize),
-) -> Result<Fit> {
+) -> Result<(Fit, Vec<f32>)> {
     let method = tool.default_method();
     let sidecar = write_sidecar(method, dir, xtrans)?;
     let out = dir.join(format!("valid-{}.tif", method.label));
     let _ = std::fs::remove_file(&out);
-    run_checked(method, dng, &sidecar, &out, dir)?;
-    let (rgb, tw, th) = read_output(&out)?;
+    run_checked(method, dng, &sidecar, &out, dir, xtrans)?;
+    let (mut rgb, tw, th) = read_output(&out)?;
+    // A float TIFF is 12 bytes a pixel; once read and checked it is
+    // dropped (the sidecar and the DNG remain to repeat it).
+    let _ = std::fs::remove_file(&out);
     let offset = align(&rgb, (tw, th), ours, size)?;
-    let placed = placed(&rgb, (tw, th), offset, ours, size);
-    let mut f = fit(&placed, ours, size)?;
+    let mut f = fit(&placed(&rgb, (tw, th), offset, ours, size), ours, size)?;
     f.offset = offset;
-    Ok(f)
+    // A tone curve or an encoding the reader did not undo would scale a
+    // reconstruction's error with its brightness.
+    if (f.log_slope - 1.0).abs() > 0.05 {
+        bail!(
+            "{}'s output is not linear: its log luminance runs at {:.3} of the engine's (bands {:?})",
+            tool.binary(),
+            f.log_slope,
+            f.bands
+        );
+    }
+    f.apply(&mut rgb);
+    Ok((f, placed(&rgb, (tw, th), offset, ours, size)))
 }
 
 fn invert(m: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
@@ -800,19 +1209,50 @@ fn invert(m: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
 mod tests {
     use super::*;
 
+    /// The blobs, against what darktable 5.6.2 itself wrote into the
+    /// history of an export of a default develop (inpaint opposed, RCD,
+    /// an exposure of −4 upgraded from version 6).
     #[test]
-    fn the_darktable_blob_is_the_version_4_struct() {
-        let hex = darktable_params(5);
-        assert_eq!(hex.len(), 96);
-        assert!(hex.starts_with("05000000"));
-        // blendL 1.0, then blendC 0.
-        assert_eq!(&hex[8..16], "0000803f");
-        // Iterations 30 at the seventh field.
-        assert_eq!(&hex[48..56], "1e000000");
-        let xmp = darktable_xmp(4);
+    fn the_darktable_blobs_are_darktable_5_6s_structs() {
+        assert_eq!(
+            darktable_params(&DtHighlights::mode(5)),
+            "050000000000803f00000000000000000000803f000000001e00000006000000cdcccc3e000000400000000000000000"
+        );
+        assert_eq!(
+            darktable_exposure(-PULL),
+            "0000000000000000000080c000004842000080c00000000000000000"
+        );
+        // The capture sharpening's threshold (bytes 28 to 32) is set per
+        // image by darktable and unused with it off.
+        let written = "0000000000000000000000000500000001000000cdcc4c3e00000000713d8a3e00000000080000000000000000000000";
+        let ours = darktable_demosaic(false);
+        assert_eq!(ours.len(), written.len());
+        assert_eq!(&ours[..56], &written[..56]);
+        assert_eq!(&ours[64..], &written[64..]);
+        // Markesteijn 3-pass, 1024 | 2, on X-Trans.
+        assert_eq!(&darktable_demosaic(true)[24..32], "02040000");
+
+        // The variants: laplacians at 128 iterations and 512 px, the
+        // segmentation's generic rebuild at full strength.
+        let Code::Darktable(hq) = DARKTABLE[4].code else {
+            unreachable!()
+        };
+        let hq = darktable_params(&hq);
+        assert_eq!(&hq[..8], "03000000");
+        assert_eq!(&hq[48..64], "8000000008000000");
+        let Code::Darktable(rebuild) = DARKTABLE[2].code else {
+            unreachable!()
+        };
+        let rebuild = darktable_params(&rebuild);
+        assert_eq!(&rebuild[24..32], "0000803f");
+        assert_eq!(&rebuild[80..88], "05000000");
+
+        let xmp = darktable_xmp(&DtHighlights::mode(4), false);
         assert!(xmp.contains("darktable:operation=\"highlights\""));
+        assert!(xmp.contains("darktable:modversion=\"7\""));
+        assert!(xmp.contains("darktable:history_end=\"3\""));
         assert!(xmp.contains("darktable:auto_presets_applied=\"1\""));
-        assert!(xmp.contains(&darktable_params(4)));
+        assert!(xmp.contains(&darktable_params(&DtHighlights::mode(4))));
     }
 
     #[test]
@@ -821,9 +1261,44 @@ mod tests {
         assert!(pp3.contains("[HLRecovery]\nEnabled=true\nMethod=Coloropp"));
         assert!(pp3.contains("Method=rcd"));
         assert!(pp3.contains(&format!("Compensation=-{PULL}")));
+        assert!(pp3.contains("LcMode=none\n"));
         assert!(!pp3.contains("Hlth"));
         assert!(pp3.contains("[Sharpening]\nEnabled=false"));
         assert!(rawtherapee_pp3("Blend", true).contains("3-pass"));
+        assert!(rawtherapee_pp3(RT_OFF, false).contains("[HLRecovery]\nEnabled=false\n"));
+    }
+
+    /// RawTherapee's own copy of the profile it ran is held to what was
+    /// asked: a method it did not run, or a module left on, fails.
+    #[test]
+    fn rawtherapee_is_held_to_its_profile() {
+        let dir = std::env::temp_dir().join(format!("greycard-hb-rt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pp3 = dir.join("out.tif.pp3");
+        assert_eq!(rawtherapee_profile_of(&dir.join("out.tif")), pp3);
+        // As RawTherapee writes it: every section, numbers its own way.
+        let ran = rawtherapee_pp3("Color", false)
+            .replace("Compensation=-4", "Compensation=-4.0")
+            .replace(
+                "[Sharpening]\nEnabled=false",
+                "[Sharpening]\nEnabled=false\nMethod=usm",
+            )
+            + "\n[CropGuide]\nEnabled=true\n";
+        std::fs::write(&pp3, &ran).unwrap();
+        let ok = check_rawtherapee_profile(&pp3, "Color", false);
+        let other = check_rawtherapee_profile(&pp3, "Blend", false);
+        let xtrans = check_rawtherapee_profile(&pp3, "Color", true);
+        std::fs::write(
+            &pp3,
+            ran.replace("[Sharpening]\nEnabled=false", "[Sharpening]\nEnabled=true"),
+        )
+        .unwrap();
+        let sharpened = check_rawtherapee_profile(&pp3, "Color", false);
+        greycard_core::testing::remove_dir_retry(&dir);
+        assert!(ok.is_ok(), "{ok:?}");
+        assert!(other.unwrap_err().to_string().contains("Method=Color"));
+        assert!(xtrans.is_err());
+        assert!(sharpened.unwrap_err().to_string().contains("[Sharpening]"));
     }
 
     #[test]
@@ -840,7 +1315,10 @@ mod tests {
         assert!(s.contains("--icc-type LIN_REC2020"));
         // Joined by the platform, so the separator is Windows' own there.
         let config = Path::new("/w").join("darktable-config");
-        assert!(s.contains(&format!("--core --configdir {}", config.display())));
+        assert!(s.contains(&format!(
+            "--core --disable-opencl --configdir {}",
+            config.display()
+        )));
         assert!(s.contains("--library :memory:"));
         let rt = command(
             &RAWTHERAPEE[0],
@@ -851,10 +1329,88 @@ mod tests {
         );
         assert_eq!(
             shown(&rt),
-            "rawtherapee-cli -o /w/out.tif -t -b32 -Y -p /w/rt.pp3 -c /w/in.dng"
+            "rawtherapee-cli -O /w/out.tif -t -b32 -Y -p /w/rt.pp3 -c /w/in.dng"
         );
-        assert_eq!(Tool::Darktable.methods().len(), 5);
-        assert_eq!(Tool::RawTherapee.methods().len(), 4);
+        // RawTherapee's configuration and cache are the scratch folder's.
+        // RawTherapee's configuration and cache are the scratch folder's,
+        // by the variables it reads on every platform, made absolute.
+        let scratch = std::path::absolute(Path::new("/w")).unwrap();
+        let envs: Vec<_> = rt.get_envs().collect();
+        for (key, dir) in [
+            ("RT_SETTINGS", "rawtherapee-config"),
+            ("RT_CACHE", "rawtherapee-cache"),
+            ("XDG_CONFIG_HOME", "rawtherapee-config"),
+        ] {
+            let want = scratch.join(dir);
+            assert!(
+                envs.contains(&(std::ffi::OsStr::new(key), Some(want.as_os_str()))),
+                "{key}: {envs:?}"
+            );
+        }
+        let relative = command(
+            &RAWTHERAPEE[0],
+            Path::new("in.dng"),
+            Path::new("rt.pp3"),
+            Path::new("out.tif"),
+            Path::new("w"),
+        );
+        assert!(
+            relative
+                .get_envs()
+                .all(|(_, v)| v.is_some_and(|v| Path::new(v).is_absolute()))
+        );
+        assert_eq!(Tool::Darktable.methods().len(), 7);
+        assert_eq!(Tool::RawTherapee.methods().len(), 6);
+    }
+
+    /// The decoder is held to the limit given, not its own default: a
+    /// float TIFF over a lowered limit fails and reads under a higher
+    /// one, and the bench's limit takes a 100 MP frame where the TIFF
+    /// decoder's default (256 MiB) failed a 24 MP one.
+    #[test]
+    fn a_float_tiff_reads_within_the_limit_given() {
+        let (w, h) = (64u32, 48u32);
+        let bytes = u64::from(3 * 4 * w * h);
+        let mut px = vec![0.0f32; (3 * w * h) as usize];
+        px[3 * (w as usize * 12 + 34) + 1] = 0.25;
+        let dir = std::env::temp_dir().join(format!("greycard-hb-lim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("small.tif");
+        image::Rgb32FImage::from_raw(w, h, px)
+            .unwrap()
+            .save(&path)
+            .unwrap();
+        let under = read_output_within(&path, bytes / 2);
+        let over = read_output_within(&path, 2 * bytes);
+        greycard_core::testing::remove_dir_retry(&dir);
+        assert!(under.is_err());
+        let (rgb, rw, rh) = over.unwrap();
+        assert_eq!((rw, rh), (w as usize, h as usize));
+        assert_eq!(rgb[3 * (w as usize * 12 + 34) + 1], 0.25);
+        // A float TIFF of a 100 MP frame (11648 x 8736) fits.
+        const { assert!(READ_LIMIT > 12 * 11_648 * 8_736) };
+    }
+
+    /// The same at full size: a float TIFF of a 24 MP frame (288 MB)
+    /// reads. Writes and reads that much, so run only when asked.
+    #[test]
+    #[ignore = "writes a 288 MB TIFF"]
+    fn a_full_size_float_tiff_reads() {
+        let (w, h) = (6000u32, 4000u32);
+        let mut px = vec![0.0f32; (3 * w * h) as usize];
+        px[3 * (w as usize * 1234 + 567) + 1] = 0.25;
+        let dir = std::env::temp_dir().join(format!("greycard-hb-big-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.tif");
+        image::Rgb32FImage::from_raw(w, h, px)
+            .unwrap()
+            .save(&path)
+            .unwrap();
+        let read = read_output(&path);
+        greycard_core::testing::remove_dir_retry(&dir);
+        let (rgb, rw, rh) = read.unwrap();
+        assert_eq!((rw, rh), (w as usize, h as usize));
+        assert_eq!(rgb[3 * (w as usize * 1234 + 567) + 1], 0.25);
     }
 
     /// A picture under a known matrix and offset: the fit and the
@@ -882,6 +1438,8 @@ mod tests {
             stops_before: 0.0,
             stops_after: 0.0,
             dab_after: 0.0,
+            log_slope: 1.0,
+            bands: [0.0; 4],
         }
         .apply(&mut tool);
         let f = fit(&tool, &ours, (w, h)).unwrap();
@@ -891,6 +1449,12 @@ mod tests {
             }
         }
         assert!(f.stops_after < 1e-4 && f.stops_before > 0.0);
+        assert!((f.log_slope - 1.0).abs() < 1e-3, "{}", f.log_slope);
+
+        // A gamma-encoded output read as linear is caught by its slope.
+        let encoded: Vec<f32> = tool.iter().map(|v| v.max(0.0).powf(1.0 / 2.2)).collect();
+        let g = fit(&encoded, &ours, (w, h)).unwrap();
+        assert!(g.log_slope < 0.6, "{}", g.log_slope);
 
         // The tool's picture cropped by two pixels left and three on top.
         let (tw, th) = (w - 4, h - 6);
@@ -921,27 +1485,80 @@ mod tests {
     }
 
     /// The exposure pull is in the darktable history, and a darktable
-    /// export whose history names another mode, or none, fails.
+    /// export whose history differs from the sidecar's, runs a module
+    /// the comparison wants off, or has none, fails.
     #[test]
     fn darktable_is_held_to_its_sidecar() {
-        let xmp = darktable_xmp(5);
+        let opposed = DtHighlights::mode(5);
+        let xmp = darktable_xmp(&opposed, false);
         assert!(xmp.contains("darktable:operation=\"exposure\""));
         let pull = darktable_exposure(-PULL);
-        assert_eq!(pull.len(), 48);
+        assert_eq!(pull.len(), 56);
         assert_eq!(&pull[16..24], hex(&(-PULL).to_le_bytes()));
         assert!(xmp.contains(&pull));
 
+        // An export's history as darktable writes it: the plumbing it
+        // adds, then the sidecar's entries.
+        let plumbing = r#"<darktable:history><rdf:Seq>
+     <rdf:li darktable:num="0" darktable:operation="rawprepare" darktable:enabled="1" darktable:modversion="2" darktable:params="00"/>
+     <rdf:li darktable:num="1" darktable:operation="temperature" darktable:enabled="1" darktable:modversion="4" darktable:params="00"/>
+     <rdf:li darktable:num="2" darktable:operation="filmicrgb" darktable:enabled="0" darktable:modversion="7" darktable:params="00"/>"#;
+        let ours: String = xmp
+            .split("<rdf:li")
+            .skip(1)
+            .map(|li| li.split("/>").next().unwrap_or(""))
+            .enumerate()
+            .map(|(k, li)| {
+                format!(
+                    "<rdf:li{}/>\n",
+                    li.replace(&format!("num=\"{k}\""), &format!("num=\"{}\"", k + 3))
+                )
+            })
+            .collect();
+        let export = |extra: &str, end: usize| {
+            format!(
+                "II*\0junk darktable:history_end=\"{end}\" {plumbing}\n{ours}{extra}</rdf:Seq></darktable:history>junk"
+            )
+        };
+        let sigmoid = r#"<rdf:li darktable:num="6" darktable:operation="sigmoid" darktable:enabled="1" darktable:modversion="3" darktable:params="00"/>"#;
         let dir = std::env::temp_dir().join(format!("greycard-hb-dt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let tif = dir.join("out.tif");
-        // A file with the history embedded, as darktable writes it.
-        std::fs::write(&tif, format!("II*\0junk{}junk", darktable_xmp(5))).unwrap();
-        assert!(check_darktable_history(&tif, 5).is_ok());
-        assert!(check_darktable_history(&tif, 4).is_err());
-        std::fs::write(&tif, "II*\0no history").unwrap();
-        let e = check_darktable_history(&tif, 5).unwrap_err().to_string();
+        let mut results = Vec::new();
+        for (text, h, xtrans) in [
+            (export("", 6), opposed, false),
+            (export("", 6), DtHighlights::mode(4), false),
+            // A laplacians setting darktable did not take.
+            (
+                export("", 6),
+                DtHighlights {
+                    iterations: 128,
+                    ..opposed
+                },
+                false,
+            ),
+            (export("", 6), opposed, true),
+            (export(sigmoid, 7), opposed, false),
+            // An entry past history_end is undone, not run.
+            (export(sigmoid, 6), opposed, false),
+            ("II*\0no history".to_string(), opposed, false),
+        ] {
+            std::fs::write(&tif, text).unwrap();
+            results.push(check_darktable_history(&tif, &h, xtrans).map_err(|e| e.to_string()));
+        }
         greycard_core::testing::remove_dir_retry(&dir);
-        assert!(e.contains("no darktable history"), "{e}");
+        assert!(results[0].is_ok(), "{:?}", results[0]);
+        assert!(results[1].as_ref().unwrap_err().contains("highlights"));
+        assert!(results[2].is_err());
+        assert!(results[3].as_ref().unwrap_err().contains("demosaic"));
+        assert!(results[4].as_ref().unwrap_err().contains("sigmoid"));
+        assert!(results[5].is_ok(), "{:?}", results[5]);
+        assert!(
+            results[6]
+                .as_ref()
+                .unwrap_err()
+                .contains("no darktable history")
+        );
     }
 
     /// Two methods that give the same picture where the input clipped

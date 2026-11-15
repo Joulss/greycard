@@ -1258,7 +1258,7 @@ clears or a tester asks for it.
       against our 0.092, one rebuild setting tried), a sixth of what
       the raised ceiling's oracle shows. Guided laplacians lost to
       opposed in every one of 103 comparisons and is not ported
-      (measured 2026-11-15). It invents, so it is an option, off by
+      (§686). It invents, so it is an option, off by
       default; the classical fill stays the default
 - [ ] Maybe: MCP
 - [ ] Maybe: Depth mapping for blur

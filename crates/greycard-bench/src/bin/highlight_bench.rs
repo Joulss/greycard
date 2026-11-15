@@ -31,7 +31,9 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use greycard_bench::highlight::brackets::{agreement, bracket_case, find_pairs, raws};
 use greycard_bench::highlight::external::{self, Tool};
-use greycard_bench::highlight::report::{CaseInfo, CaseResult, rows_csv, summary_csv, summary_md};
+use greycard_bench::highlight::report::{
+    CaseInfo, CaseResult, case_label, incomplete, rows_csv, summary_csv, summary_md,
+};
 use greycard_bench::highlight::run::{
     Case, Domain, ORACLE_BASE, Truth, UNRELIABLE, demosaic_for, score_case, score_external,
     synthetic_case,
@@ -481,13 +483,24 @@ fn run(args: RunArgs) -> Result<()> {
                 let case = synthetic_case(&scene, stops)?;
                 let (mut records, segments) = score_case(&case, args.oracles, None)?;
                 if !tools.is_empty() {
-                    records.extend(external_records(
+                    // A case a tool fails on keeps the engine's rows in
+                    // rows.csv and says so; a long run goes on, and the
+                    // case is left out of the summary and named at the
+                    // end (`incomplete`).
+                    match external_records(
                         &scene,
                         &case,
                         stops,
                         &tools,
                         &out.join("external").join(&listed.id),
-                    )?);
+                        None,
+                    ) {
+                        Ok(r) => records.extend(r),
+                        Err(e) => eprintln!(
+                            "{} at +{stops}: the outside tools not scored, {e:#}",
+                            listed.id
+                        ),
+                    }
                 }
                 let result = CaseResult {
                     info: info(
@@ -632,15 +645,31 @@ fn run(args: RunArgs) -> Result<()> {
 
     std::fs::write(out.join("rows.csv"), rows_csv(&results))?;
     let _ = std::fs::remove_file(out.join("rows.partial.csv"));
-    std::fs::write(out.join("summary.csv"), summary_csv(&results))?;
-    let preamble = preamble(&results, &args);
-    std::fs::write(out.join("summary.md"), summary_md(&results, &preamble))?;
+    // The summary pools every method over the same cases: those every
+    // method scored.
+    let missing = incomplete(&results);
+    let tabled: Vec<CaseResult> = results
+        .iter()
+        .filter(|c| !missing.contains(&case_label(&c.info)))
+        .cloned()
+        .collect();
+    std::fs::write(out.join("summary.csv"), summary_csv(&tabled))?;
+    let preamble = preamble(&tabled, &args);
+    std::fs::write(out.join("summary.md"), summary_md(&tabled, &preamble))?;
     eprintln!("tables written in {:.0} s", started.elapsed().as_secs_f64());
 
     if args.sheets > 0 {
-        sheets(&args, &results)?;
+        sheets(&args, &tabled)?;
     }
     eprintln!("done in {:.0} s", started.elapsed().as_secs_f64());
+    if !missing.is_empty() {
+        bail!(
+            "{} of {} cases lack a method (an outside tool failed on them; see the log) and are left out of the summary, kept in rows.csv: {}",
+            missing.len(),
+            results.len(),
+            missing.join(", ")
+        );
+    }
     Ok(())
 }
 
@@ -751,20 +780,27 @@ fn sheets(args: &RunArgs, results: &[CaseResult]) -> Result<()> {
     Ok(())
 }
 
-/// The tools' methods on one case, each fitted by the frame's round trip.
-/// Fails, rather than score it, when a tool's round trip fails, when
-/// darktable's export shows another highlight mode than asked, or when
-/// two of a tool's methods give the same picture where the input
-/// clipped: each means a sidecar was not honored.
+/// The tools' methods on one case, each fitted by the frame's round trip,
+/// and each tool's own develop of the unclipped frame (`dt-unclipped`,
+/// `rt-unclipped`): its floor against the engine's truth, and the truth
+/// its methods are also scored against ([`Truth::Own`]). With a sheet,
+/// each picture is added to it. Fails, rather than score it, when a
+/// tool's round trip fails, when darktable's export shows another
+/// history than asked, or when RawTherapee's own profile shows another
+/// than asked: each means a sidecar was not honored. Two methods of
+/// different algorithms that give the same picture where the input
+/// clipped are logged, not failed: they may agree on a case.
 fn external_records(
     scene: &Scene,
     case: &Case,
     stops: f32,
     tools: &[Tool],
     dir: &Path,
+    mut sheet: Option<&mut SheetWriter>,
 ) -> Result<Vec<greycard_bench::highlight::run::Record>> {
     let gains = case.truth.gains;
     let size = (scene.width, scene.height);
+    let factor = 2f32.powf(stops);
     let (valid, ours) = round_trip(scene, dir, gains)?;
     let dng = clipped_dng(scene, stops, dir, gains)?;
     let clipped: Vec<bool> = case
@@ -775,18 +811,30 @@ fn external_records(
         .collect();
     let mut out = Vec::new();
     for &tool in tools {
-        let fit = external::validate(tool, &valid, dir, scene.is_xtrans(), &ours, size)
-            .with_context(|| format!("{}: the unclipped round trip", tool.binary()))?;
+        let (fit, unclipped) =
+            external::validate(tool, &valid, dir, scene.is_xtrans(), &ours, size)
+                .with_context(|| format!("{}: the unclipped round trip", tool.binary()))?;
         eprintln!(
-            "{}: offset {:?}, residual {:.3} stops before the fit, {:.3} after, dab {:.4}",
+            "{}: offset {:?}, residual {:.4} stops before the fit, {:.4} after, dab {:.4}, log slope {:.4}, bands {:.4?}, matrix {:.4?}",
             tool.binary(),
             fit.offset,
             fit.stops_before,
             fit.stops_after,
-            fit.dab_after
+            fit.dab_after,
+            fit.log_slope,
+            fit.bands,
+            fit.matrix
         );
-        let mut prints: Vec<(&str, Vec<[f32; 3]>)> = Vec::new();
+        let own: Vec<f32> = unclipped.iter().map(|v| v * factor).collect();
+        drop(unclipped);
+        let floor = format!("{}-unclipped", tool.prefix());
+        out.extend(score_external(case, &floor, &own, None));
+        if let Some(s) = sheet.as_deref_mut() {
+            s.add(&floor, &own)?;
+        }
+        let mut prints: Vec<(&external::Method, Vec<[f32; 3]>)> = Vec::new();
         for method in tool.methods() {
+            let t = Instant::now();
             let rgb = external::develop_with(
                 method,
                 &dng,
@@ -796,17 +844,41 @@ fn external_records(
                 &case.truth.rgb,
                 size,
             )?;
-            let print = external::fingerprint(&rgb, &clipped);
-            for (name, other) in &prints {
-                external::require_distinct((method.label, &print), (name, other))?;
+            eprintln!(
+                "{}: {:.1} s (the tool's whole run)",
+                method.label,
+                t.elapsed().as_secs_f64()
+            );
+            prints.push((method, external::fingerprint(&rgb, &clipped)));
+            out.extend(score_external(case, method.label, &rgb, Some(&own)));
+            if let Some(s) = sheet.as_deref_mut() {
+                s.add(method.label, &rgb)?;
             }
-            prints.push((method.label, print));
-            out.extend(score_external(case, method.label, &rgb));
+        }
+        // Methods that give the same picture where the input clipped are
+        // said, not failed: what each tool ran is proved by its own
+        // record (darktable's history, RawTherapee's profile), and two
+        // methods may legitimately agree on a case (darktable's
+        // segmentation is its opposed where no segment has a candidate;
+        // RawTherapee's Blend and Luminance both hold the clip's
+        // luminance).
+        for (k, (method, print)) in prints.iter().enumerate() {
+            for (other, p) in &prints[..k] {
+                if other.code.family() != method.code.family()
+                    && let Err(e) =
+                        external::require_distinct((method.label, print), (other.label, p))
+                {
+                    eprintln!("note at +{stops}: {e}");
+                }
+            }
         }
     }
     Ok(out)
 }
 
+/// One case: its DNGs and sidecars and the tools' commands; unless a dry
+/// run, every method of the engine's and the tools' scored, and a picture
+/// sheet of them all under `out/sheets`.
 fn external_one(
     frames: &[Listed],
     out: &Path,
@@ -829,11 +901,14 @@ fn external_one(
     println!(
         "the engine's develop of the round-trip DNG against its develop of the raw: median {s:.5} stops, dab {d:.5}"
     );
+    drop((ours, direct));
     let dng = clipped_dng(&scene, stops, &dir, gains)?;
     println!("wrote {} and {}", valid.display(), dng.display());
+    let mut present = Vec::new();
     for tool in Tool::ALL {
-        let present = tool.find().is_some();
-        if !present {
+        if tool.find().is_some() {
+            present.push(tool);
+        } else {
             println!(
                 "# {} is not on PATH (install {})",
                 tool.binary(),
@@ -848,35 +923,52 @@ fn external_one(
                 external::shown(&external::command(method, &dng, &sidecar, &tif, &dir))
             );
         }
-        if dry_run || !present {
-            continue;
-        }
-        let fit = external::validate(tool, &valid, &dir, scene.is_xtrans(), &ours, size)?;
-        println!("{}: {fit:?}", tool.binary());
-        for method in tool.methods() {
-            let rgb = external::develop_with(
-                method,
-                &dng,
-                &dir,
-                scene.is_xtrans(),
-                Some(&fit),
-                &case.truth.rgb,
-                size,
-            )?;
-            for r in score_external(&case, method.label, &rgb) {
-                let s = summarize(r.buckets.iter().flatten(), f64::INFINITY);
-                println!(
-                    "{} against the {} truth: med abs stops {:.3}, med dE {:.4}",
-                    method.label,
-                    r.truth.name(),
-                    s.med_abs_stops,
-                    s.med_de
-                );
-            }
-        }
     }
     if dry_run {
-        bail_if_nothing(&dir)?;
+        return bail_if_nothing(&dir);
+    }
+    let sheets = out.join("sheets");
+    let mut sheet = SheetWriter::new(
+        &sheets,
+        &format!("{frame}-{stops}"),
+        &format!("{frame} · {} · +{stops} stops", camera(&scene)),
+        &case.map,
+        &case.truth.rgb,
+    )?;
+    let (mut records, _) = score_case(&case, false, Some(&mut sheet))?;
+    records.extend(external_records(
+        &scene,
+        &case,
+        stops,
+        &present,
+        &dir,
+        Some(&mut sheet),
+    )?);
+    std::fs::write(
+        sheets.join("index.html"),
+        page(
+            "Highlight reconstruction, every developer",
+            "Panels: the truth, the truth cut at the develop's ceiling, the input as clipped, the engine's methods, opposed with the ceiling raised, then each outside tool's develop of the unclipped frame and its methods, fitted to the engine's color by the frame's round trip. One tone mapping for the frame.",
+            &[sheet.finish()],
+        ),
+    )?;
+    for r in records.iter().filter(|r| r.domain == Domain::Image) {
+        for regime in 0..3 {
+            let s = summarize(r.buckets[regime].iter(), f64::INFINITY);
+            if s.n == 0 {
+                continue;
+            }
+            println!(
+                "{:<22} {:<6} regime {}: med abs stops {:.3}, bias {:+.3}, med dE {:.4} ({} px)",
+                r.method,
+                r.truth.name(),
+                regime + 1,
+                s.med_abs_stops,
+                s.med_stops,
+                s.med_de,
+                s.n
+            );
+        }
     }
     Ok(())
 }

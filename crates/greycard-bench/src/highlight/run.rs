@@ -51,15 +51,23 @@ pub enum Truth {
     /// Cut at the develop's ceiling in the mosaic: what a method can do
     /// within today's engine.
     Capped,
+    /// An outside developer's own develop of the unclipped frame, scaled
+    /// by the overexposure and fitted as its methods are: what is lost
+    /// as that tool sees it, with its demosaic and color handling taken
+    /// out of the comparison. For the engine's methods it is the raw
+    /// truth, and no record carries it.
+    Own,
 }
 
 impl Truth {
     pub const BOTH: [Truth; 2] = [Truth::Raw, Truth::Capped];
+    pub const ALL: [Truth; 3] = [Truth::Raw, Truth::Capped, Truth::Own];
 
     pub fn name(self) -> &'static str {
         match self {
             Truth::Raw => "raw",
             Truth::Capped => "capped",
+            Truth::Own => "own",
         }
     }
 }
@@ -174,7 +182,7 @@ impl<'a> Scorer<'a> {
 
     fn truth(&self, t: Truth) -> (&Developed, &[f32]) {
         match t {
-            Truth::Raw => (&self.case.truth, &self.logs[0]),
+            Truth::Raw | Truth::Own => (&self.case.truth, &self.logs[0]),
             Truth::Capped => (&self.case.capped, &self.logs[1]),
         }
     }
@@ -329,7 +337,25 @@ pub fn score_case(
 }
 
 /// Score an outside developer's picture of the case (working space,
-/// fitted to the engine's) as one more method, against both truths.
-pub fn score_external(case: &Case, name: &str, rgb: &[f32]) -> Vec<Record> {
-    Scorer::new(case).score(name, f32::NAN, rgb, None)
+/// fitted to the engine's) as one more method, against both truths and,
+/// given the tool's own develop of the unclipped frame on the case's
+/// scale, against that ([`Truth::Own`]).
+pub fn score_external(case: &Case, name: &str, rgb: &[f32], own: Option<&[f32]>) -> Vec<Record> {
+    let mut out = Scorer::new(case).score(name, f32::NAN, rgb, None);
+    if let Some(own) = own {
+        let map = &case.map;
+        let stride = strides(&map.counts());
+        let own_log = smooth_log_luma(own, map.width, map.height);
+        let log = smooth_log_luma(rgb, map.width, map.height);
+        let ImageScore { buckets, ring } = score_image(map, own, rgb, &own_log, &log, &stride);
+        out.push(Record {
+            method: name.to_string(),
+            domain: Domain::Image,
+            truth: Truth::Own,
+            ceiling: f32::NAN,
+            buckets,
+            ring: Some(ring),
+        });
+    }
+    out
 }
