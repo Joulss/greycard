@@ -850,6 +850,11 @@ clears or a tester asks for it.
       shows its difference at once under the wipe instead of after
       the whole chain runs again; two snapshots side by side asked
       for too (pixls, 2026-11-01; issue 100, 2026-11-13)
+- [ ] The curve's backdrop in two corners (suspected, §679): with the
+      scopes weighed by the selection, a change of mask can draw the
+      last mask's weighted bins for a frame or two (`curve::backdrop`
+      checks the tap, not the weighing); and while the Original shows,
+      the backdrop is the Original's histogram behind the edit's curves
 - [ ] The curve's dropper under a mask: the picked tone leaves the
       masks out (`finish::pick`), so where a mask changes exposure or
       its own curves the point lands off the tone picked in the global
