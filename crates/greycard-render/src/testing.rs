@@ -13,6 +13,22 @@ pub use greycard_core::testing::remove_dir_retry;
 /// balances in tests that have no raw: the profile and a develop at
 /// 5500 K, what [`greycard_edit::WhiteShift`] is made from.
 pub fn white_shift() -> greycard_edit::WhiteShift {
+    let frame = frame();
+    let profile = greycard_core::color::profile_from_frame(&frame).expect("two calibrations");
+    let base = greycard_core::color::white_balance_at(
+        &profile,
+        greycard_core::TempTint {
+            cct: 5500.0,
+            duv: 0.0,
+        },
+    )
+    .expect("daylight resolves");
+    greycard_edit::WhiteShift::new(profile, &base)
+}
+
+/// A two by two frame of an ordinary sensor with a warm and a daylight
+/// calibration, and no DNG tags: [`white_shift`]'s.
+pub fn frame() -> greycard_core::RawFrame {
     use greycard_core::raw::{
         Calibration, CfaPattern, LevelPattern, Levels, Samples, SensorLayout,
     };
@@ -21,7 +37,7 @@ pub fn white_shift() -> greycard_edit::WhiteShift {
         color_matrix: m.to_vec(),
         forward_matrix: None,
     };
-    let frame = greycard_core::RawFrame {
+    greycard_core::RawFrame {
         make: "Test".into(),
         model: "Cam".into(),
         other_names: Vec::new(),
@@ -54,17 +70,7 @@ pub fn white_shift() -> greycard_edit::WhiteShift {
         orientation: Default::default(),
         shot: Default::default(),
         dng: Default::default(),
-    };
-    let profile = greycard_core::color::profile_from_frame(&frame).expect("two calibrations");
-    let base = greycard_core::color::white_balance_at(
-        &profile,
-        greycard_core::TempTint {
-            cct: 5500.0,
-            duv: 0.0,
-        },
-    )
-    .expect("daylight resolves");
-    greycard_edit::WhiteShift::new(profile, &base)
+    }
 }
 
 /// A picture `size` high and twice as wide, clear but for a white

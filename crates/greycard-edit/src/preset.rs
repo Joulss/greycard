@@ -936,6 +936,24 @@ impl Preset {
         }
     }
 
+    /// This preset with its camera's tone curve switch kept only where
+    /// `loader` says the DCP it names carries a curve
+    /// ([`crate::camera::Camera::settle`]): what a door that lays a
+    /// preset without the panel lays.
+    pub fn settled(&self, loader: &dyn crate::Loader) -> Preset {
+        let mut out = self.clone();
+        out.edit.camera.settle(loader);
+        out
+    }
+
+    /// [`Preset::settled`] on the word of `carries`, asked for the DCP
+    /// the preset names.
+    pub fn settled_by(&self, carries: impl FnOnce(&str) -> bool) -> Preset {
+        let mut out = self.clone();
+        out.edit.camera.keep_tone_curve_if(carries);
+        out
+    }
+
     /// `edit` with the preset laid over it.
     pub fn applied(&self, edit: &Edit) -> Edit {
         let mut out = edit.clone();
@@ -1510,6 +1528,84 @@ mod tests {
     use super::*;
     use crate::{Learned, WhiteBalance};
 
+    /// A DCP named with the tone curve's switch on, laid where the
+    /// profile has no curve (stripped of it, or not in the directory):
+    /// the switch is dropped, so the frame's edit, its develop key, and
+    /// its history do not move for nothing. Where the profile carries
+    /// one, the switch lands.
+    #[test]
+    fn the_tone_curve_switch_is_laid_only_on_a_profile_with_a_curve() {
+        use crate::Line;
+        use crate::camera::{Camera, ProfileChoice};
+        use std::sync::Arc;
+        struct Store {
+            curve: bool,
+        }
+        impl crate::Loader for Store {
+            fn profile(&self, name: &str) -> Option<Arc<greycard_core::color::Profile>> {
+                if name != "Natural" {
+                    return None;
+                }
+                let bytes = greycard_core::testing::dcp::synthetic();
+                let mut dcp = greycard_core::dcp::Dcp::from_bytes(&bytes).unwrap();
+                if !self.curve {
+                    dcp.tone_curve = None;
+                }
+                Some(Arc::new(dcp.profile().unwrap()))
+            }
+            fn look(
+                &self,
+                _: &str,
+                _: f32,
+                _: crate::DisplayCurve,
+            ) -> Option<greycard_core::lut::Look> {
+                None
+            }
+        }
+        let camera = |name: &str, tone_curve| Camera {
+            profile: ProfileChoice::Named(name.into()),
+            look_table: true,
+            tone_curve,
+        };
+        let on = |name: &str| {
+            Preset::from_edit(
+                "Curve",
+                &Edit {
+                    camera: camera(name, true),
+                    ..Edit::default()
+                },
+                &[Section::Camera],
+            )
+        };
+        let frame = Edit {
+            camera: camera("Natural", false),
+            ..Edit::default()
+        };
+        for (store, name) in [
+            (Store { curve: false }, "Natural"),
+            (Store { curve: true }, "Missing"),
+        ] {
+            let laid = on(name).settled(&store).applied(&frame);
+            assert!(!laid.camera.tone_curve, "{name}");
+            if name == "Natural" {
+                assert_eq!(laid, frame, "the edit does not move");
+                assert_eq!(
+                    laid.develop_key_with(&[], None),
+                    frame.develop_key_with(&[], None)
+                );
+                let mut line = Line::of(frame.clone());
+                assert!(
+                    !line.record_as(laid, Some("Preset Curve".into())),
+                    "no history step"
+                );
+            }
+        }
+        let laid = on("Natural")
+            .settled(&Store { curve: true })
+            .applied(&frame);
+        assert!(laid.camera.tone_curve, "a curve to render with");
+    }
+
     /// Every door that lays a Camera section naming a DCP on a frame
     /// turns its look table on, whatever the frame had and whatever the
     /// source says, so one preset over a batch lands one way; the
@@ -1522,6 +1618,7 @@ mod tests {
         let named = |name: &str, look_table| Camera {
             profile: ProfileChoice::Named(name.into()),
             look_table,
+            tone_curve: false,
         };
         let edit_on = |camera: Camera| Edit {
             camera,

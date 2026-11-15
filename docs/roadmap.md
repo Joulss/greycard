@@ -1432,10 +1432,6 @@ clears or a tester asks for it.
       before the output sharpen (§663)
 - [ ] The output sharpen in a mask's look, after the picture's has
       landed (issue 135)
-- [ ] A DCP's tone curve in place of ours: a "Profile tone curve"
-      switch beside a profile that carries one, off by default, taking
-      the place of the display curve for that picture; not stacked on
-      it (issue 135; §639 applies the look table and leaves the curve)
 
 ## Blocked
 

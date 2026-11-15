@@ -18,6 +18,11 @@
 // `_compress_into_gamut`, Eary Chow's method as darktable ported it, and
 // nothing is taken from his own repository; `agx.rs` says what was taken
 // and what departs.
+//
+// `tone_profile`, a camera profile's own tone curve, is the method the
+// DNG specification describes for `ProfileToneCurve` (Adobe's); the
+// code is ours, written from the specification, as `profile_tone.rs`
+// and `tone_curve.rs` are.
 
 struct Params {
     view: vec2<f32>,
@@ -207,6 +212,16 @@ struct Params {
     // and in z the margin the luminance is drawn with past each side
     // of the target.
     osharp_taps: vec4<f32>,
+    // The camera profile's tone curve when it renders (curve 3): the
+    // gain its offset puts on before it in x, and the working space to
+    // linear ProPhoto and back, rows (`profile_tone.rs`).
+    profile: vec4<f32>,
+    pro_in0: vec4<f32>,
+    pro_in1: vec4<f32>,
+    pro_in2: vec4<f32>,
+    pro_out0: vec4<f32>,
+    pro_out1: vec4<f32>,
+    pro_out2: vec4<f32>,
 };
 
 // A local adjustment: its look's parameters as the global ones are
@@ -375,6 +390,9 @@ const LUMA: vec3<f32> = vec3<f32>(0.2627, 0.6780, 0.0593);
 // and a margin past each side, from the first pass (`osharp.w`). A
 // texel of nothing otherwise.
 @group(0) @binding(16) var osharp_across: texture_2d<f32>;
+// The camera profile's tone curve, as `ToneCurve::table`: 4096 steps
+// over 0..1, a sample at each end.
+@group(0) @binding(17) var<storage, read> profile_curve: array<f32>;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -668,7 +686,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // 1: a picture already rendered for a display, which takes the
     // shape and a clip at white, not a second curve.
     // 2: AgX.
-    if (p.curve > 1.5) {
+    // 3: the camera profile's own curve.
+    if (p.curve > 2.5) {
+        c = tone_profile(shaped);
+    } else if (p.curve > 1.5) {
         c = tone_agx(shaped);
     } else if (p.curve > 0.5) {
         c = clamp(shaped, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -721,7 +742,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // Under AgX the output's guard rail in place of the clip's zeroing,
     // its luminance weights in the output rows' fourth lane, as
     // `finish_pixel_with` has it.
-    if (p.curve > 1.5) {
+    if (p.curve > 1.5 && p.curve < 2.5) {
         s = agx_output_rail(s, vec3<f32>(p.m0.w, p.m1.w, p.m2.w));
     }
     var e = encode(clamp(s, vec3<f32>(0.0), vec3<f32>(1.0)));
@@ -1888,6 +1909,37 @@ fn tone(scene: vec3<f32>) -> vec3<f32> {
     let u = log2(max(x, vec3<f32>(1e-9)) / MID_GREY);
     let gain = 1.0 + (p.white.z - 1.0) * smoothstep(vec3<f32>(0.0), vec3<f32>(p.white.y), u);
     return clamp(fit * gain, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// The camera profile's tone curve at `x`, as `ToneCurve::at`: held to
+// 0..1 (a NaN is the bottom), the table read by linear interpolation.
+fn profile_curve_at(x: f32) -> f32 {
+    let v = select(0.0, min(x, 1.0), x > 0.0);
+    let y = v * 4096.0;
+    let i = min(u32(y), 4095u);
+    let f = y - f32(i);
+    return profile_curve[i] * (1.0 - f) + profile_curve[i + 1u] * f;
+}
+
+// The camera profile's tone curve in the display curve's place, as
+// `ProfileTone::apply` in `profile_tone.rs`: into linear ProPhoto, the
+// profile's offset on, each channel clipped to 0..1, and the curve as
+// `hue_preserving_tone` puts it: on the largest and the smallest channel, the
+// middle placed between the two results as it sat between them, equal
+// channels all on the curve; then back.
+fn tone_profile(scene: vec3<f32>) -> vec3<f32> {
+    let q = vec3<f32>(dot(p.pro_in0.xyz, scene), dot(p.pro_in1.xyz, scene), dot(p.pro_in2.xyz, scene)) * p.profile.x;
+    let c = select(vec3<f32>(0.0), min(q, vec3<f32>(1.0)), q > vec3<f32>(0.0));
+    let hi = max(c.x, max(c.y, c.z));
+    let lo = min(c.x, min(c.y, c.z));
+    let top = profile_curve_at(hi);
+    let bottom = profile_curve_at(lo);
+    // Where each channel sits between the two ends, 0 at the smallest
+    // and 1 at the largest; all at the top when they are equal.
+    let span = hi - lo;
+    let at = select(vec3<f32>(1.0), clamp((c - vec3<f32>(lo)) / max(span, 1e-30), vec3<f32>(0.0), vec3<f32>(1.0)), span > 0.0);
+    let t = select(select(vec3<f32>(bottom) + (top - bottom) * at, vec3<f32>(bottom), c <= vec3<f32>(lo)), vec3<f32>(top), c >= vec3<f32>(hi));
+    return vec3<f32>(dot(p.pro_out0.xyz, t), dot(p.pro_out1.xyz, t), dot(p.pro_out2.xyz, t));
 }
 
 // AgX, Blender's wide-gamut formation with its Punchy look, as

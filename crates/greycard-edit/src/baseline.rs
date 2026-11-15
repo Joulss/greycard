@@ -96,6 +96,37 @@ pub fn for_frame(frame: &greycard_core::RawFrame) -> f32 {
     for_make_model(&frame.make, &frame.model)
 }
 
+/// The stops below our baseline that a raw carrying no
+/// `BaselineExposure` of its maker's (every format but DNG) is read at
+/// under a camera profile's own tone curve, since Adobe's own numbers
+/// for those bodies are inside its converter. Measured, not derived:
+/// matching mid grey through Adobe Standard's curve gives 0.53, but
+/// against the cameras' own JPEGs that left three Olympus frames 1.9
+/// to 3.0 L* dark, and 0.37 centers them. The one number: the curve
+/// and the profile's look table both read it ([`adobe_lift`]).
+pub const ADOBE_GREY_LIFT: f32 = 0.37;
+
+/// A DNG's own `BaselineExposure`, the maker's word for the camera, in
+/// stops: none for a file without the tag, and none for one of ours (a
+/// merge, a linear DNG of a develop), whose tag is our headroom.
+/// Held to ten stops either way.
+pub fn makers(frame: &greycard_core::RawFrame) -> Option<f32> {
+    frame
+        .dng
+        .baseline_exposure
+        .filter(|s| s.is_finite() && frame.dng.merged.is_none() && !frame.dng.ours)
+        .map(|s| s.clamp(-10.0, 10.0))
+}
+
+/// The stops a camera profile's own tone curve, and the profile's look
+/// table before it, read the picture at over our baseline `ours`:
+/// Adobe's `BaselineExposure` less ours. A DNG's own tag ([`makers`])
+/// is Adobe's; a raw without one stands in with ours less
+/// [`ADOBE_GREY_LIFT`].
+pub fn adobe_lift(ours: f32, makers: Option<f32>) -> f32 {
+    makers.map_or(-ADOBE_GREY_LIFT, |adobe| adobe - ours)
+}
+
 /// The stops a merge of ours stored its samples under the reference
 /// frame's scale, as its own tag says; nothing for any other file. An
 /// exposure on top of the baseline, so the merge opens at the

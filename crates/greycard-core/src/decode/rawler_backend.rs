@@ -865,8 +865,21 @@ fn dng_tags(decoder: &dyn ::rawler::decoders::Decoder) -> DngTags {
             | ::rawler::formats::tiff::Value::Undefined(b) => crate::merge::Tag::parse(b),
             _ => None,
         });
+    // Whose `BaselineExposure` it is: ours when we wrote the file. The
+    // whole root is read only for a file that carries the tag.
+    let ours = baseline_exposure.is_some()
+        && decoder
+            .ifd(WellKnownIFD::Root)
+            .ok()
+            .flatten()
+            .and_then(|ifd| {
+                ifd.get_entry(::rawler::tags::TiffCommonTag::Software)
+                    .and_then(|e| e.value.as_string().cloned())
+            })
+            .is_some_and(|s| crate::raw::is_ours(&s));
     DngTags {
         baseline_exposure,
+        ours,
         mosaic: read.mosaic,
         warps: read.warps,
         opcode_area: None,

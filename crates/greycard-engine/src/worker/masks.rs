@@ -43,11 +43,7 @@ pub(super) fn look_left_out(edit: &Edit) -> Option<String> {
     let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut else {
         return None;
     };
-    let missed = edit.look_lut.strength > 0.0
-        && edit
-            .look_lut
-            .look_under(&greycard_edit_io::Stores::user(), edit.display_curve)
-            .is_none();
+    let missed = crate::reduced::look_missing(edit, &greycard_edit_io::Stores::user());
     missed.then(|| {
         let why = if greycard_edit_io::looks::is_there(&edit.look_lut) {
             greycard_edit::look::mismatch(

@@ -1049,6 +1049,8 @@ impl State {
                 looks: Vec::new(),
                 look: None,
                 look_for: None,
+                profile_tone: None,
+                profile_tone_for: None,
                 look_groups_open: Default::default(),
                 profile_groups_open: Default::default(),
                 look_hover: Default::default(),

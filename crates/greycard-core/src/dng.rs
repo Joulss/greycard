@@ -10,6 +10,8 @@
 //!
 //! The container is written with rawler's DNG encoder, which is independent
 //! of its develop path. The samples, levels and color tags are all ours.
+//!
+//! This product includes DNG technology under license by Adobe.
 
 use std::io::{Seek, Write};
 
@@ -53,7 +55,9 @@ pub struct LinearDngOptions<'a> {
     /// thumbnail. Without one, viewers that show the file without decoding
     /// it show nothing.
     pub preview: Option<&'a image::RgbImage>,
-    /// Value for the `Software` tag.
+    /// Value for the `Software` tag, starting with
+    /// [`crate::raw::OUR_SOFTWARE`], which is how a reader tells a file
+    /// of ours ([`crate::raw::DngTags::ours`]).
     pub software: Option<&'a str>,
     /// The value the image's samples reach, 1.0 or above: reconstructed
     /// highlights go above 1.0 in camera space, and a file can only
@@ -666,6 +670,43 @@ mod tests {
         frame.dng.baseline_exposure = None;
         assert_eq!(write(&frame, None).dng.baseline_exposure, None);
         assert_eq!(write(&frame, Some(2.0)).dng.baseline_exposure, Some(1.0));
+    }
+
+    /// A DNG we wrote reads back as ours, by its `Software` tag, so its
+    /// `BaselineExposure` (our headroom, a source's tag carried under
+    /// it) is not taken for the maker's; a camera's software is not.
+    #[test]
+    fn a_dng_of_ours_reads_back_as_ours() {
+        let frame = flat_frame();
+        let image = CameraImage::from_data(4, 4, vec![2.0; 48]).unwrap();
+        let read = |software: Option<&str>| {
+            let mut buf = Cursor::new(Vec::new());
+            let options = LinearDngOptions {
+                headroom: Some(2.0),
+                software,
+                ..Default::default()
+            };
+            write_linear_dng(&mut buf, &frame, &image, [2.0, 1.0, 4.0], &options).unwrap();
+            RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap().dng
+        };
+        assert!(read(None).ours, "the default");
+        assert!(read(Some("greycard 0.12.0 denoise cache")).ours);
+        assert!(!read(Some("Adobe Lightroom 14.0")).ours);
+        assert!(crate::raw::is_ours("greycard 0.12.0"));
+        assert!(!crate::raw::is_ours("grey"));
+        assert!(!crate::raw::is_ours("Pixel 9 HDR+"));
+        // A file without the tag is not asked.
+        let mut buf = Cursor::new(Vec::new());
+        let plain = LinearDngOptions::default();
+        let flat = CameraImage::from_data(4, 4, vec![0.5; 48]).unwrap();
+        write_linear_dng(&mut buf, &frame, &flat, [2.0, 1.0, 4.0], &plain).unwrap();
+        assert!(
+            !RawlerDecoder
+                .decode_bytes(&buf.into_inner())
+                .unwrap()
+                .dng
+                .ours
+        );
     }
 
     /// A forward matrix written into a DNG is read back onto the

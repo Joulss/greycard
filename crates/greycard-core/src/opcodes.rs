@@ -10,12 +10,14 @@
 //! optional is left too, with the log saying so: a picture with a
 //! correction missing is more use than no picture.
 //!
-//! Where the specification leaves a reader a choice, the reading
-//! follows Adobe's DNG SDK (`dng_lens_correction.cpp` for the warps'
-//! parameters, `dng_opcode_list.cpp` for the rule between the two
-//! warps); no SDK code is taken. The bad photosites are repaired
-//! otherwise than the SDK's `dng_bad_pixels.cpp` does
+//! Where the specification leaves a reader a choice, the choice is
+//! ours, said where it is made; the rule between `WarpRectilinear2`
+//! and `WarpRectilinear` (`corrections`) is our reading of the 1.7
+//! specification, which defines the newer opcode. The bad photosites
+//! the `FixBadPixels` opcodes name are repaired our own way
 //! (`develop::bad_pixels` says how).
+//!
+//! This product includes DNG technology under license by Adobe.
 
 use std::fmt;
 
@@ -44,12 +46,14 @@ const MAX_OPCODES: u32 = 1024;
 /// phone's maps are 1200, and a map past this is a damaged one.
 const MAX_MAP_POINTS: u64 = 1 << 22;
 
-/// The highest degree of a `MapPolynomial`: the SDK's limit, and a
-/// file past it is damaged.
+/// Our limit on a `MapPolynomial`'s degree: a correction of a phone's
+/// or a lens's needs a few terms, so one past it is taken as damaged,
+/// and the coefficients it reads stay a short, fixed list.
 const MAX_DEGREE: usize = 8;
 
-/// The most entries of a `MapTable`, one a 16-bit value; the SDK's
-/// limit too.
+/// Our limit on a `MapTable`'s entries: one for each 16-bit value, so
+/// no table that maps a 16-bit sample needs more, and a count past it
+/// is taken as damaged before anything is read.
 const MAX_TABLE: usize = 65536;
 
 /// A `GainMap` opcode: a grid of gains over an area of the image,
@@ -64,8 +68,8 @@ const MAX_TABLE: usize = 65536;
 #[derive(Debug, Clone, PartialEq)]
 pub struct GainMap {
     /// The area the map applies to: rows `top..bottom`, columns
-    /// `left..right`. A file's empty area is the whole image, as the
-    /// DNG SDK reads one, and is held here as `0..u32::MAX` each way.
+    /// `left..right`. A file's empty area is read as the whole image
+    /// (our reading), held here as `0..u32::MAX` each way.
     pub top: u32,
     pub left: u32,
     pub bottom: u32,
@@ -235,7 +239,7 @@ pub enum Curve {
 
 impl Curve {
     /// The curve at `x`, a sample 0 at the black and 1 at the white,
-    /// held to that range as the SDK holds it.
+    /// held to that range.
     #[inline]
     pub fn at(&self, x: f32) -> f32 {
         match self {
@@ -405,8 +409,10 @@ pub fn gain_maps(list: &[u8]) -> Vec<GainMap> {
 /// the log as left undone, as is one that will not read.
 ///
 /// A rectilinear warp that follows an applied, optional
-/// `WarpRectilinear2` is the older readers' copy of it and is left out,
-/// as the SDK leaves it: a phone writes its distortion both ways.
+/// `WarpRectilinear2` is the older readers' copy of it and is left out:
+/// a phone writes its distortion both ways, the 1.7 opcode flagged
+/// optional for readers that predate it, then the old one. Our reading
+/// of the 1.7 specification, which defines the opcode.
 pub fn corrections(
     list1: Option<&[u8]>,
     list2: Option<&[u8]>,
@@ -584,7 +590,7 @@ pub fn parse_remap(id: u32, params: &[u8]) -> Option<Remap> {
 
 /// A `WarpRectilinear` (`id` 1) or `WarpRectilinear2` (`id` 14)'s
 /// parameters, or `None` when they are out of shape: a plane count not
-/// one or three, a byte count not the planes' (the SDK's checks), a
+/// one or three, a byte count not the planes', a
 /// center outside the image, a valid range not within 0..1 and rising,
 /// or a coefficient that is not a number.
 pub fn parse_warp(id: u32, params: &[u8]) -> Option<Warp> {
@@ -594,7 +600,7 @@ pub fn parse_warp(id: u32, params: &[u8]) -> Option<Warp> {
     };
     let planes = r.u32()?;
     // A plane each of red, green and blue, or one for all three: the
-    // develop's camera RGB has no fourth, which the SDK would refuse.
+    // develop's camera RGB has no fourth.
     if planes != 1 && planes != 3 {
         return None;
     }
@@ -992,12 +998,12 @@ mod tests {
         ]);
         let read = corrections(None, None, Some(&list));
         assert_eq!(read.warps, vec![first, second, three]);
-        // A bad-pixel list after the demosaic is left, as the SDK
-        // refuses one on more than one plane.
+        // A bad-pixel list after the demosaic is left: it names
+        // photosites of the mosaic, which is gone by then.
         assert!(read.mosaic.is_empty());
     }
 
-    /// The SDK's rule: a `WarpRectilinear` straight after an optional
+    /// Our rule: a `WarpRectilinear` straight after an optional
     /// `WarpRectilinear2` is the older readers' copy and is left out; one
     /// after a required `WarpRectilinear2`, or with another opcode
     /// between, is applied. An identity warp is read and dropped, and
@@ -1114,8 +1120,8 @@ mod tests {
         assert_eq!((read.bottom, read.right), (u32::MAX, u32::MAX));
     }
 
-    /// A sample map out of shape is passed over: a degree past the
-    /// SDK's, a table of no entry, a byte count not the count's, a
+    /// A sample map out of shape is passed over: a degree past our
+    /// limit, a table of no entry, a byte count not the count's, a
     /// coefficient that is not a number, a zero pitch.
     #[test]
     fn damaged_sample_maps_are_passed_over() {
@@ -1213,7 +1219,7 @@ mod tests {
         assert_eq!(corrections(None, None, Some(&list)).warps, vec![lens]);
     }
 
-    /// An empty area is the whole image, as the SDK reads one.
+    /// An empty area is the whole image (our reading).
     #[test]
     fn an_empty_area_is_the_whole_image() {
         let mut map = even_map(4, 4, 2, 2, |_, _| 2.0);

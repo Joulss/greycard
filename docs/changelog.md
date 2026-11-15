@@ -180,6 +180,11 @@ design note behind it.
   Cristian Figueiredo dos Santos, whose first pull request this was
   (PR 150,
   [§679](https://github.com/jessolmstead/greycard/blob/master/docs/notes/679-the-curve-editors-histogram-is-what-the-curve-takes-in.md)).
+- Profile tone curve, a switch under the CAMERA PROFILE list, shown
+  when the chosen profile carries a tone curve and off by default:
+  the picture is rendered with the profile's curve in place of the
+  display curve, as the profile's maker meant it (issue 135,
+  [§680](https://github.com/jessolmstead/greycard/blob/master/docs/notes/680-a-profiles-own-tone-curve-behind-a-switch.md)).
 
 ### Fixes
 

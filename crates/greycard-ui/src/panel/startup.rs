@@ -1557,7 +1557,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             .look_under(&greycard_edit_io::Stores::user(), edit.display_curve);
                         st.develop.look_for = Some(look_key);
                     }
-                    let look = crate::panel::look_preview::drawn(st, &app, &edit);
+                    let tone = profile_tone(st, &edit);
+                    // Under the profile's own curve a table of ours is
+                    // skipped (`look::over_profile_curve`), as the
+                    // export skips it; the choice stays.
+                    let look = look_shown(
+                        crate::panel::look_preview::drawn(st, &app, &edit),
+                        tone.as_ref(),
+                        kind,
+                    );
                     // The picture on the GPU is the open frame's develop:
                     // until it is, the curve editor takes no histogram
                     // of it.
@@ -1622,6 +1630,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         canvas: render::canvas_rgb(app.get_canvas_choice()),
                         source: kind,
                         display_curve,
+                        profile_tone: tone,
                         source_turn: lag,
                     };
                     // The navigator's rectangle: what the view shows of
@@ -2062,6 +2071,36 @@ fn said(claimed: instance::Claimed) -> Option<instance::Instance> {
         }
         instance::Claim::Handed(_) => None,
     }
+}
+
+/// The camera profile's tone curve `edit` renders with in the display
+/// curve's place, if any (`ProfileTone::of`), resolved once for its
+/// profile and switch and kept, so a frame drawn reads no store.
+pub(crate) fn profile_tone(
+    st: &mut State,
+    edit: &Edit,
+) -> Option<greycard_render::profile_tone::ProfileTone> {
+    let key = (edit.camera.profile.clone(), edit.camera.wants_tone_curve());
+    if st.develop.profile_tone_for.as_ref() != Some(&key) {
+        st.develop.profile_tone =
+            greycard_render::profile_tone::ProfileTone::of(edit, &greycard_edit_io::Stores::user());
+        st.develop.profile_tone_for = Some(key);
+    }
+    st.develop.profile_tone.clone()
+}
+
+/// The look the viewport lays on a picture of `kind`: under a camera
+/// profile's own tone curve (`tone`, on a raw) only a general table
+/// (`look::over_profile_curve`), as the export lays it; any table
+/// otherwise.
+pub(crate) fn look_shown(
+    look: Option<greycard_core::lut::Look>,
+    tone: Option<&greycard_render::profile_tone::ProfileTone>,
+    kind: greycard_render::finish::Source,
+) -> Option<greycard_core::lut::Look> {
+    look.filter(|l| {
+        tone.is_none() || !kind.is_scene() || greycard_edit::look::over_profile_curve(l)
+    })
 }
 
 /// The clipping lamps at the scope histogram's corners, read from the
@@ -2831,6 +2870,40 @@ pub(crate) fn size_text(width: u32, height: u32) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The viewport lays a fitted table on a raw under our curve and
+    /// not under a camera profile's own; a general table under both;
+    /// a picture's look whatever the switch says.
+    #[test]
+    fn the_viewport_sets_a_fitted_look_aside_under_the_profiles_curve() {
+        use greycard_render::finish::Source;
+        let table = |comment: &str| {
+            let cube = format!("{comment}LUT_3D_SIZE 2\n{}", "0 0 0\n".repeat(8));
+            let lut = greycard_core::lut::Lut3d::from_cube(&cube).unwrap();
+            Some(greycard_core::lut::Look::new(std::sync::Arc::new(lut), 1.0).unwrap())
+        };
+        let (fitted, general) = (table("# display_curve: channels\n"), table(""));
+        let curve = std::sync::Arc::new(
+            greycard_core::tone_curve::ToneCurve::new(&[[0.0, 0.0], [1.0, 1.0]]).unwrap(),
+        );
+        let tone = greycard_render::profile_tone::ProfileTone::new(curve, None);
+        assert!(
+            look_shown(fitted.clone(), None, Source::SCENE).is_some(),
+            "our curve"
+        );
+        assert!(
+            look_shown(fitted.clone(), Some(&tone), Source::SCENE).is_none(),
+            "set aside"
+        );
+        assert!(
+            look_shown(general, Some(&tone), Source::SCENE).is_some(),
+            "a general one"
+        );
+        assert!(
+            look_shown(fitted, Some(&tone), Source::Display).is_some(),
+            "a picture"
+        );
+    }
+
     use super::*;
     use crate::sheet::{ExportPreset, Sheet};
     use greycard_core::image::WorkingImage;

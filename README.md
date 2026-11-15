@@ -120,4 +120,5 @@ thing you can send.
 - [Design notes](docs/notes.md)
 - [Contributing](CONTRIBUTING.md)
 
-GPL-3.0-or-later.
+GPL-3.0-or-later. This product includes DNG technology under
+license by Adobe.

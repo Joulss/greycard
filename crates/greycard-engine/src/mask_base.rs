@@ -150,6 +150,14 @@ pub fn base_edit(edit: &Edit, size: Size) -> Edit {
     if base.camera.applies_look_table() {
         base.light.baseline = edit.light.baseline;
     }
+    // The tone curve's switch off in every base: the curve itself is
+    // the finish's, but the switch also moves where the profile's look
+    // table is read (`stages::look_read_at`). Off here, a base and its
+    // key stay where they were when the switch is toggled, and the
+    // masks made on it with them; the print under the switch reads the
+    // table at Adobe's exposure, so it no longer shares the base's
+    // first stages and develops them itself.
+    base.camera.tone_curve = false;
     if size == Size::Reduced {
         base.geometry = edit.geometry.clone();
         base.detail = edit.detail;
@@ -172,6 +180,7 @@ mod tests {
                 warp: None,
                 merged: false,
                 headroom: 0.0,
+                makers: None,
                 lens_corrected: false,
                 monochrome: false,
             },
@@ -249,6 +258,7 @@ mod tests {
         edit.camera = Camera {
             profile: ProfileChoice::Named("Natural".into()),
             look_table: false,
+            tone_curve: false,
         };
         let off = base_edit(&edit, Size::Full);
         assert_eq!(off.light, Edit::default().light);
@@ -257,6 +267,7 @@ mod tests {
         own.camera = Camera {
             profile: ProfileChoice::Embedded,
             look_table: true,
+            tone_curve: false,
         };
         assert_eq!(base_edit(&own, Size::Full).light, Edit::default().light);
         edit.camera.look_table = true;
@@ -266,6 +277,28 @@ mod tests {
             on.look_baseline("Canon", "EOS R5", 0.0),
             edit.look_baseline("Canon", "EOS R5", 0.0)
         );
+    }
+
+    /// A base does not move when the profile's tone curve is switched:
+    /// it is made with the switch off, so its look table is read at our
+    /// baseline either way.
+    #[test]
+    fn the_tone_curve_switch_moves_no_base() {
+        use greycard_edit::camera::{Camera, ProfileChoice};
+        let edit = Edit {
+            camera: Camera {
+                profile: ProfileChoice::Named("Natural".into()),
+                look_table: true,
+                tone_curve: false,
+            },
+            ..Edit::default()
+        };
+        let mut on = edit.clone();
+        on.camera.tone_curve = true;
+        for size in [Size::Full, Size::Reduced] {
+            assert_eq!(base_edit(&on, size), base_edit(&edit, size));
+            assert!(!base_edit(&on, size).camera.wants_tone_curve());
+        }
     }
 
     /// The trimmed edit makes the base the whole edit makes, op for op,

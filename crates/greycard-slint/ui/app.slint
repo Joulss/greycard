@@ -2030,6 +2030,10 @@ export component App inherits Window {
     // Every camera's profiles listed: a view of the list, kept in the
     // settings file.
     in-out property <bool> camera-profiles-all;
+    // The chosen profile carries a tone curve, and whether it renders
+    // in the display curve's place (the edit's `camera.tone_curve`).
+    in property <bool> camera-profile-has-curve;
+    in-out property <bool> camera-tone-curve;
     callback camera-profile-picked();
     callback camera-profile-group-toggled(string);
     callback camera-profiles-all-changed();
@@ -2153,6 +2157,9 @@ export component App inherits Window {
     // The look list says which tables are off under the picture's
     // display curve, so it is drawn again when the curve changes.
     changed display-curve => { root.look-curve-changed(); }
+    // And under a camera profile's own curve a look of ours is skipped.
+    changed camera-tone-curve => { root.look-curve-changed(); }
+    changed camera-profile-has-curve => { root.look-curve-changed(); }
     changed collapsed-look => {
         if (!root.collapsed-look) { root.looks-wanted(); }
         root.look-list-gone();
@@ -4255,6 +4262,9 @@ export component App inherits Window {
                             camera-profile-warning: root.camera-profile-warning;
                             camera-profiles-any: root.camera-profiles-any;
                             camera-profiles-all <=> root.camera-profiles-all;
+                            camera-profile-has-curve: root.camera-profile-has-curve;
+                            camera-tone-curve <=> root.camera-tone-curve;
+                            view-changed => { root.view-changed(); }
                             camera-profile-picked => { root.camera-profile-picked(); }
                             camera-profile-group-toggled(key) => { root.camera-profile-group-toggled(key); }
                             camera-profiles-all-changed => { root.camera-profiles-all-changed(); }
@@ -4271,6 +4281,7 @@ export component App inherits Window {
                             light-enabled <=> root.light-enabled;
                             display-curve <=> root.display-curve;
                             show-display-curve: root.target == 0 && root.raw-input;
+                            display-curve-inert: root.camera-tone-curve && root.camera-profile-has-curve;
                             collapsed-light <=> root.collapsed-light;
                             opened-alone => { root.alone-with-masks(); }
                             target-name <=> root.target-name;

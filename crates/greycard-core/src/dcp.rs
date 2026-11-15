@@ -15,7 +15,10 @@
 //! its character in the look table, often with no map at all, so a
 //! profile without it is the bare matrix. The tone curve is Adobe's
 //! rendering of the whole picture, so it is parsed, kept here, and
-//! applied by nothing: the consumer's tone mapping is the curve.
+//! applied by nothing here: a consumer may render with it in place of its
+//! own ([`crate::tone_curve`] reads it as Adobe does), and
+//! [`DcpInfo::tone_curve`] says from the header alone whether there is
+//! one to render with.
 //!
 //! The map's interpolation, the illuminant weighting and the encoding
 //! follow the DNG 1.7.1.0 specification. RawTherapee's
@@ -31,6 +34,7 @@ use rawcolor::{Calibration, CalibrationIlluminant, CameraProfile, Mat3};
 
 use crate::color::Profile;
 use crate::error::{Error, Result};
+use crate::tone_curve::ToneCurve;
 
 /// The magic number in a DCP's header, where a TIFF carries 42.
 const MAGIC: u16 = 0x4352;
@@ -323,6 +327,9 @@ pub struct DcpInfo {
     pub unique_camera_model: Option<String>,
     pub copyright: Option<String>,
     pub embed_policy: EmbedPolicy,
+    /// Whether the profile carries a tone curve a consumer can render
+    /// with: what [`Profile::tone_curve`] would be `Some` for.
+    pub tone_curve: bool,
 }
 
 /// A camera profile as a DCP file holds it.
@@ -467,16 +474,7 @@ impl Dcp {
             _ => None,
         };
 
-        let tone_curve = match ifd.floats(tag::PROFILE_TONE_CURVE)? {
-            None => None,
-            Some(v) if v.len() >= 4 && v.len() % 2 == 0 => Some(v.as_chunks::<2>().0.to_vec()),
-            Some(v) => {
-                return Err(Error::Profile(format!(
-                    "ProfileToneCurve of {} values is not a list of pairs",
-                    v.len()
-                )));
-            }
-        };
+        let tone_curve = curve_points(&ifd)?;
 
         Ok(Dcp {
             name: ifd.ascii(tag::PROFILE_NAME)?,
@@ -578,8 +576,10 @@ impl Dcp {
                 tag::UNIQUE_CAMERA_MODEL,
                 tag::PROFILE_COPYRIGHT,
                 tag::PROFILE_EMBED_POLICY,
+                tag::PROFILE_TONE_CURVE,
             ]
             .into_iter()
+            .filter(|&t| t != tag::PROFILE_TONE_CURVE || !curve_too_long(&ifd))
             .filter_map(|t| ifd.entry(t))
             .map(|e| (e.offset, e.offset + type_size(e.kind) * e.count))
             .collect()
@@ -608,11 +608,19 @@ impl Dcp {
                 .u32s(tag::PROFILE_EMBED_POLICY)?
                 .and_then(|v| v.first().copied())
                 .map_or(EmbedPolicy::default(), EmbedPolicy::from_code),
+            // A curve that will not read is no curve: the full read
+            // refuses such a file, so nothing would render with it.
+            tone_curve: curve_points(&ifd)
+                .ok()
+                .flatten()
+                .is_some_and(|p| ToneCurve::new(&p).is_some()),
         })
     }
 
     /// The engine's profile: the matrix pair, the forward matrices, the
-    /// map, and the look table. The tone curve stays behind.
+    /// map, the look table, and the tone curve when it is one Adobe
+    /// would render with ([`ToneCurve::new`]; one that is not is
+    /// dropped alone, with a warning).
     ///
     /// A calibration this build cannot use — an illuminant code it does
     /// not know, a matrix that does not invert — is dropped and the
@@ -678,6 +686,18 @@ impl Dcp {
                 .clone()
                 .filter(|l| l.data.iter().flatten().all(|v| usable_entry(*v)))
                 .map(Arc::new),
+            tone_curve: self.tone_curve.as_deref().and_then(|points| {
+                let curve = ToneCurve::new(points);
+                if curve.is_none() {
+                    log::warn!(
+                        "{}: its tone curve is not one to render with (a point outside 0..1, \
+                         or an input not above the one before it); the profile is read \
+                         without it",
+                        self.title().unwrap_or("camera profile")
+                    );
+                }
+                curve.map(Arc::new)
+            }),
         })
     }
 
@@ -755,6 +775,31 @@ impl Dcp {
         }
         w.finish()
     }
+}
+
+/// `ProfileToneCurve` as pairs, when the file has one: an odd count, or
+/// fewer than two pairs, is not a curve and refuses the file. One of
+/// more than [`crate::tone_curve::MAX_POINTS`] pairs is passed over
+/// unread, as if absent, so a hostile count costs nothing.
+fn curve_points(ifd: &Ifd) -> Result<Option<Vec<[f32; 2]>>> {
+    if curve_too_long(ifd) {
+        return Ok(None);
+    }
+    match ifd.floats(tag::PROFILE_TONE_CURVE)? {
+        None => Ok(None),
+        Some(v) if v.len() >= 4 && v.len() % 2 == 0 => Ok(Some(v.as_chunks::<2>().0.to_vec())),
+        Some(v) => Err(Error::Profile(format!(
+            "ProfileToneCurve of {} values is not a list of pairs",
+            v.len()
+        ))),
+    }
+}
+
+/// Whether the file's `ProfileToneCurve` holds more points than any
+/// curve is let have.
+fn curve_too_long(ifd: &Ifd) -> bool {
+    ifd.entry(tag::PROFILE_TONE_CURVE)
+        .is_some_and(|e| e.count > 2 * crate::tone_curve::MAX_POINTS)
 }
 
 /// A profile file opened for reading, with its length: a regular file
@@ -1538,6 +1583,35 @@ pub(crate) mod tests {
         assert_eq!(info.unique_camera_model.as_deref(), Some("Test Cam"));
         assert_eq!(info.copyright.as_deref(), Some("public domain"));
         assert_eq!(info.embed_policy, EmbedPolicy::AllowCopying);
+        assert!(!info.tone_curve);
+        // A curve to render with, and one Adobe would not render with.
+        dcp.tone_curve = Some(vec![[0.0, 0.0], [0.4, 0.55], [1.0, 1.0]]);
+        assert!(Dcp::info_from_bytes(&dcp.to_bytes()).unwrap().tone_curve);
+        assert!(dcp.profile().unwrap().tone_curve.is_some());
+        dcp.tone_curve = Some(vec![[0.0, 0.0], [0.4, 1.5], [1.0, 1.0]]);
+        assert!(!Dcp::info_from_bytes(&dcp.to_bytes()).unwrap().tone_curve);
+        assert!(dcp.profile().unwrap().tone_curve.is_none());
+        // Points bunched at the floats' limit: the two reads agree, and a
+        // curve made of them is all finite numbers in 0..1.
+        dcp.tone_curve = Some(vec![[0.0, 0.0], [1e-45, 1.0], [3e-45, 0.0], [1.0, 1.0]]);
+        let curve = dcp.profile().unwrap().tone_curve;
+        assert_eq!(
+            Dcp::info_from_bytes(&dcp.to_bytes()).unwrap().tone_curve,
+            curve.is_some()
+        );
+        assert!(curve.is_none_or(|c| c.table().iter().all(|v| (0.0..=1.0).contains(v))));
+        // Past the cap: passed over unread by both reads.
+        dcp.tone_curve = Some(
+            (0..=crate::tone_curve::MAX_POINTS)
+                .map(|i| {
+                    let v = i as f32 / crate::tone_curve::MAX_POINTS as f32;
+                    [v, v]
+                })
+                .collect(),
+        );
+        let bytes = dcp.to_bytes();
+        assert!(!Dcp::info_from_bytes(&bytes).unwrap().tone_curve);
+        assert!(Dcp::from_bytes(&bytes).unwrap().tone_curve.is_none());
 
         // And it turns away what a full read would have.
         let mut bare = IfdWriter::default();
@@ -1639,6 +1713,16 @@ pub(crate) mod tests {
         // A table big enough that the copyright, written after it, is
         // well past the first block.
         dcp.look = Some(HueSatMap::identity(36, 8, 8));
+        // And a long curve, written after the maps, so its values are
+        // past the first block too.
+        dcp.tone_curve = Some(
+            (0..=600)
+                .map(|i| {
+                    let x = i as f32 / 600.0;
+                    [x, x.sqrt()]
+                })
+                .collect(),
+        );
         let front = dcp.to_bytes();
         assert!(front.len() > 4 * 4096);
         // The same file with its directory copied to the end and the
@@ -1670,6 +1754,7 @@ pub(crate) mod tests {
         }
         let info = Dcp::info(dir.join("back.dcp")).unwrap();
         assert_eq!(info.copyright.as_deref(), Some("public domain"));
+        assert!(info.tone_curve);
         assert_eq!(info.unique_camera_model.as_deref(), Some("Test Cam"));
         crate::testing::remove_dir_retry(&dir);
     }

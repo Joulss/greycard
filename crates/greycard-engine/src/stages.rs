@@ -155,6 +155,10 @@ pub enum InputKind {
         /// The stops a merge of ours stored its samples under its
         /// reference frame (`baseline::headroom`); 0 for any other raw.
         headroom: f32,
+        /// A DNG's own `BaselineExposure` (`baseline::makers`), which a
+        /// camera profile's look table is read at under the profile's
+        /// own tone curve; none for any other raw and for one of ours.
+        makers: Option<f32>,
         /// A merge whose lens was corrected in the merge (a
         /// panorama): it is in no one frame's geometry, and the lens
         /// profile stands down on it.
@@ -190,6 +194,15 @@ impl Facts {
         }
     }
 
+    /// A DNG's own `BaselineExposure`, the maker's: none for a picture,
+    /// another raw, and one of ours.
+    pub fn makers(&self) -> Option<f32> {
+        match self.input {
+            InputKind::Raw { makers, .. } => makers,
+            _ => None,
+        }
+    }
+
     /// A raw's facts at `turn`.
     pub fn raw(frame: &RawFrame, turn: u8) -> Self {
         let crop = frame.effective_crop();
@@ -209,6 +222,7 @@ impl Facts {
                 }),
                 merged: frame.dng.merged.is_some(),
                 headroom: greycard_edit::baseline::headroom(frame),
+                makers: greycard_edit::baseline::makers(frame),
                 lens_corrected: frame.dng.merged.as_ref().is_some_and(|m| m.lens_corrected),
                 monochrome: frame.layout == SensorLayout::Monochrome,
             },
@@ -903,6 +917,27 @@ pub fn learned_shapes(edit: &Edit) -> Vec<(u64, usize)> {
     out
 }
 
+/// Where a DCP's look table is read on the frame `facts` describe, in
+/// stops over the develop: `edit`'s baseline and a merge's headroom
+/// (`Edit::look_baseline`). Under the profile's own tone curve
+/// (`profile_curve`: the profile carries one, and the edit's switch is
+/// on) it is read where that curve reads the picture, at Adobe's
+/// `BaselineExposure` (`baseline::adobe_lift`), as the render places
+/// the curve: in the DNG specification's processing model both follow
+/// the one exposure (the exposure, the look table, the tone curve).
+fn look_read_at(edit: &Edit, facts: &Facts, profile_curve: bool) -> f32 {
+    let (make, model) = (&facts.identity.make, &facts.identity.model);
+    let at = edit.look_baseline(make, model, facts.headroom());
+    if profile_curve && edit.camera.wants_tone_curve() {
+        at + greycard_edit::baseline::adobe_lift(
+            edit.look_baseline(make, model, 0.0),
+            facts.makers(),
+        )
+    } else {
+        at
+    }
+}
+
 /// The steps of `edit`'s develop for `purpose` on the frame `facts`
 /// describe, with the lens corrections `lenses` holds for it.
 pub fn stages(
@@ -925,11 +960,11 @@ pub fn stages(
     // Only where a look table may go on, so the list of an edit with
     // none (and its base, which keeps no baseline then) is as it was.
     if edit.camera.applies_look_table() {
-        settings.look_baseline = edit.look_baseline(
-            &facts.identity.make,
-            &facts.identity.model,
-            facts.headroom(),
-        );
+        let curve = settings
+            .profile
+            .as_ref()
+            .is_some_and(|p| p.tone_curve.is_some());
+        settings.look_baseline = look_read_at(edit, facts, curve);
     }
     match &facts.input {
         InputKind::Raw {
@@ -1366,6 +1401,7 @@ mod tests {
                 warp: None,
                 merged: false,
                 headroom: 0.0,
+                makers: None,
                 lens_corrected: false,
                 monochrome: false,
             },
@@ -1383,6 +1419,7 @@ mod tests {
                 warp: None,
                 merged: false,
                 headroom: 0.0,
+                makers: None,
                 lens_corrected: false,
                 monochrome: false,
             },
@@ -1460,6 +1497,7 @@ mod tests {
                 warp: None,
                 merged: true,
                 headroom: 2.0,
+                makers: None,
                 lens_corrected: false,
                 monochrome: false,
             },
@@ -1470,6 +1508,35 @@ mod tests {
         let mut old = edit.clone();
         old.light.baseline = Some(0.3);
         assert_eq!(read_at(&old, &merge), 2.3);
+    }
+
+    /// Under a camera profile's own tone curve its look table is read
+    /// where the curve reads the picture, Adobe's `BaselineExposure`:
+    /// a DNG's own tag, else ours less the stand-in lift; with the
+    /// switch off, or a profile with no curve, at our baseline as
+    /// before.
+    #[test]
+    fn the_look_table_is_read_with_the_profiles_curve_at_adobes_exposure() {
+        use greycard_edit::baseline::{ADOBE_GREY_LIFT, for_make_model};
+        let body = for_make_model("Canon", "EOS R5");
+        let mut edit = Edit::default();
+        edit.camera
+            .choose(greycard_edit::camera::ProfileChoice::Named(
+                "Natural".into(),
+            ));
+        let plain = raw(0);
+        assert_eq!(look_read_at(&edit, &plain, true), body, "switch off");
+        edit.camera.tone_curve = true;
+        assert!(edit.camera.wants_tone_curve());
+        assert_eq!(look_read_at(&edit, &plain, false), body, "no curve");
+        let at = look_read_at(&edit, &plain, true);
+        assert!((at - (body - ADOBE_GREY_LIFT)).abs() < 1e-6, "{at}");
+        let mut dng = raw(0);
+        if let InputKind::Raw { makers, .. } = &mut dng.input {
+            *makers = Some(0.35);
+        }
+        let at = look_read_at(&edit, &dng, true);
+        assert!((at - 0.35).abs() < 1e-6, "the DNG's own: {at}");
     }
 
     fn names(s: &Steps) -> Vec<String> {
@@ -2361,6 +2428,7 @@ mod tests {
                 warp: None,
                 merged,
                 headroom: 0.0,
+                makers: None,
                 lens_corrected: false,
                 monochrome: false,
             },

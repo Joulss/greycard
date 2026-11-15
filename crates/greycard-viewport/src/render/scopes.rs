@@ -56,6 +56,12 @@ pub(super) struct EditKey {
     grain: Grain,
     output_sharpen: greycard_edit::OutputSharpen,
     source_turn: u8,
+    /// The curve the picture is finished with, and where the source's
+    /// white is: a scope taken under the last ones reads the wrong
+    /// tones.
+    source: Source,
+    display_curve: greycard_edit::DisplayCurve,
+    profile_tone: Option<greycard_render::profile_tone::ProfileTone>,
 }
 
 impl EditKey {
@@ -78,6 +84,9 @@ impl EditKey {
             grain: v.grain,
             output_sharpen: v.output_sharpen,
             source_turn: v.source_turn,
+            source: v.source,
+            display_curve: v.display_curve,
+            profile_tone: v.profile_tone.clone(),
         }
     }
 }

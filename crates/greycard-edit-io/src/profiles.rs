@@ -351,6 +351,7 @@ fn list_within(dir: &Path, bounds: Bounds) -> Vec<Entry> {
                 unique_camera_model: info.unique_camera_model,
                 copyright: info.copyright,
                 same_as: None,
+                tone_curve: info.tone_curve,
             })
         })
         .collect();

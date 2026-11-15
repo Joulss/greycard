@@ -782,6 +782,11 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
         .choose(greycard_edit::camera::ProfileChoice::from_name(
             app.get_camera_profile().as_str(),
         ));
+    // Off on the file's own profile, as the edit keeps it, and on a
+    // profile with no curve, where the switch is not shown.
+    edit.camera.tone_curve = app.get_camera_tone_curve()
+        && app.get_camera_profile_has_curve()
+        && !edit.camera.profile.is_embedded();
     edit.look_lut.lut = greycard_edit::look::LutChoice::from_name(app.get_look_name().as_str());
     edit.look_lut.strength = app.get_look_strength().clamp(0.0, 1.0);
     edit.retouch.enabled = app.get_retouch_enabled();
@@ -1072,6 +1077,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     // The list and its warning follow the choice, so an undo or a
     // preset that brings another camera's profile says so at once.
     show_profiles(st, &edit.camera.profile, app);
+    app.set_camera_tone_curve(edit.camera.tone_curve);
     // The list, its note and the strength follow the choice, so an
     // undo or a preset that brings a look says so at once.
     show_looks(st, &edit.look_lut, app);

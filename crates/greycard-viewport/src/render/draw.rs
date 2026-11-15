@@ -139,6 +139,12 @@ struct Params {
     /// count, and the luminance's margin (`osharp`).
     osharp: [f32; 4],
     osharp_taps: [f32; 4],
+    /// The camera profile's tone curve, when it renders (curve 3): the
+    /// gain before it in x, and the working space to linear ProPhoto
+    /// and back, rows (`profile_tone::ProfileTone`).
+    profile: [f32; 4],
+    pro_in: [[f32; 4]; 3],
+    pro_out: [[f32; 4]; 3],
 }
 
 /// What of the picture and its overlays (the clipping paint, the
@@ -297,7 +303,16 @@ impl Renderer {
         let m = self.output;
         let rail = greycard_render::agx::rail_weights_for(&m);
         let w = v.white;
-        let display = greycard_render::finish::White::of(v.source, &v.light);
+        // The profile's curve renders a scene in the display curve's
+        // place, and its white is the one the Whites aim at.
+        let placed = v
+            .profile_tone
+            .as_ref()
+            .filter(|_| v.source.is_scene())
+            .map(|p| p.placed(v.source, &v.light));
+        let profile = placed.as_ref();
+        let display = greycard_render::finish::White::of(v.source, &v.light).under(profile);
+        let (pro_in, pro_out) = greycard_render::profile_tone::ProfileTone::matrices();
         let agx = greycard_render::agx::shader_params(display.agx);
         let params = Params {
             view: [tw as f32, th as f32],
@@ -326,7 +341,9 @@ impl Renderer {
             exposure: v.source.baseline(&v.light) + v.light.exposure,
             // The shape, then 0 the display curve per channel, 1 a
             // clip, for a picture that has had its curve, 2 AgX.
+            // 3 the camera profile's own curve, for a scene.
             curve: match (v.source, v.display_curve) {
+                (Source::Scene(_), _) if profile.is_some() => 3.0,
                 (Source::Scene(_), greycard_edit::DisplayCurve::Channels) => 0.0,
                 (Source::Display, _) => 1.0,
                 (Source::Scene(_), greycard_edit::DisplayCurve::Agx) => 2.0,
@@ -444,6 +461,9 @@ impl Renderer {
             tone: [v.light.tone.midtones, 0.0, 0.0, 0.0],
             osharp: [0.0; 4],
             osharp_taps: [0.0; 4],
+            profile: [profile.map_or(1.0, |p| p.gain()), 0.0, 0.0, 0.0],
+            pro_in: pro_in.map(|r| [r[0], r[1], r[2], 0.0]),
+            pro_out: pro_out.map(|r| [r[0], r[1], r[2], 0.0]),
         };
         // The output sharpen on the developed picture drawn whole: not
         // on the camera's JPEG, nor a compare view's tile.
@@ -493,6 +513,12 @@ impl Renderer {
         let local_tables_buffer =
             storage("viewport local tables", bytemuck::cast_slice(&local_tables));
         let shapes_buffer = storage("viewport shapes", bytemuck::cast_slice(&shapes));
+        // The profile's curve, or one value where there is none, since
+        // a binding is never empty.
+        let profile_buffer = storage(
+            "viewport profile curve",
+            bytemuck::cast_slice(profile.map_or(&[0.0f32][..], |p| p.table())),
+        );
         // One draw of the shader with `params` through `pipeline` into
         // `into`, the output sharpen's blur across read from `across`.
         let shade = |encoder: &mut gpu::CommandEncoder,
@@ -593,6 +619,10 @@ impl Renderer {
                     texture(14, &sharpen_view),
                     texture(15, &sample_view),
                     texture(16, &across_view),
+                    gpu::BindGroupEntry {
+                        binding: 17,
+                        resource: profile_buffer.as_entire_binding(),
+                    },
                 ],
             });
             pass.set_pipeline(pipeline);

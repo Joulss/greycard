@@ -20,6 +20,10 @@ export component LightSection inherits Section {
     // on the global look of a raw.
     in-out property <string> display-curve;
     in property <bool> show-display-curve;
+    // The camera profile's own tone curve renders in the display
+    // curve's place: the choice is dimmed and takes no input, and what
+    // it says is kept for when the profile's curve is switched off.
+    in property <bool> display-curve-inert;
     in-out property <bool> collapsed-light;
     in-out property <string> target-name;
     /// The open frame is a raw, which Auto reads.
@@ -131,12 +135,14 @@ export component LightSection inherits Section {
         spacing: 4px;
         Text {
             text: @tr("Display curve");
-            color: Theme.text;
+            color: root.display-curve-inert ? Theme.text-muted : Theme.text;
             font-size: Theme.font-sm;
         }
-        Segmented {
+        // Named so the tests find it.
+        display-curve-choice := Segmented {
             options: ["Per channel", "AgX"];
             labels: [@tr("Per channel"), "AgX"];
+            enabled: !root.display-curve-inert;
             equal-width: true;
             current <=> root.display-curve;
             selected(v) => { root.view-changed(); }

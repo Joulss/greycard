@@ -21,6 +21,12 @@ export component CameraSection inherits Section {
     in property <bool> camera-profiles-any;
     /// Every camera's profiles listed, not only this camera's.
     in-out property <bool> camera-profiles-all;
+    /// The chosen profile carries a tone curve; the switch for it shows
+    /// only then.
+    in property <bool> camera-profile-has-curve;
+    /// The profile's tone curve in the display curve's place.
+    in-out property <bool> camera-tone-curve;
+    callback view-changed();
     callback camera-profile-picked();
     callback camera-profile-group-toggled(string);
     callback camera-profiles-all-changed();
@@ -126,6 +132,14 @@ export component CameraSection inherits Section {
                 }
             }
         }
+    }
+    // Under the list: the chosen profile's own tone curve in the display
+    // curve's place, an edit's choice, shown only for a profile that
+    // carries one.
+    if root.raw-input && root.camera-profile-has-curve: Toggle {
+        label: @tr("Profile tone curve");
+        checked <=> root.camera-tone-curve;
+        toggled => { root.view-changed(); }
     }
     // At the foot of the list: every camera's profiles, a view of the
     // list kept in the window's settings, not in the edit.

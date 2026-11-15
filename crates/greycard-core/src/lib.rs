@@ -59,6 +59,7 @@ pub mod raw;
 pub mod register;
 pub mod sharpness;
 pub mod stack;
+pub mod tone_curve;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

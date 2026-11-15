@@ -5,9 +5,9 @@
 //! one a plane; without them the picture is magenta and clipped.
 //!
 //! The curve goes on every sample of the area, the planes, and the
-//! pitches the opcode names, as the DNG SDK's `dng_opcode_MapTable` and
-//! `dng_opcode_MapPolynomial` run it on their 16-bit stage, the result
-//! held to the range 0 to 1.
+//! pitches the opcode names, as the specification's `MapTable` and
+//! `MapPolynomial` describe, the result held to the range 0 to 1 (our
+//! choice where it is quiet). Written from the specification.
 
 use rayon::prelude::*;
 

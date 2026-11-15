@@ -468,6 +468,62 @@ fn the_weighted_scopes_are_the_cpus() {
     }
 }
 
+/// The scopes, the clipping lamps, and the readout are taken again
+/// when the curve the picture is finished with changes: the display
+/// curve, the source (where its white is), and a camera profile's own
+/// tone curve switched on. Each change starts a new analysis.
+#[test]
+fn the_scopes_are_taken_again_when_the_finishing_curve_changes() {
+    let Some((device, queue)) = device("the scopes' key check") else {
+        return;
+    };
+    let image = field();
+    let (w, h) = (image.width, image.height);
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let mut view = View::blank();
+    view.center = (w as f32 / 2.0, h as f32 / 2.0);
+    view.plane = (w as f32, h as f32);
+    view.frame_size = (w as f32, h as f32);
+    let (make, model) = greycard_render::testing::GFX;
+    view.source = Source::raw(make, model);
+    let curve = std::sync::Arc::new(
+        greycard_core::tone_curve::ToneCurve::new(&[[0.0, 0.0], [0.5, 0.7], [1.0, 1.0]]).unwrap(),
+    );
+    let tone = greycard_render::profile_tone::ProfileTone::new(curve, None);
+    let changes = [
+        (
+            "the display curve",
+            View {
+                display_curve: greycard_edit::DisplayCurve::Agx,
+                ..view.clone()
+            },
+        ),
+        (
+            "the source",
+            View {
+                source: Source::SCENE,
+                ..view.clone()
+            },
+        ),
+        (
+            "the profile's tone curve",
+            View {
+                profile_tone: Some(tone),
+                ..view.clone()
+            },
+        ),
+    ];
+    for (what, changed) in changes {
+        let _ = gpu_bins(&mut renderer, &view, Scope::Rgb, None);
+        let (_, in_flight) = renderer.analyze(&view, Scope::Rgb, None);
+        assert!(!in_flight, "{what}: settled");
+        let (_, in_flight) = renderer.analyze(&changed, Scope::Rgb, None);
+        assert!(in_flight, "{what}: a new analysis");
+        let _ = gpu_bins(&mut renderer, &changed, Scope::Rgb, None);
+    }
+}
+
 /// The color the readout under the pointer reads is the analysis
 /// picture's at that point of the frame, or over a reach one of the
 /// box's own pixels, and it is in the bins the compute pass made of
@@ -2357,7 +2413,36 @@ fn a_merges_pull_on_the_gpu_is_the_cpus() {
     assert!(pulled >= 6, "the pull acted in {pulled} cases");
 }
 
+/// A camera profile's tone curve on the GPU is `ProfileTone::apply` on
+/// the CPU, in the display curve's place under either of ours: a
+/// synthetic curve of Adobe's shape, 128 points, and an offset, over
+/// the parity frame's primaries, near blacks, and highlights past
+/// white, at the same exposures.
+#[test]
+fn a_profile_tone_curve_on_the_gpu_is_the_cpus() {
+    let points: Vec<[f32; 2]> = (0..128)
+        .map(|i| {
+            let x = i as f32 / 127.0;
+            let y = 1.0 - (1.0 - x).powf(2.2);
+            [x, (0.85 * y + 0.15 * x * x * (3.0 - 2.0 * x)).min(1.0)]
+        })
+        .collect();
+    let curve = std::sync::Arc::new(greycard_core::tone_curve::ToneCurve::new(&points).unwrap());
+    let tone = greycard_render::profile_tone::ProfileTone::new(curve, Some(-0.64));
+    for curve in greycard_edit::DisplayCurve::ALL {
+        display_curve_parity(curve, Some(tone.clone()), "the profile's tone curve");
+    }
+}
+
 fn a_display_curve_on_the_gpu_is_the_cpus(curve: greycard_edit::DisplayCurve, what: &str) {
+    display_curve_parity(curve, None, what)
+}
+
+fn display_curve_parity(
+    curve: greycard_edit::DisplayCurve,
+    profile_tone: Option<greycard_render::profile_tone::ProfileTone>,
+    what: &str,
+) {
     let Some((device, queue)) = device(&format!("{what}'s check")) else {
         return;
     };
@@ -2394,11 +2479,12 @@ fn a_display_curve_on_the_gpu_is_the_cpus(curve: greycard_edit::DisplayCurve, wh
                 plane: (w as f32, h as f32),
                 frame_size: (w as f32, h as f32),
                 source,
+                profile_tone: profile_tone.clone(),
                 ..View::with_look(&edit)
             };
             let target = renderer.render(w as u32, h as u32, &view).0;
             let shown = renderer.read_back(&target).expect("read back");
-            let global = Baked::global(&edit, source);
+            let global = Baked::global(&edit, source).with_profile_tone(profile_tone.clone());
             for y in 0..h {
                 for x in 0..w {
                     let i = (y * w + x) * 3;
@@ -2500,6 +2586,7 @@ fn a_display_curves_gap_before_the_point_curves() {
                             &global.curves,
                             Source::SCENE,
                             curve,
+                            None,
                             greycard_render::finish::FRAME_TYPICAL,
                         )
                         .encoded;

@@ -267,6 +267,25 @@ pub fn gate(look: Option<lut::Look>, curve: DisplayCurve) -> Option<lut::Look> {
     look.filter(|l| MadeFor::read(&l.lut.comments).applies(curve))
 }
 
+/// Whether a table is laid over a camera profile's own tone curve
+/// (`Camera::tone_curve`): a general one is, a preference over whatever
+/// the picture is; one fitted under a display curve of ours, or made
+/// for one, is not, since it corrects that curve's rendering and the
+/// profile's curve has none of its faults. The choice is kept: the
+/// table is skipped at the render, and back when the switch goes off.
+pub fn over_profile_curve(look: &lut::Look) -> bool {
+    MadeFor::read(&look.lut.comments) == MadeFor::Any
+}
+
+/// Whether the look named is skipped under a camera profile's own tone
+/// curve: the table the render takes for `curve` ([`table_for`], as
+/// [`LookLut::look_under`] resolves it) is made for a display curve of
+/// ours ([`over_profile_curve`]). The list dims it, as it dims a look
+/// with no table for the picture's curve.
+pub fn fitted(looks: &[Entry], name: &str, curve: DisplayCurve) -> bool {
+    table_for(looks, name, curve).is_some_and(|e| e.made_for() != MadeFor::Any)
+}
+
 /// The declarations a fitted table's header carries, in the order they
 /// are written: the display curve the run developed under, the body
 /// the table is for (make and model as the raw names them), its style,
@@ -956,6 +975,46 @@ mod tests {
             primaries: Primaries::default(),
             comments: Vec::new(),
         }
+    }
+
+    /// Under a camera profile's own curve only a general table is laid
+    /// on: one fitted, or made for a curve of ours, is skipped, and its
+    /// look is the list's to dim.
+    #[test]
+    fn only_a_general_table_goes_over_a_profiles_curve() {
+        let cube = |comment: &str| {
+            let text = format!("{comment}LUT_3D_SIZE 2\n{}", "0 0 0\n".repeat(8));
+            let lut = lut::Lut3d::from_cube(&text).unwrap();
+            lut::Look::new(std::sync::Arc::new(lut), 1.0).unwrap()
+        };
+        assert!(over_profile_curve(&cube("")));
+        assert!(over_profile_curve(&cube("# a film emulation\n")));
+        assert!(!over_profile_curve(&cube("# display_curve: agx\n")));
+        assert!(!over_profile_curve(&cube("# display_curve: channels\n")));
+        assert!(!over_profile_curve(&cube("# display_curve: filmic\n")));
+        let mut fitted_one = entry("R6 Faithful", None);
+        fitted_one.comments = vec!["display_curve: agx".into()];
+        let looks = vec![fitted_one, entry("Slide", None)];
+        let agx = DisplayCurve::Agx;
+        assert!(super::fitted(&looks, "R6 Faithful", agx));
+        assert!(!super::fitted(&looks, "Slide", agx));
+        assert!(!super::fitted(&looks, "none", agx));
+    }
+
+    /// The list dims a look under a profile's curve by the one table the
+    /// render takes for the edit's curve, not by any of its tables: a
+    /// look whose own file is general and whose AgX variant is fitted
+    /// goes over the profile's curve under per channel and not under
+    /// AgX.
+    #[test]
+    fn the_table_for_the_curve_decides_the_dimming() {
+        let general = entry("Kodak", None);
+        let mut agx = entry("Kodak", None);
+        agx.variant = Some(DisplayCurve::Agx);
+        agx.comments = vec!["display_curve: agx".into()];
+        let looks = vec![general, agx];
+        assert!(!super::fitted(&looks, "Kodak", DisplayCurve::Channels));
+        assert!(super::fitted(&looks, "Kodak", DisplayCurve::Agx));
     }
 
     /// The grouped list with no fitted table to group: the names and

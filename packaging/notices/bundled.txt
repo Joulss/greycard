@@ -24,6 +24,12 @@ gives their notices, in five parts:
 The same file goes into every package, so some entries apply to one
 platform only; each says which.
 
+greycard reads and writes DNG files, under Adobe's patent license for
+the DNG specification
+(https://helpx.adobe.com/camera-raw/digital-negative.html):
+
+    This product includes DNG technology under license by Adobe.
+
 
 ================================================================================
 1. NATIVE LIBRARIES SHIPPED BESIDE THE BINARIES

@@ -691,3 +691,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§677. A benchmark for highlight reconstruction](notes/677-a-benchmark-for-highlight-reconstruction.md) (2026-11-14)
 - [§678. Fill waits for Generate](notes/678-fill-waits-for-generate.md) (2026-11-14)
 - [§679. The curve editor's histogram is what the curve takes in](notes/679-the-curve-editors-histogram-is-what-the-curve-takes-in.md) (2026-11-14)
+- [§680. A profile's own tone curve, behind a switch](notes/680-a-profiles-own-tone-curve-behind-a-switch.md) (2026-11-14)

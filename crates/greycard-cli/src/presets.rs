@@ -97,7 +97,11 @@ pub(crate) fn presets(
         let fresh = greycard_engine::settings::Shared::load().fresh();
         for file in files {
             let mut sidecar = sidecar_for(file, fresh)?;
-            let edit = entry.preset.applied(&sidecar.current);
+            // The tone curve's switch only on a DCP that carries one.
+            let edit = entry
+                .preset
+                .settled(&greycard_edit_io::Stores::user())
+                .applied(&sidecar.current);
             let label = greycard_edit::history::preset_label(&entry.preset.name);
             if sidecar.record_as(edit, Some(label)) {
                 // Back where it was found: the CLI has no setting.

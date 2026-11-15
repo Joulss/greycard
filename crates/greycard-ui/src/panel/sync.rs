@@ -90,6 +90,15 @@ fn preset_for_target(st: &State, preset: &Preset, c: usize, shot: Option<TempTin
     }
 }
 
+/// `preset` with its tone curve's switch only where the profile list
+/// says the DCP it names carries a curve
+/// (`Camera::keep_tone_curve_if`): laid on a profile with none, the
+/// switch would be written, move the develop key and the history for
+/// nothing, and come back unasked with the next profile that has one.
+fn curve_settled(preset: &Preset, profiles: &[camera::Entry]) -> Preset {
+    preset.settled_by(|name| profiles.iter().any(|e| e.name == name && e.tone_curve))
+}
+
 /// Whether laying `preset` reads the raws' own As shot: it carries a
 /// picture's offset, which lands on a raw as a light from there.
 fn offset_reads_targets(preset: &Preset) -> bool {
@@ -379,6 +388,7 @@ fn lay_shifted_over_targets(
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
     shift: Option<&Shift>,
 ) -> Synced {
+    let preset = &curve_settled(preset, profiles);
     // Each target's whole sidecar first, read where it stands in from
     // its row (on the pool when there are several); one under a root
     // that is offline is left out, and the status line says so.
@@ -1238,6 +1248,7 @@ pub(crate) fn apply_preset_to(
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) {
+    let preset = &curve_settled(preset, profiles);
     let Some(c) = st.current.filter(|c| frames.contains(c)) else {
         // The pressed-on frames, none of them on screen: as a sync's
         // targets, every one.
@@ -1859,7 +1870,7 @@ fn lay_paste(
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> Synced {
-    let preset = pasted.preset;
+    let preset = &curve_settled(pasted.preset, profiles);
     let label = &pasted.label;
     // Outside culling the frame on screen is the panel's, and what
     // the panel holds is a state first, then the paste over it.
@@ -2274,6 +2285,103 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+
+    /// A preset, a paste, or a sync laying a DCP with the tone curve's
+    /// switch on keeps the switch only where the profile list says that
+    /// DCP carries a curve: not on one without, nor on one not listed.
+    #[test]
+    fn the_tone_curve_switch_is_laid_only_where_the_list_has_a_curve() {
+        use greycard_edit::camera::{Camera, Entry, ProfileChoice};
+        let entry = |name: &str, tone_curve| Entry {
+            name: name.into(),
+            path: PathBuf::from(format!("/nowhere/{name}.dcp")),
+            title: None,
+            unique_camera_model: None,
+            copyright: None,
+            same_as: None,
+            tone_curve,
+        };
+        let profiles = [entry("Curved", true), entry("Flat", false)];
+        let preset = |name: &str| {
+            Preset::from_edit(
+                "P",
+                &Edit {
+                    camera: Camera {
+                        profile: ProfileChoice::Named(name.into()),
+                        look_table: true,
+                        tone_curve: true,
+                    },
+                    ..Edit::default()
+                },
+                &[Section::Camera],
+            )
+        };
+        let kept = |name: &str| {
+            curve_settled(&preset(name), &profiles)
+                .edit
+                .camera
+                .tone_curve
+        };
+        assert!(kept("Curved"));
+        assert!(!kept("Flat"));
+        assert!(!kept("Missing"));
+    }
+
+    /// A paste onto the frame on screen settles the switch as a paste
+    /// onto the rest does: a copy with it on, onto a frame already on
+    /// the same curveless DCP, is no change at all.
+    #[test]
+    fn a_paste_onto_the_open_frame_keeps_no_switch_its_profile_lacks() {
+        use greycard_edit::camera::{Camera, Entry as Profile, ProfileChoice};
+        let profiles = vec![Profile {
+            name: "Flat".into(),
+            path: PathBuf::from("/nowhere/Flat.dcp"),
+            title: None,
+            unique_camera_model: None,
+            copyright: None,
+            same_as: None,
+            tone_curve: false,
+        }];
+        let on = |tone_curve| Edit {
+            camera: Camera {
+                profile: ProfileChoice::Named("Flat".into()),
+                look_table: true,
+                tone_curve,
+            },
+            ..Edit::default()
+        };
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        {
+            let mut st = state.borrow_mut();
+            st.develop.profiles = profiles.clone();
+            st.sidecars[0].record(on(true));
+            st.sidecars[2].record(on(false));
+        }
+        app.invoke_select(2);
+        assert_eq!(app.get_camera_profile(), "Flat");
+        let mut st = state.borrow_mut();
+        copy_settings_of(&mut st, &app, 0);
+        assert!(
+            st.sheets.clipboard.as_ref().unwrap().edit.camera.tone_curve,
+            "the copy carries the switch"
+        );
+        let steps = st.line(2).unwrap().history.len();
+        let synced = paste_onto(
+            &mut st,
+            &app,
+            &worker,
+            &[2],
+            &Choice::whole(&[Section::Camera]),
+            &profiles,
+            |_, _| None,
+        );
+        assert!(synced.moved.is_empty());
+        let line = st.line(2).unwrap();
+        assert_eq!(line.history.len(), steps);
+        assert!(!line.current.camera.tone_curve);
+        assert!(!app.get_camera_tone_curve());
+    }
     use crate::filter;
     use crate::finish::MAX_LOCALS;
     use crate::panel::browser::open_row;
@@ -2654,6 +2762,7 @@ mod tests {
             unique_camera_model: made_for.map(str::to_string),
             copyright: None,
             same_as: None,
+            tone_curve: false,
         }
     }
 

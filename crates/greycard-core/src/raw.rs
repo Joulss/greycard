@@ -534,6 +534,24 @@ pub struct DngTags {
     /// What a merge of ours says of itself, from our `DNGPrivateData`;
     /// none for every other file.
     pub merged: Option<crate::merge::Tag>,
+    /// Written by greycard, as its `Software` tag says (a merge, a
+    /// linear DNG of a develop, the denoise cache): its
+    /// `BaselineExposure` is ours (a merge's headroom, a source's tag
+    /// carried under it), not the maker's word for the camera. Read
+    /// only for a file that carries the tag.
+    pub ours: bool,
+}
+
+/// What greycard's DNG writer puts first in the `Software` tag of every
+/// file it writes (`dng::LinearDngOptions::software` and the default).
+pub const OUR_SOFTWARE: &str = "greycard";
+
+/// Whether a `Software` tag is greycard's ([`OUR_SOFTWARE`] first).
+pub fn is_ours(software: &str) -> bool {
+    software
+        .trim_start()
+        .get(..OUR_SOFTWARE.len())
+        .is_some_and(|s| s.eq_ignore_ascii_case(OUR_SOFTWARE))
 }
 
 impl DngTags {

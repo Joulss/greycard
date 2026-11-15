@@ -23,6 +23,15 @@
 //! profile ([`Camera::choose`]). The only DCP edit without its table is
 //! an old one nothing has laid a Camera section on; an undo or a
 //! snapshot restores the edit whole, switch and all.
+//!
+//! A DCP may carry a tone curve of its own; [`Camera::tone_curve`]
+//! renders with it in place of the display curve. Off unless chosen,
+//! and written only when on and a DCP is named, so every edit made
+//! before it reads and writes as it did. It is the profile's: a
+//! preset, a paste, or a sync carries it with the profile, and choosing
+//! another DCP keeps it, so it comes back with any DCP that has a
+//! curve; with one that has none it is ignored. The file's own profile
+//! turns it off, in memory as in the sidecar.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -92,13 +101,38 @@ impl<'de> Deserialize<'de> for ProfileChoice {
 /// The CAMERA section of an edit: what the sensor's color is taken
 /// through, before everything else.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, from = "Read")]
 pub struct Camera {
     pub profile: ProfileChoice,
     /// Whether a DCP's look table goes on with its map: off when the
     /// sidecar says nothing, which is every edit made before the table
     /// was applied (the module's doc).
     pub look_table: bool,
+    /// Whether a DCP's own tone curve takes the display curve's place:
+    /// off when the sidecar says nothing, and always off on the file's
+    /// own profile, in memory as in the file. Read only where the
+    /// named profile carries a curve.
+    pub tone_curve: bool,
+}
+
+/// The section as a sidecar holds it, before the one rule the edit
+/// keeps in memory: no tone curve's switch on the file's own profile.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct Read {
+    profile: ProfileChoice,
+    look_table: bool,
+    tone_curve: bool,
+}
+
+impl From<Read> for Camera {
+    fn from(r: Read) -> Camera {
+        Camera {
+            tone_curve: r.tone_curve && !r.profile.is_embedded(),
+            profile: r.profile,
+            look_table: r.look_table,
+        }
+    }
 }
 
 /// The switch is written only when it is on and a DCP is named, so an
@@ -107,13 +141,20 @@ pub struct Camera {
 impl Serialize for Camera {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let written = self.look_table && !self.profile.is_embedded();
-        let mut st = s.serialize_struct("Camera", 1 + usize::from(written))?;
+        let named = !self.profile.is_embedded();
+        let table = self.look_table && named;
+        let curve = self.tone_curve && named;
+        let mut st = s.serialize_struct("Camera", 1 + usize::from(table) + usize::from(curve))?;
         st.serialize_field("profile", &self.profile)?;
-        if written {
+        if table {
             st.serialize_field("look_table", &true)?;
         } else {
             st.skip_field("look_table")?;
+        }
+        if curve {
+            st.serialize_field("tone_curve", &true)?;
+        } else {
+            st.skip_field("tone_curve")?;
         }
         st.end()
     }
@@ -125,9 +166,12 @@ impl Camera {
     /// choice is [`Camera::take`].
     pub fn choose(&mut self, profile: ProfileChoice) {
         if profile != self.profile {
+            // The tone curve's switch stays as it was from one DCP to
+            // another, and goes off on the file's own profile.
             self.take(&Camera {
                 profile,
                 look_table: false,
+                tone_curve: self.tone_curve,
             });
         }
     }
@@ -135,10 +179,17 @@ impl Camera {
     /// Lay `from` over this one: a preset, a paste, a sync. A DCP comes
     /// with its look table on, whatever this one had and whatever
     /// `from` says; the file's own profile has no table, and its switch
-    /// is off.
+    /// is off. The tone curve's switch is `from`'s, as its profile is.
     pub fn take(&mut self, from: &Camera) {
         self.profile = from.profile.clone();
         self.look_table = !self.profile.is_embedded();
+        self.tone_curve = from.tone_curve && !self.profile.is_embedded();
+    }
+
+    /// Whether the switch asks for a profile's tone curve: on, and a DCP
+    /// named. Whether that DCP carries one is the profile's to say.
+    pub fn wants_tone_curve(&self) -> bool {
+        self.tone_curve && !self.profile.is_embedded()
     }
 
     /// Whether a look table goes on: the switch, and a DCP to carry one.
@@ -166,6 +217,31 @@ impl Camera {
         };
         loader.profile(name)
     }
+
+    /// The tone curve's switch off unless `carries` says the DCP named
+    /// has a curve: a switch kept on a profile with none, or one not
+    /// in the directory, would be written, change the develop key and
+    /// the history without a pixel, and come back unasked on the next
+    /// profile that has one. For a camera laid without the panel (a
+    /// preset, a paste, a sync), which has no profile list to ask; the
+    /// panel asks its own ([`Entry::tone_curve`]).
+    pub fn keep_tone_curve_if(&mut self, carries: impl FnOnce(&str) -> bool) {
+        if !self.tone_curve {
+            return;
+        }
+        self.tone_curve = match &self.profile {
+            ProfileChoice::Named(name) => carries(name),
+            ProfileChoice::Embedded => false,
+        };
+    }
+
+    /// [`Camera::keep_tone_curve_if`] on `loader`'s word: the profile
+    /// loads and carries a curve.
+    pub fn settle(&mut self, loader: &dyn Loader) {
+        self.keep_tone_curve_if(|name| {
+            loader.profile(name).is_some_and(|p| p.tone_curve.is_some())
+        });
+    }
 }
 
 /// A profile in the directory, as the panel lists it.
@@ -185,6 +261,9 @@ pub struct Entry {
     /// another file name: that one stands for both on the panel. The
     /// file is still an entry, so an edit naming it still finds it.
     pub same_as: Option<String>,
+    /// It carries a tone curve to render with: the panel shows the
+    /// switch for it ([`Camera::tone_curve`]) only then.
+    pub tone_curve: bool,
 }
 
 impl Entry {
@@ -511,6 +590,7 @@ mod tests {
         let mut c = Camera {
             profile: natural.clone(),
             look_table: false,
+            tone_curve: false,
         };
         c.choose(natural.clone());
         assert!(!c.look_table);
@@ -520,6 +600,62 @@ mod tests {
         assert!(!c.look_table);
         c.choose(natural);
         assert!(c.look_table);
+    }
+
+    /// The tone curve's switch: off and unwritten in every edit made
+    /// before it, written only when on with a DCP named, kept when
+    /// another profile is chosen, and carried by a preset, a paste, or a
+    /// sync as the profile is.
+    #[test]
+    fn the_tone_curve_switch_is_the_profiles() {
+        let old: Camera = serde_json::from_str(r#"{"profile":"Body Natural"}"#).unwrap();
+        assert!(!old.tone_curve && !old.wants_tone_curve());
+        let mut c = Camera {
+            profile: ProfileChoice::Named("Natural".into()),
+            look_table: true,
+            tone_curve: true,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        assert_eq!(
+            json,
+            r#"{"profile":"Natural","look_table":true,"tone_curve":true}"#
+        );
+        assert_eq!(serde_json::from_str::<Camera>(&json).unwrap(), c);
+        c.choose(ProfileChoice::Named("Vivid".into()));
+        assert!(c.wants_tone_curve());
+        // The file's own profile has no curve: the switch goes off, in
+        // memory as in the file, and an Embedded preset reads as
+        // applied.
+        let before = c.clone();
+        c.choose(ProfileChoice::Embedded);
+        assert!(!c.tone_curve);
+        assert_eq!(
+            serde_json::to_string(&c).unwrap(),
+            r#"{"profile":"embedded"}"#
+        );
+        assert!(c.has(&Camera::default()));
+        let mut laid = before.clone();
+        laid.take(&Camera::default());
+        assert_eq!(laid, c);
+        // A hand-written switch on the file's own profile reads as off.
+        let hand: Camera =
+            serde_json::from_str(r#"{"profile":"embedded","tone_curve":true}"#).unwrap();
+        assert!(!hand.tone_curve);
+        c.choose(ProfileChoice::Named("Natural".into()));
+        assert!(!c.wants_tone_curve());
+        let c = before;
+        // Laid on from another edit: the source's switch.
+        let mut onto = Camera::default();
+        onto.take(&c);
+        assert!(onto.wants_tone_curve());
+        let off = Camera {
+            tone_curve: false,
+            ..c.clone()
+        };
+        let mut onto = c.clone();
+        onto.take(&off);
+        assert!(!onto.tone_curve);
+        assert!(!c.has(&off) && c.has(&c.clone()));
     }
 
     /// What the panel says under the profile list: nothing for the
@@ -535,6 +671,7 @@ mod tests {
             copyright: None,
             unique_camera_model: Some("Canon EOS R5".into()),
             same_as: None,
+            tone_curve: false,
         };
         let theirs = Entry {
             name: "theirs".into(),
@@ -590,6 +727,7 @@ mod tests {
             unique_camera_model: unique.map(str::to_string),
             copyright: None,
             same_as: None,
+            tone_curve: false,
         }
     }
 
@@ -663,6 +801,7 @@ mod tests {
             unique_camera_model: None,
             copyright: None,
             same_as: None,
+            tone_curve: false,
         };
         assert_eq!(entry.label(), "Canon EOS R6 Neutral");
         entry.title = None;

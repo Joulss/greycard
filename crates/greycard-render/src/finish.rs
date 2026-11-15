@@ -5,6 +5,7 @@
 //! The reference the shader in `viewport.wgsl` is held to.
 
 use crate::detail::DetailMeta;
+use crate::profile_tone::ProfileTone;
 use std::sync::Arc;
 
 use greycard_core::color::Matrix3;
@@ -41,6 +42,11 @@ pub struct Baked {
     /// Global only, as the source is: the display curve per channel,
     /// or AgX. Read only when the source is a scene.
     pub display_curve: DisplayCurve,
+    /// Global only: the camera profile's own tone curve, which takes
+    /// the display curve's place on a scene when there is one
+    /// ([`crate::profile_tone`]). Set by a caller that has the profile
+    /// ([`Baked::with_profile_tone`]); [`Baked::global`] leaves it out.
+    pub profile_tone: Option<ProfileTone>,
     /// A local's own white balance, as the working-space matrix that
     /// takes the developed picture to it (`greycard_edit::white`),
     /// rows; `None` for none. Never the global's: the picture's white
@@ -83,11 +89,16 @@ impl Default for Source {
 /// stop, so that a source compares as a whole number does, and a
 /// merge's headroom ([`greycard_edit::baseline::headroom`]) beside it:
 /// an exposure the slider's zero stands for, which the display white
-/// does not follow.
+/// does not follow; and a DNG's own `BaselineExposure`, which only a
+/// camera profile's tone curve reads (`profile_tone`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Baseline {
     body: i16,
     headroom: i16,
+    /// The file's `BaselineExposure`, in hundredths of a stop: a DNG's
+    /// own tag, not one of ours (a merge, a linear DNG of a develop),
+    /// whose tag is our headroom and not the maker's word.
+    dng: Option<i16>,
 }
 
 impl Baseline {
@@ -95,12 +106,14 @@ impl Baseline {
     pub const DEFAULT: Baseline = Baseline {
         body: 80,
         headroom: 0,
+        dng: None,
     };
 
     pub fn of_stops(stops: f32) -> Baseline {
         Baseline {
             body: hundredths(stops),
             headroom: 0,
+            dng: None,
         }
     }
 
@@ -116,7 +129,24 @@ impl Baseline {
         Baseline {
             body: hundredths(greycard_edit::baseline::for_frame(frame)),
             headroom: hundredths(greycard_edit::baseline::headroom(frame)),
+            dng: greycard_edit::baseline::makers(frame).map(hundredths),
         }
+    }
+
+    /// This baseline with a DNG's own `BaselineExposure`, in stops.
+    pub fn with_dng(self, stops: Option<f32>) -> Baseline {
+        Baseline {
+            dng: stops
+                .filter(|s| s.is_finite())
+                .map(|s| hundredths(s.clamp(-10.0, 10.0))),
+            ..self
+        }
+    }
+
+    /// The file's own `BaselineExposure`, in stops, when it is a DNG
+    /// that carries one.
+    pub fn dng(self) -> Option<f32> {
+        self.dng.map(|h| f32::from(h) / 100.0)
     }
 
     /// This baseline with a merge's `headroom` stops beside it.
@@ -182,6 +212,20 @@ impl Source {
         matches!(self, Source::Scene(_))
     }
 
+    /// The stops a camera profile's tone curve reads the picture at
+    /// over the exposure the finish has put on it, before the profile's
+    /// own offset: Adobe's `BaselineExposure` less ours
+    /// ([`Source::white_baseline`]), as `greycard_edit::baseline::adobe_lift`
+    /// has it for the profile's look table too. Nothing for a picture.
+    pub fn adobe_lift(self, light: &Light) -> f32 {
+        match self {
+            Source::Scene(b) => {
+                greycard_edit::baseline::adobe_lift(self.white_baseline(light), b.dng())
+            }
+            Source::Display => 0.0,
+        }
+    }
+
     /// A merge's headroom, in stops: what the frame keeps over the
     /// display white ([`Baseline::headroom`]); nothing for any other.
     pub fn headroom(self) -> f32 {
@@ -238,6 +282,7 @@ impl Baked {
             curves: look.curves.bake_with(&look.grading),
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
+            profile_tone: None,
             white: None,
             detail: if look.detail.enabled {
                 [
@@ -269,6 +314,26 @@ impl Baked {
             output_sharpen: edit.output_sharpen,
             ..Self::of(&edit.look())
         }
+    }
+
+    /// This look with the profile's tone curve in the display curve's
+    /// place, or not: [`ProfileTone::of`] the edit, by a caller with the
+    /// profile's loader.
+    /// It is placed at this look's source and light
+    /// ([`ProfileTone::placed`]).
+    pub fn with_profile_tone(self, profile_tone: Option<ProfileTone>) -> Self {
+        Self {
+            profile_tone: profile_tone.map(|p| p.placed(self.source, &self.light)),
+            ..self
+        }
+    }
+
+    /// The profile's curve, when it renders this look: a scene's only.
+    #[inline]
+    pub fn profile_curve(&self) -> Option<&ProfileTone> {
+        self.profile_tone
+            .as_ref()
+            .filter(|_| self.source.is_scene())
     }
 }
 
@@ -739,8 +804,10 @@ pub fn finish_pixel_display(
         None => (px, reference),
     };
     let mut exposure = global.source.baseline(&global.light) + global.light.exposure + stops;
-    // The display white where the frame's baseline puts the clip.
-    let white = White::of(global.source, &global.light);
+    // The display white where the frame's baseline puts the clip, or
+    // where the profile's curve reaches one when it renders.
+    let profile = global.profile_curve();
+    let white = White::of(global.source, &global.light).under(profile);
     let mut t = global.light.tone;
     let mut mixer = global.mixer.effective();
     let mut color = global.color.effective();
@@ -804,11 +871,11 @@ pub fn finish_pixel_display(
         global.source.headroom(),
         white.stops,
     );
-    c = global.source.curve_at(
-        shape_at(c, &t, g, span, kept, white.stops),
-        global.display_curve,
-        &white,
-    );
+    let shaped = shape_at(c, &t, g, span, kept, white.stops);
+    c = match profile {
+        Some(p) => p.apply(shaped),
+        None => global.source.curve_at(shaped, global.display_curve, &white),
+    };
     c = [0, 1, 2].map(|k| {
         let x = encode(c[k].clamp(0.0, 1.0));
         let mut x2 = x;
@@ -860,7 +927,10 @@ pub fn finish_pixel_output(
     // (`agx::output_rail`). Nothing to do in Rec.2020, where the
     // formation leaves nothing under zero, and nothing on the other
     // curves. The weights are the matrix's, kept from the last pixel.
-    if global.source.is_scene() && global.display_curve == DisplayCurve::Agx {
+    if global.source.is_scene()
+        && global.display_curve == DisplayCurve::Agx
+        && global.profile_curve().is_none()
+    {
         s = crate::agx::output_rail(s, rail_weights(to_out));
     }
     let e = s.map(|v| encode(v.clamp(0.0, 1.0)));
@@ -973,8 +1043,13 @@ pub fn pick(
     curves: &CurveLut,
     source: Source,
     display_curve: DisplayCurve,
+    profile: Option<&ProfileTone>,
     range: [f32; 2],
 ) -> Picked {
+    let placed = profile
+        .filter(|_| source.is_scene())
+        .map(|p| p.placed(source, light));
+    let profile = placed.as_ref();
     // Each section as it acts, as `finish_pixel_with` takes it: a
     // switch off is nothing to do, whatever its sliders still say.
     let (mixer, color, bw) = (mixer.effective(), color.effective(), bw.effective());
@@ -992,7 +1067,7 @@ pub fn pick(
         source.baseline(light) + light.exposure,
         light.tone.contrast,
     );
-    let white = White::of(source, light);
+    let white = White::of(source, light).under(profile);
     let kept = Kept::of(
         range,
         source.baseline(light) + light.exposure,
@@ -1000,11 +1075,11 @@ pub fn pick(
         source.headroom(),
         white.stops,
     );
-    c = source.curve_at(
-        shape_at(c, &light.tone, None, span, kept, white.stops),
-        display_curve,
-        &white,
-    );
+    let shaped = shape_at(c, &light.tone, None, span, kept, white.stops);
+    c = match profile {
+        Some(p) => p.apply(shaped),
+        None => source.curve_at(shaped, display_curve, &white),
+    };
     let encoded = c.map(|v| encode(v.clamp(0.0, 1.0)));
     let luma = encode((LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]).clamp(0.0, 1.0));
     let shaded = [0, 1, 2].map(|k| decode(lookup(curves, k, encoded[k])));
@@ -1827,6 +1902,20 @@ impl White {
         w
     }
 
+    /// This white with the stops the Whites aim at and a merge's pull is
+    /// placed under moved to where `profile`'s curve reaches one, when
+    /// it renders in the display curve's place.
+    #[inline]
+    pub fn under(self, profile: Option<&ProfileTone>) -> White {
+        match profile {
+            Some(p) => White {
+                stops: p.white_stops(),
+                ..self
+            },
+            None => self,
+        }
+    }
+
     /// The white a frame of `source` renders at under `light` (the
     /// picture's): the default's for a picture, whose curve is a clip
     /// and whose white point aims where it always has.
@@ -2277,6 +2366,121 @@ mod tests {
         }
     }
 
+    /// A camera profile's tone curve takes the display curve's place
+    /// on a scene, whichever of ours the edit names, and not on a
+    /// picture; the Whites aim at its white; without one the finish is
+    /// the display curve's, bit for bit; and the dropper reads it too.
+    #[test]
+    fn a_profiles_tone_curve_takes_the_display_curves_place() {
+        let points: Vec<[f32; 2]> = (0..=16)
+            .map(|i| {
+                let x = i as f32 / 16.0;
+                [x, x.powf(0.6)]
+            })
+            .collect();
+        let curve = Arc::new(greycard_core::tone_curve::ToneCurve::new(&points).unwrap());
+        let tone = ProfileTone::new(curve.clone(), Some(-0.5));
+        let m = crate::export::Space::Rec2020.matrix();
+        let gain = 2f32.powf(BASELINE_EXPOSURE);
+        for how in DisplayCurve::ALL {
+            let edit = Edit {
+                display_curve: how,
+                ..Edit::default()
+            };
+            let plain = Baked::global(&edit, Source::SCENE);
+            let with = plain.clone().with_profile_tone(Some(tone.clone()));
+            for v in [0.0, 0.02, 0.1, 0.18, 0.5, 2.0] {
+                let out = finish_pixel([v; 3], &with, &[], &m);
+                // At Adobe's baseline, ours less the lift, and the offset.
+                let adobe = 2f32.powf(-0.5 - greycard_edit::baseline::ADOBE_GREY_LIFT);
+                let want = encode(curve.at(v * gain * adobe));
+                for k in out {
+                    assert!((k - want).abs() < 2e-5, "{how:?} {v}: {out:?} {want}");
+                }
+                assert_eq!(
+                    finish_pixel([v; 3], &plain.clone().with_profile_tone(None), &[], &m),
+                    finish_pixel([v; 3], &plain, &[], &m)
+                );
+            }
+            // A picture keeps its clip.
+            let picture = Baked::global(&edit, Source::Display);
+            assert_eq!(
+                finish_pixel(
+                    [0.3; 3],
+                    &picture.clone().with_profile_tone(Some(tone.clone())),
+                    &[],
+                    &m
+                ),
+                finish_pixel([0.3; 3], &picture, &[], &m)
+            );
+        }
+        // Whites at -1 bring a luminance a stop over the curve's white
+        // to white.
+        let mut edit = Edit::default();
+        edit.light.tone.whites = -1.0;
+        let with = Baked::global(&edit, Source::SCENE).with_profile_tone(Some(tone.clone()));
+        let over = 2f32.powf(0.5 + greycard_edit::baseline::ADOBE_GREY_LIFT) * 2.0 / gain;
+        let out = finish_pixel([over; 3], &with, &[], &m);
+        assert!((out[1] - 1.0).abs() < 1e-3, "{out:?}");
+        let under = finish_pixel([over * 0.9; 3], &with, &[], &m);
+        assert!(under[1] < 0.999, "{under:?}");
+        // The dropper.
+        let picked = pick(
+            [0.1; 3],
+            &edit.light,
+            &edit.mixer,
+            &edit.color,
+            &edit.bw,
+            &edit.tint,
+            &identity(),
+            Source::SCENE,
+            DisplayCurve::Channels,
+            Some(&tone),
+            FRAME_TYPICAL,
+        );
+        let rendered = finish_pixel([0.1; 3], &with, &[], &m);
+        assert!((picked.encoded[1] - rendered[1]).abs() < 1e-5);
+        // A DNG's own BaselineExposure is Adobe's: the curve reads the
+        // picture at it, whatever our baseline, and only the curve does.
+        let plain = Baked::global(&Edit::default(), Source::SCENE);
+        for adobe in [-1.0f32, 0.0, 1.3] {
+            let source = Source::Scene(Baseline::DEFAULT.with_dng(Some(adobe)));
+            assert_eq!(
+                source.adobe_lift(&Light::default()),
+                adobe - BASELINE_EXPOSURE
+            );
+            let dng = Baked::global(&Edit::default(), source);
+            assert_eq!(
+                finish_pixel([0.1; 3], &dng, &[], &m),
+                finish_pixel([0.1; 3], &plain, &[], &m),
+                "the tag moves nothing without the curve"
+            );
+            let with = dng.with_profile_tone(Some(tone.clone()));
+            let out = finish_pixel([0.1; 3], &with, &[], &m);
+            let want = encode(curve.at(0.1 * 2f32.powf(adobe - 0.5)));
+            assert!((out[1] - want).abs() < 2e-5, "{adobe}: {out:?} {want}");
+        }
+    }
+
+    /// A frame's baseline keeps a DNG's own `BaselineExposure` for the
+    /// profile's curve, and not one of ours: a merge's, or any file our
+    /// writer wrote, carries our headroom there, not the maker's word.
+    #[test]
+    fn a_dngs_own_baseline_exposure_is_kept_and_ours_is_not() {
+        let mut frame = crate::testing::frame();
+        assert_eq!(Baseline::of_frame(&frame).dng(), None, "no tag");
+        frame.dng.baseline_exposure = Some(0.7);
+        assert_eq!(Baseline::of_frame(&frame).dng(), Some(0.7), "a DNG's own");
+        frame.dng.ours = true;
+        assert_eq!(Baseline::of_frame(&frame).dng(), None, "a DNG of ours");
+        frame.dng.ours = false;
+        frame.dng.merged = Some(greycard_core::merge::Tag::default());
+        assert_eq!(Baseline::of_frame(&frame).dng(), None, "a merge");
+        frame.dng.merged = None;
+        frame.dng.baseline_exposure = Some(f32::NAN);
+        assert_eq!(Baseline::of_frame(&frame).dng(), None, "not a number");
+    }
+
     /// Auto (`greycard_edit::auto`) aims through the finish's numbers,
     /// copied there: they are these.
     #[test]
@@ -2448,6 +2652,7 @@ mod tests {
             curves: *curves,
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
+            profile_tone: None,
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
@@ -2472,6 +2677,7 @@ mod tests {
             curves: identity(),
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
+            profile_tone: None,
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
@@ -2773,6 +2979,7 @@ mod tests {
                 &e.curves.bake_with(&e.grading),
                 Source::SCENE,
                 DisplayCurve::Channels,
+                None,
                 FRAME_TYPICAL,
             )
             .encoded
@@ -2958,6 +3165,7 @@ mod tests {
                     &global.curves,
                     Source::SCENE,
                     curve,
+                    None,
                     FRAME_TYPICAL,
                 );
                 let q = pick(
@@ -2970,6 +3178,7 @@ mod tests {
                     &global.curves,
                     Source::raw(make, model),
                     curve,
+                    None,
                     FRAME_TYPICAL,
                 );
                 assert_eq!(p, q);
@@ -3029,6 +3238,7 @@ mod tests {
                 &plain.curves,
                 Source::Display,
                 DisplayCurve::Channels,
+                None,
                 FRAME_TYPICAL,
             );
             for k in 0..3 {
@@ -3239,6 +3449,7 @@ mod tests {
                 curves: id,
                 source,
                 display_curve: curve,
+                profile_tone: None,
                 white: None,
                 detail: [0.0; 5],
                 output_sharpen: OutputSharpen::default(),
@@ -3714,6 +3925,7 @@ mod tests {
                 &global.curves,
                 source,
                 edit.display_curve,
+                None,
                 range,
             )
             .luma
@@ -3908,6 +4120,7 @@ mod tests {
             curves: identity(),
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
+            profile_tone: None,
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
@@ -4465,6 +4678,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            None,
             FRAME_TYPICAL,
         );
         // The baseline is in the pick as it is in the render.
@@ -4494,6 +4708,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            None,
             FRAME_TYPICAL,
         );
         let (band, w) = nearest_band(red.hue);
@@ -4512,6 +4727,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            None,
             FRAME_TYPICAL,
         );
         assert!((red2.hue - red.hue).abs() < 1e-3, "{red:?} {red2:?}");
@@ -4528,6 +4744,7 @@ mod tests {
             &curves,
             Source::Display,
             DisplayCurve::Channels,
+            None,
             FRAME_TYPICAL,
         );
         for (k, v) in [0.1f32, 0.2, 0.3].iter().enumerate() {
@@ -4550,6 +4767,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            None,
             FRAME_TYPICAL,
         );
         // Every section's sliders wound right up, every switch off:
@@ -4576,6 +4794,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            None,
             FRAME_TYPICAL,
         );
         let bare = pick(
@@ -4594,6 +4813,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            None,
             FRAME_TYPICAL,
         );
         assert_eq!(held, bare);
@@ -4624,6 +4844,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            None,
             FRAME_TYPICAL,
         );
         assert!(moved.encoded[0] != plain.encoded[0], "{moved:?} {plain:?}");
@@ -4637,6 +4858,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            None,
             FRAME_TYPICAL,
         );
         assert!((mono.encoded[0] - mono.encoded[2]).abs() < 1e-4, "{mono:?}");
@@ -4938,6 +5160,7 @@ mod tests {
             curves: identity(),
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
+            profile_tone: None,
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
@@ -4980,6 +5203,7 @@ mod tests {
             curves: identity(),
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
+            profile_tone: None,
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),
@@ -5064,6 +5288,7 @@ mod tests {
             curves: identity(),
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
+            profile_tone: None,
             white: None,
             detail: [0.0; 5],
             output_sharpen: OutputSharpen::default(),

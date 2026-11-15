@@ -543,6 +543,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .map(|(f, _)| f.other_names.clone())
                 .unwrap_or_default();
             st.develop.profiles = greycard_edit_io::profiles::list();
+            st.develop.profile_tone_for = None;
             st.develop.looks = greycard_edit_io::looks::list();
             // Read on each open, so a look or a profile changed by hand
             // since is caught here too.

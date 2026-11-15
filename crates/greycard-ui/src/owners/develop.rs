@@ -317,6 +317,13 @@ pub(crate) struct Develop {
     /// fitted table is no look under another curve.
     pub(crate) look: Option<greycard_core::lut::Look>,
     pub(crate) look_for: Option<(greycard_edit::LookLut, greycard_edit::DisplayCurve)>,
+    /// The camera profile's tone curve the viewport and the dropper
+    /// render with, and the choice and switch it was resolved for: read
+    /// once, as the look is, rather than through the store on every
+    /// frame. `None` for the key asks for it again, which a re-listing
+    /// of the profiles sets it to.
+    pub(crate) profile_tone: Option<greycard_render::profile_tone::ProfileTone>,
+    pub(crate) profile_tone_for: Option<(greycard_edit::camera::ProfileChoice, bool)>,
     /// The look list's groups the user has opened (true) or folded,
     /// by key (`greycard_edit::look::Listing::open`).
     pub(crate) look_groups_open: std::collections::BTreeMap<String, bool>,

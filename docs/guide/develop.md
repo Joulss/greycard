@@ -217,10 +217,24 @@ its color map, and its look table, which is where Adobe's Camera
 Standard, Vivid, Portrait, and the other Camera profiles differ from
 each other. (**Embedded** uses the raw file's own matrices only: a
 DNG's color map and look table, when it carries them, are not
-applied.) It does not apply a profile's tone curve: brightness and
-contrast stay with **Light** and the display curve, so a Camera
-profile brings a picture closer to the camera's own in color, not in
-contrast.
+applied.) By default it does not apply a profile's tone curve:
+brightness and contrast stay with **Light** and the display curve, so
+a Camera profile brings a picture closer to the camera's own in color,
+not in contrast.
+
+A profile that carries a tone curve shows a switch under the list,
+**Profile tone curve**. On, the profile's curve takes the place of the
+display curve for this picture, read at Adobe's exposure for the
+camera with the profile's own offset, as Adobe renders it: the
+contrast and brightness the profile's author made it with. The Light
+sliders still work before it. What the curve takes past white is
+white, so use **Highlights** or **Whites** to bring bright skies back
+under it. The display curve choice in **Light** is dimmed while it is
+on, and a look the camera match fitted is set aside (its row dimmed),
+since it corrects a curve the profile's replaces; both come back when
+you turn it off. The switch stays with the picture when you choose
+another profile with a curve (one without, or Embedded, turns it off),
+and travels with the profile in a preset, a paste, or a sync.
 
 A picture you developed with a DCP before greycard applied look tables
 keeps its colors. To give it the look table, choose another profile

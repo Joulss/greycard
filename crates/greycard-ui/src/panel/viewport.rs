@@ -941,6 +941,7 @@ fn pick_through(
         &edit.curves.bake_with(&edit.grading),
         drawn_kind(st),
         edit.display_curve,
+        crate::panel::startup::profile_tone(st, edit).as_ref(),
         st.develop.drawn_guide.frame_range(),
     )
 }

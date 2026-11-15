@@ -653,7 +653,8 @@ pub fn render_framed(
         }
         None => image,
     };
-    let global = finish::Baked::global(edit, kind);
+    let global = finish::Baked::global(edit, kind)
+        .with_profile_tone(crate::profile_tone::ProfileTone::of(edit, loader));
     let stops = kind.baseline(&edit.light) + edit.light.exposure;
     let (sw, sh) = (source.0 as f32, source.1 as f32);
     let locals: Vec<finish::Local> = edit
@@ -710,10 +711,13 @@ pub fn render_framed(
     // the finish a branch a pixel.
     // A table fitted under another display curve is no look here, as
     // it is none in the viewport (`LookLut::look_under`).
+    // A table of ours is not laid over a camera profile's own curve
+    // (`look::over_profile_curve`), as the viewport does not lay it.
     let look = edit
         .look_lut
         .look_under(loader, edit.display_curve)
-        .filter(|l| !l.is_off());
+        .filter(|l| !l.is_off())
+        .filter(|l| global.profile_curve().is_none() || greycard_edit::look::over_profile_curve(l));
     // The plane is only read where a shift asks for it; the pixel's
     // own luminance is the same answer when none does, and skipping it
     // spares the finish a lookup a pixel. A plane with nothing in it
@@ -1135,6 +1139,100 @@ const SOFTWARE: &str = concat!("greycard ", env!("CARGO_PKG_VERSION"));
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// A synthetic camera profile with a tone curve, a look table fitted
+    /// under per channel, and a general one, by name.
+    struct Curved;
+
+    fn table(comment: &str) -> greycard_core::lut::Look {
+        // A 2-node table that swaps red and blue: plainly visible.
+        let cube = format!(
+            "{comment}LUT_3D_SIZE 2\n0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n"
+        );
+        let lut = greycard_core::lut::Lut3d::from_cube(&cube).unwrap();
+        greycard_core::lut::Look::new(std::sync::Arc::new(lut), 1.0).unwrap()
+    }
+
+    impl greycard_edit::Loader for Curved {
+        fn profile(&self, _: &str) -> Option<std::sync::Arc<greycard_core::color::Profile>> {
+            let bytes = greycard_core::testing::dcp::synthetic();
+            let dcp = greycard_core::dcp::Dcp::from_bytes(&bytes).unwrap();
+            Some(std::sync::Arc::new(dcp.profile().unwrap()))
+        }
+        fn look(
+            &self,
+            name: &str,
+            _: f32,
+            _: greycard_edit::DisplayCurve,
+        ) -> Option<greycard_core::lut::Look> {
+            Some(match name {
+                "Fitted" => table("# display_curve: channels\n"),
+                _ => table(""),
+            })
+        }
+    }
+
+    /// Under the profile's own tone curve a look of ours is skipped and
+    /// a general one still applies; off, the fitted one is back. The
+    /// stored choice is never touched.
+    #[test]
+    fn a_fitted_look_is_skipped_under_the_profiles_curve_and_back_after() {
+        use greycard_edit::camera::{Camera, ProfileChoice};
+        use greycard_edit::look::{LookLut, LutChoice};
+        let (w, h) = (6, 4);
+        let mut image = WorkingImage::new(w, h);
+        for (i, v) in image.data.iter_mut().enumerate() {
+            *v = 0.02 + (i % 7) as f32 * 0.04 + (i % 3) as f32 * 0.03;
+        }
+        let render_with = |curve: bool, look: Option<&str>| -> Vec<u16> {
+            let edit = greycard_edit::Edit {
+                camera: Camera {
+                    profile: ProfileChoice::Named("P".into()),
+                    look_table: true,
+                    tone_curve: curve,
+                },
+                look_lut: LookLut {
+                    lut: look.map_or(LutChoice::None, |n| LutChoice::Named(n.into())),
+                    strength: 1.0,
+                },
+                ..Default::default()
+            };
+            let settings = Settings {
+                format: Format::Tiff,
+                ..Settings::default()
+            };
+            let rendered = render(
+                &image,
+                &edit,
+                &Curved,
+                (w as u32, h as u32),
+                &settings,
+                &Default::default(),
+                1.0,
+                None,
+                finish::Source::SCENE,
+                None,
+                None,
+            );
+            match rendered.pixels {
+                Pixels::Sixteen(p) => p,
+                Pixels::Eight(p) => p.into_iter().map(u16::from).collect(),
+            }
+        };
+        let bare_on = render_with(true, None);
+        assert_ne!(bare_on, render_with(false, None), "the curve renders");
+        assert_eq!(
+            render_with(true, Some("Fitted")),
+            bare_on,
+            "fitted: skipped"
+        );
+        assert_ne!(render_with(true, Some("Film")), bare_on, "general: laid on");
+        assert_ne!(
+            render_with(false, Some("Fitted")),
+            render_with(false, None),
+            "switch off: the fitted look is back"
+        );
+    }
 
     #[test]
     fn the_sheets_size_names_a_long_edge() {

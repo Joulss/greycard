@@ -941,6 +941,18 @@ fn profile_row(name: &str, label: String, indented: bool) -> ProfileRow {
     }
 }
 
+/// Whether the profile the edit names is a DCP in the list that
+/// carries a tone curve.
+fn chosen_has_curve(st: &State) -> bool {
+    let greycard_edit::camera::ProfileChoice::Named(name) = &st.develop.edit.camera.profile else {
+        return false;
+    };
+    st.develop
+        .profiles
+        .iter()
+        .any(|e| &e.name == name && e.tone_curve)
+}
+
 /// What the CAMERA PROFILE section lists for the open file: the
 /// file's own calibrations first, then the profiles in the profile
 /// directory that were made for this camera, one row a profile however
@@ -1043,6 +1055,15 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
     app.set_camera_profile_rows(ModelRc::new(VecModel::from(rows)));
     app.set_camera_profiles_any(!st.develop.profiles.is_empty());
     app.set_camera_profile(chosen.into());
+    // The tone curve's switch, for a profile that carries one.
+    app.set_camera_profile_has_curve(
+        !embedded
+            && st
+                .develop
+                .profiles
+                .iter()
+                .any(|e| e.name == chosen && e.tone_curve),
+    );
     app.set_camera_profile_note(
         match (st.develop.profiles.len(), hidden) {
             (0, _) => match greycard_edit_io::profiles::store_dir() {
@@ -1098,6 +1119,10 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
         curve,
         open: &st.develop.look_groups_open,
     };
+    // Under the profile's own tone curve a look of ours is skipped
+    // (`look::over_profile_curve`): its row is dimmed as one with no
+    // table for the curve is, and no line asks for a refit.
+    let profile_curve = app.get_camera_tone_curve() && app.get_camera_profile_has_curve();
     let rows: Vec<LookRow> = greycard_edit::look::grouped(&st.develop.looks, listing)
         .into_iter()
         .map(|r| match r {
@@ -1126,10 +1151,12 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
                 indented,
             } => LookRow {
                 heading: false,
+                off: off
+                    || (profile_curve
+                        && greycard_edit::look::fitted(&st.develop.looks, &name, curve)),
                 name: name.into(),
                 label: label.into(),
                 note: curves.into(),
-                off,
                 folded: false,
                 own: false,
                 indented,
@@ -1142,7 +1169,9 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
     // No table for the picture's curve, or one an earlier fit wrote:
     // either way the line over the Refit button, which opens the
     // camera match's sheet on the look's group.
-    let (mismatch, refit) =
+    let (mismatch, refit) = if profile_curve {
+        (String::new(), String::new())
+    } else {
         match greycard_edit::look::mismatch(&st.develop.looks, chosen_name, curve) {
             Some((text, true)) => (text, tr!("Refit under {curve}...", curve = curve.phrase())),
             Some((text, false)) => (text, String::new()),
@@ -1154,7 +1183,8 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
             )
             .map(|text| (text, tr!("Refit...")))
             .unwrap_or_default(),
-        };
+        }
+    };
     app.set_look_mismatch(mismatch.into());
     app.set_look_refit(refit.into());
     app.set_look_name(chosen_name.into());
@@ -1380,6 +1410,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let mut st = state.borrow_mut();
             st.develop.profiles = greycard_edit_io::profiles::list();
+            st.develop.profile_tone_for = None;
             show_profiles(&st, &st.develop.edit.camera.profile, &app);
             // A profile put there by hand is the edits' that name it.
             crate::edited::looks_moved(&mut st);
@@ -1395,6 +1426,13 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let mut st = state.borrow_mut();
             st.develop.edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            // The tone curve's switch is off for a profile with no curve
+            // (or one not in the list): kept, it would be written and
+            // change the develop key without changing a pixel, and come
+            // back unasked with the next profile that has one.
+            if !chosen_has_curve(&st) {
+                st.develop.edit.camera.tone_curve = false;
+            }
             // Another camera's profile is the user's to choose, and is
             // applied as any is; the log says so.
             if let greycard_edit::camera::ProfileChoice::Named(name) =
@@ -1410,6 +1448,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 );
             }
             show_profiles(&st, &st.develop.edit.camera.profile, &app);
+            app.set_camera_tone_curve(st.develop.edit.camera.tone_curve);
             develop_soon(&mut st, state.clone(), worker.clone(), app.as_weak());
         });
     }
@@ -3216,6 +3255,7 @@ mod tests {
             unique_camera_model: camera.map(str::to_string),
             copyright: None,
             same_as: None,
+            tone_curve: false,
         }
     }
 
@@ -3270,6 +3310,168 @@ mod tests {
         );
         crate::testing::settle(&app);
         (app, state, worker)
+    }
+
+    /// The Profile tone curve switch shows for a chosen profile that
+    /// carries a curve and for no other, the edit reads it, and it goes
+    /// off when a profile without a curve is chosen.
+    #[test]
+    fn the_tone_curve_switch_shows_for_a_profile_with_a_curve() {
+        let (app, state, _worker) = profile_window();
+        let (with, without) = (
+            "Camera/Canon EOS 850D/Camera Standard",
+            "Camera/Canon EOS Rebel T8i/Adobe Standard",
+        );
+        for e in state.borrow_mut().develop.profiles.iter_mut() {
+            e.tone_curve = e.name == with;
+        }
+        assert!(!app.get_camera_profile_has_curve(), "the file's own");
+        app.set_camera_profile(with.into());
+        app.invoke_camera_profile_picked();
+        assert!(app.get_camera_profile_has_curve());
+        app.set_camera_tone_curve(true);
+        let edit = read_edit(&app, &state.borrow().develop.edit, None);
+        assert!(edit.camera.wants_tone_curve());
+        // A switch left on where the profile has no curve is not read.
+        app.set_camera_profile_has_curve(false);
+        let flat = read_edit(&app, &state.borrow().develop.edit, None);
+        assert!(!flat.camera.tone_curve, "no curve, no switch");
+        app.set_camera_profile_has_curve(true);
+        state.borrow_mut().develop.edit = edit;
+        app.set_camera_profile(without.into());
+        app.invoke_camera_profile_picked();
+        assert!(!app.get_camera_profile_has_curve());
+        // Off with a profile that has no curve, in the edit and on the
+        // panel: not written, and not back unasked.
+        assert!(!state.borrow().develop.edit.camera.tone_curve, "off");
+        assert!(!app.get_camera_tone_curve());
+        let written = serde_json::to_string(&state.borrow().develop.edit.camera).unwrap();
+        assert!(!written.contains("tone_curve"), "{written}");
+        app.set_camera_profile(with.into());
+        app.invoke_camera_profile_picked();
+        assert!(app.get_camera_profile_has_curve());
+        assert!(!state.borrow().develop.edit.camera.tone_curve, "not back");
+    }
+
+    /// Under the profile's own curve the look list dims a look whose
+    /// table for the picture's curve is fitted, leaves a general one
+    /// lit, and asks for no refit; with the switch off the fitted
+    /// look is lit and a look with no table for the curve asks again.
+    #[test]
+    fn the_look_list_sets_a_fitted_look_aside_under_the_profiles_curve() {
+        use greycard_edit::DisplayCurve;
+        use greycard_edit::look::{Entry, LookLut, LutChoice};
+        let (app, state, _worker) = profile_window();
+        let with = "Camera/Canon EOS 850D/Camera Standard";
+        for e in state.borrow_mut().develop.profiles.iter_mut() {
+            e.tone_curve = e.name == with;
+        }
+        app.set_camera_profile(with.into());
+        app.invoke_camera_profile_picked();
+        app.set_display_curve("Per channel".into());
+        let entry = |name: &str, variant: Option<DisplayCurve>, curve: Option<&str>| Entry {
+            name: name.into(),
+            variant,
+            path: std::path::PathBuf::from(format!("/nowhere/{name}.cube")),
+            title: None,
+            size: 33,
+            kind: greycard_core::lut::Kind::Cube3d,
+            encoding: Default::default(),
+            primaries: Default::default(),
+            comments: curve
+                .map(|c| vec![format!("display_curve: {c}")])
+                .unwrap_or_default(),
+        };
+        // Fitted by the camera match under AgX alone: no table for per
+        // channel, and a refit asked for under ours.
+        let mut elsewhere = entry("Elsewhere", Some(DisplayCurve::Agx), Some("agx"));
+        elsewhere
+            .comments
+            .push(greycard_edit::look::FITTED.to_string());
+        state.borrow_mut().develop.looks = vec![
+            entry("Fitted", None, Some("channels")),
+            entry("Slide", None, None),
+            elsewhere,
+        ];
+        let rows = |chosen: &str, on: bool| {
+            app.set_camera_tone_curve(on);
+            let look = LookLut {
+                lut: LutChoice::Named(chosen.into()),
+                strength: 1.0,
+            };
+            show_looks(&state.borrow(), &look, &app);
+            let off = |name: &str| {
+                app.get_look_rows()
+                    .iter()
+                    .find(|r| !r.heading && r.name == name)
+                    .map(|r| r.off)
+                    .unwrap_or_else(|| panic!("no row {name}"))
+            };
+            (
+                off("Fitted"),
+                off("Slide"),
+                app.get_look_refit().to_string(),
+            )
+        };
+        let (fitted, slide, _) = rows("Fitted", true);
+        assert!(fitted && !slide, "under the profile's curve");
+        let (fitted, slide, _) = rows("Fitted", false);
+        assert!(!fitted && !slide, "under ours");
+        assert!(!rows("Elsewhere", false).2.is_empty(), "a refit asked");
+        assert!(rows("Elsewhere", true).2.is_empty(), "no refit asked");
+    }
+
+    /// Under the profile's own curve the display curve's choice is
+    /// dimmed and takes no click and no key; what it says is kept, and
+    /// with the switch off it takes a click again.
+    #[test]
+    fn the_display_curve_is_inert_under_the_profiles_curve() {
+        use i_slint_backend_testing::ElementHandle;
+        let (app, state, _worker) = profile_window();
+        let with = "Camera/Canon EOS 850D/Camera Standard";
+        for e in state.borrow_mut().develop.profiles.iter_mut() {
+            e.tone_curve = e.name == with;
+        }
+        app.set_camera_profile(with.into());
+        app.invoke_camera_profile_picked();
+        assert!(app.get_camera_profile_has_curve());
+        app.set_display_curve("AgX".into());
+        app.set_camera_tone_curve(true);
+        // CAMERA PROFILE folded again, LIGHT open, the window tall
+        // enough for it.
+        app.set_collapsed_camera(true);
+        app.set_collapsed_light(false);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 2400.0));
+        crate::testing::settle(&app);
+        // A click on Per channel, the first of the choice's two equal
+        // halves.
+        let per_channel = || {
+            crate::testing::settle(&app);
+            let choice =
+                ElementHandle::find_by_element_id(&app, "LightSection::display-curve-choice")
+                    .next()
+                    .expect("the display curve's choice is drawn");
+            let (at, size) = (choice.absolute_position(), choice.size());
+            crate::testing::click(&app, at.x + size.width / 4.0, at.y + size.height / 2.0);
+        };
+        per_channel();
+        // Space and Enter (Tab is the window's: it hides the panes).
+        for key in [" ", "\n"] {
+            crate::testing::press(&app, key);
+        }
+        for key in [
+            slint::platform::Key::LeftArrow,
+            slint::platform::Key::RightArrow,
+        ] {
+            crate::testing::press(&app, key);
+        }
+        assert_eq!(app.get_display_curve(), "AgX", "inert");
+        let edit = read_edit(&app, &state.borrow().develop.edit, None);
+        assert_eq!(edit.display_curve, greycard_edit::DisplayCurve::Agx, "kept");
+        app.set_camera_tone_curve(false);
+        per_channel();
+        assert_eq!(app.get_display_curve(), "Per channel", "live again");
     }
 
     /// A click on the switch at the profile list's foot, the panel
@@ -3450,6 +3652,7 @@ mod tests {
             unique_camera_model: Some(camera.into()),
             copyright: None,
             same_as: same_as.map(str::to_string),
+            tone_curve: false,
         }
     }
 

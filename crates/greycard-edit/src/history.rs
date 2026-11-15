@@ -191,7 +191,9 @@ fn changes(b: &Edit, a: &Edit) -> Vec<String> {
     if b.demosaic != a.demosaic {
         out.push("Demosaic".to_string());
     }
-    if b.camera != a.camera {
+    if b.camera.profile == a.camera.profile && b.camera.tone_curve != a.camera.tone_curve {
+        out.push(switched("Profile tone curve", a.camera.tone_curve));
+    } else if b.camera != a.camera {
         out.push(match &a.camera.profile {
             crate::camera::ProfileChoice::Embedded => "Camera profile embedded".to_string(),
             crate::camera::ProfileChoice::Named(name) => format!("Camera profile {name}"),
@@ -793,6 +795,23 @@ mod tests {
             taken: 0,
             edit: edit.clone(),
         }
+    }
+
+    /// The tone curve's switch is named on its own when the profile
+    /// stays; a profile chosen is named by the profile, the switch with
+    /// it or not.
+    #[test]
+    fn the_profiles_tone_curve_switch_is_named() {
+        use crate::camera::ProfileChoice;
+        let mut base = Edit::default();
+        base.camera.choose(ProfileChoice::Named("Natural".into()));
+        let mut on = base.clone();
+        on.camera.tone_curve = true;
+        assert_eq!(describe(&base, &on, &[]), "Profile tone curve on");
+        assert_eq!(describe(&on, &base, &[]), "Profile tone curve off");
+        let mut other = on.clone();
+        other.camera.choose(ProfileChoice::Named("Vivid".into()));
+        assert_eq!(describe(&on, &other, &[]), "Camera profile Vivid");
     }
 
     #[test]

@@ -3,12 +3,13 @@
 //! demosaic. A phone corrects its lens shading with them, one map a
 //! color of the mosaic.
 //!
-//! The interpolation follows the DNG specification and Adobe's DNG SDK
-//! (`dng_gain_map`): each pixel's center placed in relative coordinates
-//! over the whole image the list runs on, bilinear between the map's
-//! points, and held at the edge points past them. The product is held
-//! at 1, the white, as the SDK holds it, so a sample the sensor clipped
-//! is still clipped after its gain and the highlight pass still sees it.
+//! The interpolation follows the DNG specification's `GainMap`: each
+//! pixel's center placed in relative coordinates over the whole image
+//! the list runs on, bilinear between the map's points, and held at the
+//! edge points past them. The product is held at 1, the white (our
+//! choice), so a sample the sensor clipped is still clipped after its
+//! gain and the highlight pass still sees it. Written from the
+//! specification.
 
 use rayon::prelude::*;
 
@@ -85,7 +86,7 @@ fn apply_one(
             let rel = (r as f64 + 0.5) / at.image_height as f64;
             let v = Axis::at(rel, map.origin_v, map.spacing_v, map.points_v);
             for plane in planes.clone() {
-                // The SDK's choice: a plane past the map's takes its last.
+                // Our choice: a plane past the map's takes its last.
                 let mp = plane.min(map.map_planes as usize - 1);
                 for &(x, h) in &columns {
                     let gain = lerp(

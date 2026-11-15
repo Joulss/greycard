@@ -124,6 +124,13 @@ pub fn check(bytes: &[u8]) {
     assert_eq!(info.unique_camera_model, dcp.unique_camera_model);
     assert_eq!(info.copyright, dcp.copyright);
     assert_eq!(info.embed_policy, dcp.embed_policy);
+    assert_eq!(
+        info.tone_curve,
+        dcp.tone_curve
+            .as_deref()
+            .and_then(crate::tone_curve::ToneCurve::new)
+            .is_some()
+    );
 
     let maps = || {
         std::iter::once(&dcp.primary)
@@ -203,6 +210,23 @@ pub fn check(bytes: &[u8]) {
         for stops in STOPS {
             let stage = MapStage::look((**look).clone(), stops).expect("a look stage");
             stage_holds(&stage, &format!("the look table at {stops} stops"));
+        }
+    }
+    // The tone curve, read wherever a pixel may put it: a finite value
+    // in 0..1, its table and its white too.
+    if let Some(curve) = &profile.tone_curve {
+        assert!(curve.table().iter().all(|v| (0.0..=1.0).contains(v)));
+        let [x, y] = curve.white();
+        assert!((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y));
+        for v in
+            PIXELS
+                .iter()
+                .flatten()
+                .copied()
+                .chain([0.0, 0.5, 1.0, f32::NAN, f32::INFINITY, -1.0])
+        {
+            let out = curve.at(v);
+            assert!((0.0..=1.0).contains(&out), "the tone curve at {v} is {out}");
         }
     }
 }

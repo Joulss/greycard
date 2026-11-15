@@ -153,6 +153,9 @@ pub struct View {
     pub source: Source,
     /// The display curve per channel or AgX, for a scene.
     pub display_curve: greycard_edit::DisplayCurve,
+    /// The camera profile's own tone curve in the display curve's
+    /// place, for a scene (`greycard_render::profile_tone`).
+    pub profile_tone: Option<greycard_render::profile_tone::ProfileTone>,
     /// Quarter turns clockwise the frame has been turned since the
     /// picture on the GPU was developed: the view is of the turned
     /// source, and the shader reads the texture through the turn, so
@@ -222,6 +225,7 @@ impl View {
             canvas: [0.0; 3],
             source: Source::SCENE,
             display_curve: greycard_edit::DisplayCurve::Channels,
+            profile_tone: None,
             source_turn: 0,
         }
     }
@@ -453,6 +457,17 @@ impl Renderer {
                 },
                 gpu::BindGroupLayoutEntry {
                     binding: 8,
+                    visibility: gpu::ShaderStages::FRAGMENT,
+                    ty: gpu::BindingType::Buffer {
+                        ty: gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // The camera profile's tone curve, as its table.
+                gpu::BindGroupLayoutEntry {
+                    binding: 17,
                     visibility: gpu::ShaderStages::FRAGMENT,
                     ty: gpu::BindingType::Buffer {
                         ty: gpu::BufferBindingType::Storage { read_only: true },

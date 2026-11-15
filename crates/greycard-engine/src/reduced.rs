@@ -379,15 +379,38 @@ fn walk_reduced(
 /// before anything is decoded, since a picture without it is not kept.
 pub fn look_ready(edit: &Edit) -> Result<(), Why> {
     if let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut
-        && edit.look_lut.strength > 0.0
-        && edit
-            .look_lut
-            .look_under(&greycard_edit_io::Stores::user(), edit.display_curve)
-            .is_none()
+        && look_missing(edit, &greycard_edit_io::Stores::user())
     {
         return Err(Why::Without(vec![format!("the look {name}")]));
     }
     Ok(())
+}
+
+/// Whether the look the edit names is wanted and cannot be had from
+/// `stores`: no table for the picture's display curve, or not in the
+/// directory at all. Under a camera profile's own tone curve
+/// (`ProfileTone::of`) a look that is there is never missing: a table
+/// for the curve is laid on or set aside by the render, and a look with
+/// none has only tables made for other curves of ours, which the
+/// profile's curve sets aside too (`look::over_profile_curve`). Only a
+/// look not in the directory is missing then.
+pub(crate) fn look_missing(edit: &Edit, stores: &greycard_edit_io::Stores) -> bool {
+    if !matches!(edit.look_lut.lut, greycard_edit::look::LutChoice::Named(_))
+        || edit.look_lut.strength <= 0.0
+        || edit
+            .look_lut
+            .look_under(stores, edit.display_curve)
+            .is_some()
+    {
+        return false;
+    }
+    let there = || {
+        stores
+            .looks
+            .as_deref()
+            .is_some_and(|dir| greycard_edit_io::looks::is_there_in(dir, &edit.look_lut))
+    };
+    !(greycard_render::profile_tone::ProfileTone::of(edit, stores).is_some() && there())
 }
 
 /// Whether every learned mask `edit` draws on the frame at `path` can be
@@ -889,6 +912,55 @@ impl Reducer {
 
 #[cfg(test)]
 mod tests {
+    /// A look whose tables are all made for another display curve of
+    /// ours is set aside under a camera profile's own tone curve, not
+    /// missing: the export does not report it and the reduced develop
+    /// keeps its pictures. Without the switch it is missing, and a look
+    /// not in the directory is missing either way.
+    #[test]
+    fn a_look_set_aside_under_the_profiles_curve_is_not_missing() {
+        use greycard_edit::camera::ProfileChoice;
+        use greycard_edit::look::{LookLut, LutChoice};
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-look-missing-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let (profiles, looks) = (dir.join("profiles"), dir.join("looks"));
+        std::fs::create_dir_all(&profiles).unwrap();
+        std::fs::create_dir_all(&looks).unwrap();
+        std::fs::write(
+            profiles.join("Curved.dcp"),
+            greycard_core::testing::dcp::synthetic(),
+        )
+        .unwrap();
+        // Fitted under AgX only: no table for per channel.
+        std::fs::write(
+            looks.join("Fitted.agx.cube"),
+            "# display_curve: agx\nLUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+        )
+        .unwrap();
+        let stores = greycard_edit_io::Stores {
+            profiles: Some(profiles),
+            looks: Some(looks),
+        };
+        let mut edit = Edit::default();
+        edit.camera.choose(ProfileChoice::Named("Curved".into()));
+        edit.look_lut = LookLut {
+            lut: LutChoice::Named("Fitted".into()),
+            strength: 1.0,
+        };
+        assert!(look_missing(&edit, &stores), "no table for per channel");
+        edit.camera.tone_curve = true;
+        assert!(!look_missing(&edit, &stores), "set aside");
+        edit.look_lut.lut = LutChoice::Named("Gone".into());
+        assert!(look_missing(&edit, &stores), "not in the directory");
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     /// A reducer makes no threads until its first develop: a suite of
     /// a thousand tests makes a worker, and so a reducer, in each.
     #[test]

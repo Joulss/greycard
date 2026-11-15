@@ -27,6 +27,22 @@ pub const WORKING_SPACE: RgbSpace = RgbSpace::REC2020;
 /// ICC v4 and Adobe use, so results line up with existing profiles.
 pub const CAT: Cat = Cat::Bradford;
 
+/// The working space to linear ProPhoto and back, rows, through
+/// [`CAT`]: where DNG reads a profile's maps, look table, and tone
+/// curve. A neutral stays neutral both ways.
+pub fn prophoto_matrices() -> ([[f32; 3]; 3], [[f32; 3]; 3]) {
+    let rows = |from: &RgbSpace, to: &RgbSpace| {
+        from.to_space_matrix(to, CAT)
+            .expect("the working space and ProPhoto reach each other")
+            .rows
+            .map(|row| row.map(|v| v as f32))
+    };
+    (
+        rows(&WORKING_SPACE, &RgbSpace::PROPHOTO),
+        rows(&RgbSpace::PROPHOTO, &WORKING_SPACE),
+    )
+}
+
 /// How to choose the scene white.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WhitePoint {
@@ -128,6 +144,10 @@ pub struct Profile {
     /// illuminant. Applied after the map unless the develop says not
     /// to ([`crate::develop::DevelopSettings::profile_look`]).
     pub look: Option<Arc<LookTable>>,
+    /// The tone curve, when a DCP brought one Adobe would render with.
+    /// Applied by nothing here: a consumer may render with it in place
+    /// of its own display curve.
+    pub tone_curve: Option<Arc<crate::tone_curve::ToneCurve>>,
 }
 
 impl Profile {
@@ -147,6 +167,7 @@ impl Profile {
             baseline_exposure_offset: None,
             maps: None,
             look: None,
+            tone_curve: None,
         }
     }
 

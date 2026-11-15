@@ -4,15 +4,13 @@
 //!
 //! Each output pixel is mapped to where the picture as taken has it and
 //! read there, bilinear between the four samples around it. The mapping
-//! is the specification's formula as Adobe's DNG SDK reads it
-//! (`dng_filter_warp`), with no SDK code: pixels at their whole
-//! coordinates in the image the list runs on (the active area), the
-//! center at its relative position over that image's bounds, the radius
-//! relative to the farthest corner and held at 1, the read held to the
-//! picture's edge. Consecutive warps are one map, each pixel traced
-//! back through every warp and read once, where the SDK resamples after
-//! each; it resamples bicubic, and bilinear is our choice, as the lens
-//! correction's is.
+//! is the specification's `WarpRectilinear` formula, read as: pixels at
+//! their whole coordinates in the image the list runs on (the active
+//! area), the center at its relative position over that image's bounds,
+//! the radius relative to the farthest corner and held at 1, the read
+//! held to the picture's edge. Consecutive warps are one map, each pixel
+//! traced back through every warp and read once; bilinear is our
+//! choice, as the lens correction's is.
 
 use rayon::prelude::*;
 
@@ -300,10 +298,10 @@ mod tests {
         assert_eq!(g.source(0.0, 0.0, &plane, true), (2.0, 1.5));
     }
 
-    /// The tangential terms as the SDK writes them: kt1 moves along x by
-    /// r^2 + 2 dx^2, kt0 along y by r^2 + 2 dy^2.
+    /// The tangential terms as the specification's formula has them:
+    /// kt1 moves along x by r^2 + 2 dx^2, kt0 along y by r^2 + 2 dy^2.
     #[test]
-    fn the_tangential_terms_follow_the_sdk() {
+    fn the_tangential_terms_move_along_their_own_axes() {
         let (w, h) = (8, 6);
         let mut plane = WarpPlane::identity();
         plane.tangential = [0.0, 0.1];
