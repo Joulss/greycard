@@ -1358,6 +1358,41 @@ mod tests {
     use super::*;
     use crate::testing::window;
 
+    /// The profiled Strength slider runs over the edit crate's range,
+    /// and a value at its new low end goes into the edit as it is.
+    #[test]
+    fn the_profiled_strength_slider_runs_over_the_edit_s_range() {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(greycard_slint::PANEL_DIR).join("edit.slint"),
+        )
+        .unwrap();
+        let slider = text
+            .split("EditSlider {")
+            .find(|s| s.contains("label: @tr(\"Strength\");") && s.contains("denoise-strength"))
+            .expect("the profiled Strength slider");
+        let field = |name: &str| -> f32 {
+            let at = slider.find(&format!("{name}: ")).expect(name) + name.len() + 2;
+            slider[at..]
+                .split(';')
+                .next()
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap()
+        };
+        assert_eq!(field("minimum"), greycard_edit::Noise::STRENGTH_MIN);
+        assert_eq!(field("maximum"), greycard_edit::Noise::STRENGTH_MAX);
+
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let mut edit = state.borrow().develop.edit.clone();
+        edit.noise.strength = 0.1;
+        show_edit(&state.borrow(), &edit, &app, Some(0));
+        assert_eq!(app.get_denoise_strength(), 0.1);
+        assert_eq!(read_edit(&app, &edit, Some(0)).noise.strength, 0.1);
+    }
+
     /// The learned blend's chroma slider has one name on both sides,
     /// and the slider reads and writes the edit's field.
     #[test]

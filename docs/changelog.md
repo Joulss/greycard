@@ -102,6 +102,9 @@ design note behind it.
   ORF's Picture Mode as its style. Thanks to the tester who shot the
   five modes (issue 139,
   [§656](https://github.com/jessolmstead/greycard/blob/master/docs/notes/656-olympus-and-om-system-styles.md)).
+- The profiled denoise's Strength goes down to 0.1, for a lighter
+  touch than the old minimum of 0.5
+  ([§691](https://github.com/jessolmstead/greycard/blob/master/docs/notes/691-the-profiled-denoises-strength-from-0-1.md)).
 - Midtones, a slider in Light and a mask's Light, lifts or sinks the
   middle tones and leaves the blacks and brightest tones in place
   ([§644](https://github.com/jessolmstead/greycard/blob/master/docs/notes/644-midtones.md),

@@ -1648,6 +1648,42 @@ mod tests {
         e / n as f32
     }
 
+    /// The panel's Strength from its lowest, 0.1, up past its default:
+    /// every step down leaves more noise in the flat half and moves
+    /// the textured half less, so the low end is a gentler denoise and
+    /// not a cliff; and 0.1 is finite and still does something.
+    #[test]
+    fn a_lower_strength_denoises_less() {
+        let (w, h) = (192, 128);
+        let model = NoiseModel {
+            a: [6e-4; 3],
+            b: [1e-5; 3],
+        };
+        let (truth, noisy) = noisy_scene(w, h, &model, 5);
+        let at: Vec<(f32, f32, f32)> = [0.1f32, 0.25, 0.5, 1.0, 1.5]
+            .into_iter()
+            .map(|s| {
+                let mut out = noisy.clone();
+                let options = DenoiseOptions {
+                    strength: Strength::Fixed(s),
+                    ..DenoiseOptions::default()
+                };
+                denoise_profiled(&mut out, w, h, &model, &options).unwrap();
+                assert!(out.iter().all(|v| v.is_finite()), "strength {s}");
+                let left = mse(&out, &truth, w, h, 8, w / 2 - 8);
+                let moved = mse(&out, &noisy, w, h, w / 2 + 8, w - 8);
+                (s, left, moved)
+            })
+            .collect();
+        let input = mse(&noisy, &truth, w, h, 8, w / 2 - 8);
+        assert!(at[0].1 < input, "0.1 leaves the noise as it was: {at:?}");
+        for pair in at.windows(2) {
+            let ((s0, left0, moved0), (s1, left1, moved1)) = (pair[0], pair[1]);
+            assert!(left1 < left0, "{s1} leaves no less than {s0}: {at:?}");
+            assert!(moved1 > moved0, "{s1} moves no more than {s0}: {at:?}");
+        }
+    }
+
     #[test]
     fn removes_the_noise_from_flat_areas_and_improves_the_rest() {
         let (w, h) = (192, 128);

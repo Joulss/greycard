@@ -475,7 +475,7 @@ The learned denoiser also does the demosaic (see
 ### The profiled denoiser
 
 **Denoise** turns it on. It is off by default. **Strength** goes from
-0.5 to 3, with 1.5 as the default. It is quicker than the learned
+0.1 to 3, with 1.5 as the default. It is quicker than the learned
 denoiser.
 
 ## Lens

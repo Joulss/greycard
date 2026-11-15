@@ -390,6 +390,14 @@ impl Default for Noise {
 }
 
 impl Noise {
+    /// The profiled denoiser's Strength, as the panel's slider runs
+    /// (`edit.slint`, held to these by a test there): 0.1 for a light
+    /// touch, since from 0.5 the means already take two thirds of the
+    /// fine grain, up to 3. Not clamped on reading: a stored value
+    /// renders as written.
+    pub const STRENGTH_MIN: f32 = 0.1;
+    pub const STRENGTH_MAX: f32 = 3.0;
+
     /// The learned tier that runs: the edit's, with the section on.
     pub fn tier(&self) -> Option<&'static str> {
         if self.enabled {

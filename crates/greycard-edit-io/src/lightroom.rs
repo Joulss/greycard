@@ -930,7 +930,7 @@ fn map(
         sections.push(Section::Noise);
         edit.noise.profiled = l > 0.0;
         if l > 0.0 {
-            edit.noise.strength = (l / 100.0 * 2.0).clamp(0.4, 2.0);
+            edit.noise.strength = (l / 100.0 * 2.0).clamp(greycard_edit::Noise::STRENGTH_MIN, 2.0);
         }
     }
 
@@ -1257,6 +1257,25 @@ mod tests {
         assert_eq!(e.geometry, greycard_edit::Geometry::default());
         // And it writes and reads as a preset of this engine's.
         assert_eq!(Preset::from_json(&preset.to_json()).unwrap(), preset);
+    }
+
+    /// A light Luminance comes in as a light Strength, down to the
+    /// slider's lowest, rather than floored where the slider once began.
+    #[test]
+    fn a_light_luminance_smoothing_is_a_light_strength() {
+        for (l, want) in [("10", 0.2f32), ("2", greycard_edit::Noise::STRENGTH_MIN)] {
+            let xml = SAMPLE.replace(
+                "crs:LuminanceSmoothing=\"25\"",
+                &format!("crs:LuminanceSmoothing=\"{l}\""),
+            );
+            let e = read(&xml, "file").unwrap().preset.edit;
+            assert!(e.noise.profiled);
+            assert!(
+                (e.noise.strength - want).abs() < 1e-6,
+                "{l}: {}",
+                e.noise.strength
+            );
+        }
     }
 
     #[test]
