@@ -437,6 +437,11 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       fp16 untried), the phrase and its vector kept in the sidecar,
       and "not found" under the cut (§252: phrases for things absent
       topped out at 0.31). After the parts
+- [ ] People: several parts asked at once. The menu's parts as
+      checks with one button to make them, the person picked once,
+      each part still its own shape in the one mask so it can be
+      switched off or removed after; today each part is a trip
+      through the menu and, on a group, another click on the person
 - [ ] People: Hair and the other whole-route parts with an edge as fine
       as Whole person's (§279): Subject's matte cut by the part's
       neighbors (face, skin, top) as the kept cells, or a matte of the
