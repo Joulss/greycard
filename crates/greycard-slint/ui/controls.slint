@@ -490,15 +490,17 @@ export component Section inherits VerticalLayout {
     }
     spacing: root.boxed ? 0px : 6px;
     padding-top: root.boxed ? 0px : Theme.space-1;
-    // The header. Boxed, it stays above the body as it folds away,
-    // and the whole row takes the press and lights under the pointer:
-    // the hover's fill, as a button's, not the accent, which is what
-    // is chosen. Unboxed, with a hairline along the section's top, in
-    // the padding above it: a run of folded sections reads as a list
-    // of headers. Drawn outside the header's box, so it takes no room.
+    // The header, in one look in both panes, boxed or not: chevron,
+    // icon, and title in `Theme.text`, and under the pointer the
+    // hover's fill, as a button's, not the accent, which is what is
+    // chosen. Boxed, it stays above the body as it folds away, and the
+    // whole row takes the press. Unboxed, with a hairline along the
+    // section's top, in the padding above it: a run of folded sections
+    // reads as a list of headers. Drawn outside the header's box, so it
+    // takes no room.
     Rectangle {
         border-radius: Theme.radius-sm;
-        background: root.boxed && root.lit ? Theme.hover : transparent;
+        background: root.lit ? Theme.hover : transparent;
         animate background { duration: Theme.quick; }
         row := TouchArea {
             enabled: root.boxed;
@@ -523,7 +525,7 @@ export component Section inherits VerticalLayout {
                     alignment: start;
                     Image {
                         source: @image-url("icons/chevron-down.svg");
-                        colorize: root.boxed || root.lit ? Theme.text : Theme.text-muted;
+                        colorize: Theme.text;
                         width: Theme.icon;
                         height: Theme.icon;
                         y: (parent.height - self.height) / 2;
@@ -532,14 +534,14 @@ export component Section inherits VerticalLayout {
                     }
                     if root.icon.width > 0: Image {
                         source: root.icon;
-                        colorize: root.boxed ? Theme.text : Theme.text-secondary;
+                        colorize: Theme.text;
                         width: Theme.icon;
                         height: Theme.icon;
                         y: (parent.height - self.height) / 2;
                     }
                     if root.owner != "": Text {
                         text: root.owner;
-                        color: root.boxed || root.lit ? Theme.text : Theme.text-secondary;
+                        color: Theme.text;
                         font-size: Theme.font-xs;
                         font-weight: Theme.weight-semibold;
                         vertical-alignment: center;
@@ -547,7 +549,7 @@ export component Section inherits VerticalLayout {
                     }
                     Text {
                         text: (root.owner == "" ? "" : "\u{00b7}  ") + root.title;
-                        color: root.boxed || root.lit ? Theme.text : Theme.text-secondary;
+                        color: Theme.text;
                         font-size: Theme.font-xs;
                         font-weight: Theme.weight-semibold;
                         letter-spacing: 0.8px;

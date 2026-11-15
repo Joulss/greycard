@@ -307,9 +307,6 @@ the reasoning lives in `docs/notes.md`.
       today (§602, 2026-11-07; wanted 2026-11-14). A picture carries
       no noise model, so one is measured from its own flat areas,
       after the camera's tone curve and its own smoothing
-- [ ] Section titles in one color in both panes: the left pane's and
-      the right's differ since the panes were restyled (PR 138's
-      follow-up, 2026-11-15; a contributor has offered)
 - [ ] The left pane's gaps as a drag that wins: today a drag moves
       room only between a list cut short and one grown past its floor,
       so on a window where every list fits no gap is live (§603). The

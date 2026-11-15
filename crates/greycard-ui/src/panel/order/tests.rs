@@ -1449,3 +1449,229 @@ fn the_windows_release_hook_never_takes_a_drop() {
     let light = order.iter().position(|n| n == "light").unwrap();
     assert!(look > light, "LOOK dropped under LIGHT: {order:?}");
 }
+
+/// Every view's section headers, both panes, in each theme at scales 1
+/// and 2, drawn by Slint's software renderer: Library, the Loupe with
+/// Develop, the Masks tab with a mask, Crop, Retouch, and Cull, each at
+/// rest, and at scale 1 a header of each pane under the pointer and
+/// folded too. Beside each picture, the place and size of every title
+/// and 16 px icon, and at scale 1 the ink and ground of each, read from
+/// the pixels. Run with `GREYCARD_SECTION_CAPTURES=DIR` and
+/// `--ignored`.
+#[test]
+#[ignore]
+fn capture_the_section_headers() {
+    use std::fmt::Write as _;
+    let Some(dir) = std::env::var_os("GREYCARD_SECTION_CAPTURES") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let _scratch = Scratch::new("capture");
+    crate::testing::drawing_backend();
+    let app = window(3);
+    install(&app);
+    let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+    app.invoke_new_mask();
+    let (w, h) = (1500.0f32, 1000.0f32);
+    let shot = |app: &App| {
+        let s = app.window().take_snapshot().expect("a drawing backend");
+        image::RgbaImage::from_raw(s.width(), s.height(), s.as_bytes().to_vec()).unwrap()
+    };
+    let hex = |p: [u8; 3]| format!("#{:02x}{:02x}{:02x}", p[0], p[1], p[2]);
+    // The ground of a box (its commonest pixel) and its ink (the
+    // pixel furthest from that).
+    let read = |img: &image::RgbaImage, scale: f32, x: f32, y: f32, bw: f32, bh: f32| {
+        let px = |v: f32| (v * scale).max(0.0).round() as u32;
+        let (x0, y0) = (px(x), px(y));
+        let (x1, y1) = (px(x + bw).min(img.width()), px(y + bh).min(img.height()));
+        let mut counts = std::collections::HashMap::<[u8; 3], usize>::new();
+        for yy in y0..y1 {
+            for xx in x0..x1 {
+                let p = img.get_pixel(xx, yy);
+                *counts.entry([p[0], p[1], p[2]]).or_default() += 1;
+            }
+        }
+        let ground = counts.iter().max_by_key(|e| *e.1).map(|e| *e.0)?;
+        let d = |p: &[u8; 3]| {
+            (0..3)
+                .map(|i| (p[i] as i32 - ground[i] as i32).abs())
+                .sum::<i32>()
+        };
+        let ink = counts.keys().max_by_key(|p| d(p)).copied()?;
+        Some((hex(ink), hex(ground)))
+    };
+    let describe = |app: &App, img: Option<&image::RgbaImage>, scale: f32| {
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: LogicalPosition::new(0.0, 0.0),
+        });
+        let side = |x: f32| if x < w / 2.0 { "left" } else { "right" };
+        // Over the grid, the right pane is made but covered.
+        let covered = |x: f32| app.get_grid_open() && side(x) == "right";
+        let mut out = String::new();
+        // Titles: the capitals, on screen.
+        let mut titles: Vec<(f32, f32, f32, f32, String)> = Vec::new();
+        for e in ElementHandle::find_by_element_type_name(app, "Text") {
+            let Some(label) = e.accessible_label() else {
+                continue;
+            };
+            let (at, size) = (e.absolute_position(), e.size());
+            if size.height <= 0.0 || at.y + size.height <= 0.0 || at.y >= h {
+                continue;
+            }
+            let caps = label.chars().any(|c| c.is_alphabetic())
+                && label
+                    .chars()
+                    .all(|c| !c.is_lowercase() && !c.is_ascii_digit());
+            if caps && !covered(at.x) {
+                titles.push((at.x, at.y, size.width, size.height, label.to_string()));
+            }
+        }
+        let mut icons: Vec<(f32, f32)> = ElementHandle::find_by_element_type_name(app, "Image")
+            .map(|e| (e.absolute_position(), e.size()))
+            .filter(|(at, s)| {
+                s.width == 16.0 && s.height == 16.0 && at.y >= 0.0 && at.y < h && !covered(at.x)
+            })
+            .map(|(at, _)| (at.x, at.y))
+            .collect();
+        titles.sort_by(|a, b| {
+            (side(a.0), a.1, a.0)
+                .partial_cmp(&(side(b.0), b.1, b.0))
+                .unwrap()
+        });
+        icons.sort_by(|a, b| {
+            (side(a.0), a.1, a.0)
+                .partial_cmp(&(side(b.0), b.1, b.0))
+                .unwrap()
+        });
+        for (x, y, bw, bh, label) in titles {
+            let _ = write!(
+                out,
+                "{}\ttext\t{label}\t{x:.1}\t{y:.1}\t{bw:.1}\t{bh:.1}",
+                side(x)
+            );
+            if let Some((ink, ground)) = img.and_then(|i| read(i, scale, x, y, bw, bh)) {
+                let _ = write!(out, "\t{ink}\t{ground}");
+            }
+            out.push('\n');
+        }
+        for (x, y) in icons {
+            let _ = write!(out, "{}\ticon\t-\t{x:.1}\t{y:.1}\t16\t16", side(x));
+            if let Some((ink, ground)) = img.and_then(|i| read(i, scale, x, y, 16.0, 16.0)) {
+                let _ = write!(out, "\t{ink}\t{ground}");
+            }
+            out.push('\n');
+        }
+        out
+    };
+    let run = || {
+        for _ in 0..5 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+            slint::platform::update_timers_and_animations();
+        }
+    };
+    type Setup = fn(&App);
+    let views: [(&str, Setup); 6] = [
+        ("library", |app| {
+            app.set_culling(false);
+            app.set_grid_open(true);
+            app.set_folder_tree_shown(true);
+            app.invoke_target_changed(0);
+            app.set_panel_tab("Develop".into());
+        }),
+        ("loupe", |app| {
+            app.set_culling(false);
+            app.set_grid_open(false);
+            app.invoke_target_changed(0);
+            app.set_panel_tab("Develop".into());
+        }),
+        ("masks", |app| {
+            app.set_culling(false);
+            app.set_grid_open(false);
+            app.set_panel_tab("Masks".into());
+            app.invoke_target_changed(1);
+        }),
+        ("crop", |app| {
+            app.set_culling(false);
+            app.set_grid_open(false);
+            app.invoke_target_changed(0);
+            app.set_panel_tab("Crop".into());
+        }),
+        ("retouch", |app| {
+            app.set_culling(false);
+            app.set_grid_open(false);
+            app.invoke_target_changed(0);
+            app.set_panel_tab("Retouch".into());
+        }),
+        ("cull", |app| {
+            app.set_grid_open(false);
+            app.set_culling(true);
+            app.invoke_target_changed(0);
+            app.set_panel_tab("Cull".into());
+        }),
+    ];
+    for theme in ["Charcoal", "Grey", "Light"] {
+        app.global::<crate::Theme>().set_name(theme.into());
+        for scale in [1.0f32, 2.0] {
+            app.window()
+                .dispatch_event(WindowEvent::ScaleFactorChanged {
+                    scale_factor: scale,
+                });
+            app.window().set_size(slint::PhysicalSize::new(
+                (w * scale) as u32,
+                (h * scale) as u32,
+            ));
+            app.window().dispatch_event(WindowEvent::Resized {
+                size: slint::LogicalSize::new(w, h),
+            });
+            for (view, setup) in views {
+                setup(&app);
+                settle(&app);
+                let stem = format!("{}-x{}-{view}", theme.to_lowercase(), scale as u32);
+                let img = shot(&app);
+                img.save(dir.join(format!("{stem}.png"))).unwrap();
+                let table = describe(&app, (scale == 1.0).then_some(&img), scale);
+                std::fs::write(dir.join(format!("{stem}.tsv")), table).unwrap();
+                if scale != 1.0 || !(view == "loupe" || view == "library") {
+                    continue;
+                }
+                // A header of each pane under the pointer, then folded.
+                let labels: &[&str] = if view == "library" {
+                    &["FOLDERS"]
+                } else {
+                    &["HISTORY", "LIGHT"]
+                };
+                for &label in labels {
+                    let at = header(&app, label);
+                    let e = find_text(&app, label).unwrap();
+                    let (p, s) = (e.absolute_position(), e.size());
+                    pointer(&app, "move", at);
+                    run();
+                    let img = shot(&app);
+                    let tag = label.to_lowercase();
+                    img.save(dir.join(format!("{stem}-hover-{tag}.png")))
+                        .unwrap();
+                    let (ink, ground) = read(&img, 1.0, p.x, p.y, s.width, s.height).unwrap();
+                    std::fs::write(
+                        dir.join(format!("{stem}-hover-{tag}.tsv")),
+                        format!("{label}\thover\t{ink}\t{ground}\n"),
+                    )
+                    .unwrap();
+                    click(&app, at.0, at.1);
+                    settle(&app);
+                    let img = shot(&app);
+                    img.save(dir.join(format!("{stem}-folded-{tag}.png")))
+                        .unwrap();
+                    std::fs::write(
+                        dir.join(format!("{stem}-folded-{tag}.tsv")),
+                        describe(&app, Some(&img), 1.0),
+                    )
+                    .unwrap();
+                    let at = header(&app, label);
+                    click(&app, at.0, at.1);
+                    settle(&app);
+                }
+            }
+        }
+    }
+}
