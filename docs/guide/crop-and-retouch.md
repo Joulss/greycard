@@ -138,7 +138,34 @@ after.
 1. Click **Heal**, **Clone**, or **Fill**. The pointer shows the
    repair's size and where its soft edge begins.
 2. Click on a spot, or drag over a longer flaw.
-3. Click the tool's button again, or press Esc, when you are done.
+3. Click the tool's button again, or press Esc, when you are done. With
+   **Fill**, press Enter first: the first Esc drops what is painted.
+
+**Heal** and **Clone** repair as soon as you let go. **Fill** waits, so
+you can cover a large or awkward area in several strokes first:
+
+1. Paint over what you want gone, in as many strokes as it takes. Each
+   is outlined, and nothing is made yet.
+2. Press Enter, or click **Generate** under the Fill's buttons. Strokes
+   that touch become one fill; strokes apart become fills apart, so
+   each can be removed on its own later.
+3. Keep painting the next area while a fill is being made.
+
+Only Enter or **Generate** makes a fill. Until then the strokes wait on
+their frame: put **Fill** down, go to another tab or frame, and they
+are there when you come back and take **Fill** again. They are not part
+of the edit, so an export leaves them out, and quitting drops them.
+
+Enter, Esc, and Ctrl+Z work on the strokes only in the Develop view,
+where they are drawn; in the grid, the lightbox, the crop, and culling
+they keep their own meaning. Ctrl+Z takes back the last stroke. Esc drops
+everything painted and keeps **Fill** in hand; Ctrl+Z next brings it
+back, if nothing else was done in between. One Generate is one step of
+the history, however many fills it makes.
+
+To add to a fill, choose it in the list first: strokes that touch it
+join it, and it is made again as one area. With no repair chosen, a
+stroke over an old fill makes a new one on top.
 
 While a tool is in hand, the mouse wheel changes the size, one step a
 click; a touchpad scroll changes it by as many steps as the same
@@ -154,11 +181,15 @@ repair.
 
 ### The repair's settings
 
-**Size**, **Feather** and **Opacity** show while a tool is in hand.
-They set the next repair. With a repair chosen in the list, they
-change that one instead:
+**Size**, **Feather** and **Opacity** show while a tool is in hand,
+and set the next repair. With a Heal or Clone chosen in the list, they
+change that one instead. A fill chosen with a tool in hand is left
+alone: the sliders, the wheel, and the bracket keys set the brush. To
+change a fill, put the tool down and choose it: the sliders show for
+it, and it is made again when you let go of one.
 
-- **Size** (0.2% to 30% of the frame).
+- **Size** (0.2% to 30% of the frame). On a fill of several strokes,
+  every stroke grows or shrinks with it.
 - **Feather** (0 to 100%, default 30%): how soft the edge is.
 - **Opacity** (0 to 100%, default 100%): how strongly the repair
   covers what is under it.

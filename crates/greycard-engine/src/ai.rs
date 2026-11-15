@@ -2086,6 +2086,7 @@ fn remove_seed(patch: &Patch) -> u64 {
 fn same_fill(a: &Patch, b: &Patch) -> bool {
     a.points == b.points
         && a.radius == b.radius
+        && a.more == b.more
         && a.feather == b.feather
         && a.method == b.method
         && a.remove == b.remove
@@ -6649,6 +6650,14 @@ fn fill_slot(
         p.map(f32::to_bits).hash(&mut h);
     }
     patch.radius.to_bits().hash(&mut h);
+    // A Fill's further strokes, hashed only when it has any: a fill of
+    // one stroke keeps the slot it had before there were more.
+    for s in &patch.more {
+        for p in &s.points {
+            p.map(f32::to_bits).hash(&mut h);
+        }
+        s.radius.to_bits().hash(&mut h);
+    }
     patch.feather.to_bits().hash(&mut h);
     std::mem::discriminant(&patch.method).hash(&mut h);
     patch.remove.hash(&mut h);
@@ -7153,6 +7162,71 @@ mod tests {
             .map(|i| if i % w < w / 2 { 255 } else { 0 })
             .collect();
         Raster::from_data(0.5, w, data)
+    }
+
+    /// A fill of one stroke keeps the slot and the print it had before
+    /// a Fill could have more (version 9): its kept picture is found
+    /// again. One stroke more is another slot, another print, and
+    /// another fill.
+    #[test]
+    fn a_fill_of_one_stroke_keeps_its_slot_and_print() {
+        use greycard_edit::retouch::Stroke;
+        // `fill_slot` as it was before `more`.
+        let old_slot = |root: &Path, file: &Path, p: &Patch, r: &Region, size, window: Window| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            file.hash(&mut h);
+            "fill".hash(&mut h);
+            p.id.hash(&mut h);
+            p.seed.hash(&mut h);
+            for q in &p.points {
+                q.map(f32::to_bits).hash(&mut h);
+            }
+            p.radius.to_bits().hash(&mut h);
+            p.feather.to_bits().hash(&mut h);
+            std::mem::discriminant(&p.method).hash(&mut h);
+            p.remove.hash(&mut h);
+            p.fast.hash(&mut h);
+            (size as (usize, usize)).hash(&mut h);
+            (r.x, r.y, r.width, r.height).hash(&mut h);
+            window.hash(&mut h);
+            greycard_ai::FILL.id.hash(&mut h);
+            REMOVE.id.hash(&mut h);
+            REMOVE_FAST.id.hash(&mut h);
+            root.join(format!("{:016x}.fill", h.finish()))
+        };
+        let (root, file) = (Path::new("/cache"), Path::new("/f/IMG_0001.CR3"));
+        let mut patch = patch_at(3, 0.4, 2);
+        patch.points.push([0.45, 0.3]);
+        patch.remove = true;
+        let size = (640, 480);
+        let region = patch.region(size.0, size.1).unwrap();
+        let (window, _) = window_for(&region, size.0, size.1);
+        let slot = fill_slot(root, file, &patch, &region, size, window, None);
+        assert_eq!(slot, old_slot(root, file, &patch, &region, size, window));
+        // The print hashes the patch's JSON, which is as it was.
+        let json = serde_json::to_string(&patch).unwrap();
+        assert!(!json.contains("more"), "{json}");
+        let print = print_of(&[&patch]);
+
+        let mut grown = patch.clone();
+        grown.more.push(Stroke {
+            points: vec![[0.6, 0.3]],
+            radius: 0.04,
+        });
+        let grown_region = grown.region(size.0, size.1).unwrap();
+        let (grown_window, _) = window_for(&grown_region, size.0, size.1);
+        assert_ne!(
+            fill_slot(root, file, &grown, &grown_region, size, grown_window, None),
+            fill_slot(root, file, &grown, &region, size, window, None),
+            "the window grew"
+        );
+        assert_ne!(
+            fill_slot(root, file, &grown, &region, size, window, None),
+            slot,
+            "the strokes count even in the same window"
+        );
+        assert_ne!(print_of(&[&grown]), print);
+        assert!(!same_fill(&patch, &grown));
     }
 
     fn patch_at(id: u64, x: f32, seed: u32) -> Patch {

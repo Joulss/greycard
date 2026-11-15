@@ -63,6 +63,34 @@ fn a_list_merged_keeps_each_frames_own_by_its_path() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// A file gone from the list, deleted from outside, takes the Fill's
+/// strokes waiting on it: a file that comes to its path later has none.
+#[test]
+fn a_file_gone_from_the_list_takes_its_strokes() {
+    let dir = scratch("gone-strokes");
+    let files = frames(&dir, &["a.tif", "b.tif", "c.tif"]);
+    let app = window(3);
+    let (state, worker) = state_for(&app, files.clone());
+    {
+        let mut st = state.borrow_mut();
+        st.current = Some(1);
+        st.develop.source_size = (400, 300);
+        crate::panel::painted::pressed(&mut st, &app, (0.5, 0.5));
+        crate::panel::painted::released(&mut st, &app);
+        st.current = Some(0);
+        rebuild_browser(&mut st, &app);
+    }
+    let b = crate::versions::Key::file(&files[1]);
+    assert_eq!(crate::panel::painted::waiting_at(&state.borrow(), &b), 1);
+    let next = vec![files[0].clone(), files[2].clone()];
+    merge_read(&state, &app, &worker, next, None);
+    merge_read(&state, &app, &worker, files.clone(), None);
+    assert_eq!(state.borrow().files, files);
+    assert_eq!(crate::panel::painted::waiting_at(&state.borrow(), &b), 0);
+    drop(state);
+    crate::testing::remove_dir_retry(&dir);
+}
+
 /// The frame on screen deleted from under the window: the nearest
 /// row is what is opened next, and nothing is kept as current, so
 /// no sidecar is written for a file that is gone.

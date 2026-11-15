@@ -230,6 +230,11 @@ pub(crate) struct Develop {
     /// handle, and where it was on the view.
     pub(crate) retouching: Option<RetouchMethod>,
     pub(crate) patch_stroke: Option<usize>,
+    /// The strokes painted with the Fill in hand and not yet made.
+    pub(crate) painted: crate::panel::painted::Painted,
+    /// A chosen Fill resized by a slider still held: made again when
+    /// it is let go.
+    pub(crate) fill_resized: bool,
     /// The engine each Fill patch of the open file was made by, by
     /// patch id, as the last develop to apply them said: a patch the
     /// generative remove made has "Another" on its row.

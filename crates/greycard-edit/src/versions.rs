@@ -544,10 +544,11 @@ mod tests {
         assert_eq!(back.versions, s.versions);
         let mut value: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        value["versions"][0]["line"]["history"] = serde_json::json!([{ "version": 9 }]);
+        value["versions"][0]["line"]["history"] = serde_json::json!([{ "version": VERSION + 1 }]);
         std::fs::write(&path, value.to_string()).unwrap();
-        assert!(matches!(Sidecar::read(&path), Err(Error::Newer(9))));
-        assert!(matches!(Sidecar::load(&raw), Err(Error::Newer(9))));
+        let newer = |r: crate::Result<_>| matches!(r, Err(Error::Newer(v)) if v == VERSION + 1);
+        assert!(newer(Sidecar::read(&path).map(|_| ())));
+        assert!(newer(Sidecar::load(&raw).map(|_| ())));
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

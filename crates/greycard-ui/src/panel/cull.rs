@@ -447,6 +447,9 @@ fn put_tools_down(st: &mut State, app: &App) {
     app.set_placing("".into());
     st.develop.retouching = None;
     app.set_retouch_mode("".into());
+    // What the Fill painted waits, unseen, for its return; the sliders
+    // go back to what they now edit.
+    crate::panel::retouch::show_patches(st, &st.develop.edit, app);
     st.develop.picking = None;
     app.set_picking("".into());
     // A hint the tool in hand left on the status line goes with it.
@@ -2518,8 +2521,14 @@ pub(crate) fn drop_files(
         app.set_status(status.into());
         return;
     }
-    // A frame deleted or moved out of its folder leaves its stack.
+    // A frame deleted or moved out of its folder leaves its stack, and
+    // the Fill's strokes waiting on it go with it.
     crate::stacks::left_files(st, gone);
+    let paths: Vec<std::path::PathBuf> = gone
+        .iter()
+        .filter_map(|&i| st.files.get(i).cloned())
+        .collect();
+    crate::panel::painted::drop_files(st, &paths);
     // The files that go take every cell of theirs, versions included.
     let keep = |i: &usize| !gone.contains(i);
     // Where the frame on screen would stand in the new list if it is

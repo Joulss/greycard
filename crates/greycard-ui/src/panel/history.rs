@@ -581,6 +581,13 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
+            // The keys' undo with a Fill's strokes painted takes the
+            // last of them back, and nothing of the edit: they are in
+            // neither it nor its history. The history panel's buttons
+            // are the edit's alone.
+            if back && mixed && crate::panel::painted::undo_last(&mut st, &app) {
+                return;
+            }
             // In culling the keys are the ratings', flags' and
             // labels': undo steps back the session's changes to those
             // and touches no develop, and culling stays up. A request

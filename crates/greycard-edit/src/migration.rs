@@ -128,8 +128,15 @@ impl Edit {
 /// `erase: true` on a stroke is a Subtract before either. A build from
 /// before would read a Subtract as a lift, so it refuses the sidecar.
 ///
+/// Version 9 is a Fill of several strokes ([`Patch::more`]). Nothing
+/// moves: an edit from before has none, and a repair of one stroke
+/// writes as it did. A build from before would drop the strokes after
+/// the first and fill less than was painted, so it refuses the
+/// sidecar.
+///
 /// [`brush`]: crate::brush
 /// [`Op::Lift`]: crate::brush::Op::Lift
+/// [`Patch::more`]: crate::retouch::Patch::more
 ///
 /// Two shapes serde would take are refused before any step, since
 /// neither writes back as it reads (both found by fuzzing). An edit
@@ -231,7 +238,8 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
         // and version 8's is not one that can. Only an
         // `Original` aspect is affected; every other edit is brought
         // up by its version number alone. Version 5's step (the
-        // sidecar's versions) moves nothing in an edit.
+        // sidecar's versions) and version 9's (a Fill's further
+        // strokes) move nothing in an edit.
         let waiting = version < 4
             && obj
                 .get("geometry")

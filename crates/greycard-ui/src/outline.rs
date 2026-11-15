@@ -15,26 +15,47 @@ use greycard_edit::retouch::distance_to_polyline;
 /// stroke that loops gives an outer ring and a hole. Empty for no
 /// points or no radius.
 pub fn contours(points: &[(f32, f32)], radius: f32, cell: f32) -> Vec<Vec<(f32, f32)>> {
-    if points.is_empty() || radius <= 0.0 {
+    contours_of(&[(points, radius)], cell)
+}
+
+/// The edge of the union of several strokes, each its polyline and its
+/// own radius, as [`contours`] draws one: the contour of the least of
+/// their distances less their radii. Strokes with no points or no
+/// radius count for nothing.
+pub fn contours_of(strokes: &[(&[(f32, f32)], f32)], cell: f32) -> Vec<Vec<(f32, f32)>> {
+    let strokes: Vec<(&[(f32, f32)], f32)> = strokes
+        .iter()
+        .copied()
+        .filter(|(points, radius)| !points.is_empty() && *radius > 0.0)
+        .collect();
+    if strokes.is_empty() {
         return Vec::new();
     }
+    // The extent of everything within each stroke's radius.
     let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
-    for p in points {
-        lo = (lo.0.min(p.0), lo.1.min(p.1));
-        hi = (hi.0.max(p.0), hi.1.max(p.1));
+    for (points, radius) in &strokes {
+        for p in *points {
+            lo = (lo.0.min(p.0 - radius), lo.1.min(p.1 - radius));
+            hi = (hi.0.max(p.0 + radius), hi.1.max(p.1 + radius));
+        }
     }
-    let extent = (hi.0 - lo.0 + 2.0 * radius).max(hi.1 - lo.1 + 2.0 * radius);
+    let extent = (hi.0 - lo.0).max(hi.1 - lo.1);
     let cell = cell.max(extent / 128.0).max(1e-6);
     // A margin of a cell beyond the radius, so every node on the
     // grid's rim is outside and the contours close within it.
-    let origin = (lo.0 - radius - cell, lo.1 - radius - cell);
-    let nx = ((hi.0 - lo.0 + 2.0 * (radius + cell)) / cell).ceil() as usize + 1;
-    let ny = ((hi.1 - lo.1 + 2.0 * (radius + cell)) / cell).ceil() as usize + 1;
+    let origin = (lo.0 - cell, lo.1 - cell);
+    let nx = ((hi.0 - lo.0 + 2.0 * cell) / cell).ceil() as usize + 1;
+    let ny = ((hi.1 - lo.1 + 2.0 * cell) / cell).ceil() as usize + 1;
     let node = |i: usize, j: usize| (origin.0 + i as f32 * cell, origin.1 + j as f32 * cell);
-    // The signed field at the nodes: negative inside.
+    // The signed field at the nodes: negative inside any stroke.
     let field: Vec<f32> = (0..=ny)
         .flat_map(|j| (0..=nx).map(move |i| (i, j)))
-        .map(|(i, j)| distance_to_polyline(node(i, j), points) - radius)
+        .map(|(i, j)| {
+            strokes
+                .iter()
+                .map(|(points, radius)| distance_to_polyline(node(i, j), points) - radius)
+                .fold(f32::MAX, f32::min)
+        })
         .collect();
     let at = |i: usize, j: usize| field[j * (nx + 1) + i];
     // The edges of the grid, each crossed by the contour at most

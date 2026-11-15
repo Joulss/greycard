@@ -165,6 +165,14 @@ design note behind it.
   finished picture's brightness, after the tone work, with Amount,
   Radius, and Threshold. Off until Amount is raised (issue 135,
   [§663](https://github.com/jessolmstead/greycard/blob/master/docs/notes/663-output-sharpen.md)).
+- Fill paints first and generates when asked: strokes are only drawn
+  until Enter or the new Generate button makes them, several strokes
+  as one fill. Esc drops the strokes and Ctrl+Z right after brings
+  them back. With a Fill chosen in the list, strokes that touch it
+  are added to it and it is made again. Strokes left ungenerated wait
+  on their frame until quit and are never exported. A sidecar written
+  by 0.12.0 does not open in 0.11.0 (discussion 59,
+  [§678](https://github.com/jessolmstead/greycard/blob/master/docs/notes/678-fill-waits-for-generate.md)).
 
 ### Fixes
 

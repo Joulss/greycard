@@ -195,6 +195,14 @@ pub(crate) fn merge(
     let old: HashMap<&PathBuf, usize> = st.files.iter().enumerate().map(|(i, p)| (p, i)).collect();
     let from: Vec<Option<usize>> = next.iter().map(|p| old.get(p).copied()).collect();
     drop(old);
+    // A file gone from the list takes the Fill's strokes waiting on it,
+    // so a file that comes to its path later never shows them.
+    let stays: HashSet<usize> = from.iter().flatten().copied().collect();
+    let left: Vec<PathBuf> = (0..st.files.len())
+        .filter(|i| !stays.contains(i))
+        .map(|i| st.files[i].clone())
+        .collect();
+    crate::panel::painted::drop_files(st, &left);
     let fresh = from.iter().filter(|f| f.is_none()).count();
     let count = next.len();
     // The files' own vectors, each file that stays carrying what it

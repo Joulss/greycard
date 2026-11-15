@@ -817,6 +817,9 @@ pub(crate) fn turn_frames(
             let pending = read_edit(app, &st.develop.edit, st.develop.target);
             save_edit(st, pending);
             st.sidecar_mut(f).turn_by(quarters, aspect);
+            // The Fill's strokes waiting on it turn with its patches.
+            let path = st.path_of(f).clone();
+            crate::panel::painted::turn(st, &path, quarters, aspect);
             let edit = st.line(f).map(|l| l.current.clone()).unwrap_or_default();
             // The whole panel, since a turn moves masks and patches
             // as well as the crop. `show_edit` puts a chosen
@@ -837,6 +840,8 @@ pub(crate) fn turn_frames(
         } else {
             let file = st.file_of(f);
             greycard_edit::turn_into(&mut st.sidecars, &[file], quarters, aspect);
+            let path = st.path_of(f).clone();
+            crate::panel::painted::turn(st, &path, quarters, aspect);
         }
         write_sidecar(st, f);
         for g in st.cells_of_file(st.file_of(f)) {
@@ -2437,6 +2442,8 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
     st.views.pick_pending = Some(path.clone());
     st.current = Some(i);
     current_moved(st);
+    // What the Fill painted on it, waiting, lit or not.
+    crate::panel::painted::show(st, app);
     st.develop.generation += 1;
     if st.culling.cull.is_none() {
         let edit = st.line(i).map(|l| l.current.clone()).unwrap_or_default();
@@ -2577,6 +2584,8 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         st.views.panel_stand_in = Some(file.clone());
         st.current = Some(i);
         current_moved(st);
+        // What the Fill painted on it, waiting, lit or not.
+        crate::panel::painted::show(st, app);
         crate::panel::edit::show_white(st, &st.develop.edit, app);
         st.develop.generation += 1;
         app.set_selected(row);
@@ -2682,6 +2691,8 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     st.develop.crop_start_due = app.get_crop_mode();
     st.current = Some(i);
     current_moved(st);
+    // What the Fill painted on it, waiting, lit or not.
+    crate::panel::painted::show(st, app);
     crate::panel::edit::show_white(st, &st.develop.edit, app);
     st.develop.generation += 1;
     // The key's moment, until the frame that shows this
@@ -2820,6 +2831,7 @@ pub(crate) fn file_moved(st: &mut State, file: usize, was: &Path, to: &Path) {
         follow(p);
     }
     st.develop.walk.file_moved(was, to);
+    crate::panel::painted::file_moved(st, was, to);
     let d = &mut st.develop;
     if on_screen {
         // Moved again: every earlier path is still what a job then

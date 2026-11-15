@@ -729,8 +729,15 @@ fn retouch(b: &Edit, a: &Edit) -> String {
         .iter()
         .filter(|p| !has(&y.patches, p.id))
         .collect();
+    // A repair that was there and changed in the same step: one added
+    // beside it is not the whole of the step, so the step is not named
+    // by it alone.
+    let changed = y
+        .patches
+        .iter()
+        .any(|p| x.patches.iter().any(|q| q.id == p.id && q != p));
     match (added.as_slice(), removed.as_slice()) {
-        ([one], []) => one.name(),
+        ([one], []) if !changed => one.name(),
         ([], [one]) => format!("{} removed", one.name()),
         ([], []) => {
             let moved: Vec<_> = y
@@ -1257,6 +1264,21 @@ mod tests {
         let mut b = f.clone();
         b.retouch.patches[0].set_fill_choice(crate::retouch::FillChoice::Best);
         assert_eq!(describe(&f, &b, &[]), "Fill 3 to Best");
+        // A Fill grown and another added in one step (a Generate) is
+        // named as the whole retouch, not by the new one alone.
+        let mut grown = v.clone();
+        grown.retouch.patches[0].more.push(crate::retouch::Stroke {
+            points: vec![[0.55, 0.5]],
+            radius: 0.02,
+        });
+        assert_eq!(describe(&v, &grown, &[]), "Fill 3 moved");
+        grown.retouch.patches.push(Patch {
+            id: 4,
+            method: Method::Fill,
+            points: vec![[0.2, 0.2]],
+            ..Default::default()
+        });
+        assert_eq!(describe(&v, &grown, &[]), "Retouch");
     }
 
     #[test]

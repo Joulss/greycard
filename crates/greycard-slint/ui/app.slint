@@ -2343,6 +2343,25 @@ export component App inherits Window {
     in-out property <string> fill-choice: "Best";
     in property <[string]> fill-why-not;
     callback fill-chosen(string);
+    // Whether the Fill has strokes painted and not yet made; Enter or
+    // Generate makes them, Esc lets them go.
+    in property <bool> fill-painted: false;
+    // Where the strokes are drawn: the Develop picture's Retouch tab,
+    // not the grid, the lightbox, the crop, or culling, whose Enter,
+    // Esc and undo keep their own meaning. The one rule the keys here
+    // and the undo's (`painted::undo_last`) both go by.
+    out property <bool> fill-view: root.panel-tab == "Retouch"
+        && !root.grid-open && !root.lightbox && !root.crop-mode && !root.cull-mode;
+    out property <bool> fill-here: root.fill-painted && root.fill-view;
+    // The Esc held down let the strokes go: its repeats are eaten, so
+    // they do not go on to put the Fill down. Any other press ends it.
+    property <bool> fill-esc-held: false;
+    callback fill-generate();
+    callback fill-discard();
+    // A Retouch slider held, and let go: a chosen Fill is made again
+    // at the release.
+    in-out property <bool> patch-sliding: false;
+    callback patch-settled();
     in-out property <[Pt]> patch-handles: [];
     // The chosen patch's edge on the view, and where its feather
     // begins, as a Path's commands; empty when there is none to show.
@@ -3061,6 +3080,7 @@ export component App inherits Window {
             // and goes on to do what it does. Not under a sheet, whose
             // keys leave the picture behind it alone.
             if (root.original-on && chord != "\\" && !root.sheet-open()) { root.original-off(); }
+            if (!e.repeat) { root.fill-esc-held = false; }
             // The wheel in hand put down, and Esc goes on to mean
             // what else it means; under a sheet, only that.
             if (chord == "Esc" && !root.sheet-open()) { root.wheel-hand = -1; }
@@ -3101,6 +3121,25 @@ export component App inherits Window {
             // A preset's removal asked and not answered: Esc is its
             // Cancel.
             if (chord == "Esc" && root.preset-confirm-remove >= 0) { root.preset-confirm-remove = -1; return accept; }
+            // The Fill's strokes painted and not made: Esc lets them
+            // go, the tool still in hand; Enter makes them.
+            // Held, one press: its repeats are eaten, so the tool stays
+            // in hand and an undo after brings the strokes back.
+            if (chord == "Esc" && e.repeat && root.fill-esc-held) { return accept; }
+            if (chord == "Esc" && root.fill-here) {
+                if (!e.repeat) {
+                    root.fill-discard();
+                    root.fill-esc-held = true;
+                }
+                return accept;
+            }
+            // Enter is the picture's only: a field or a control with
+            // the keys keeps its own.
+            if (chord == "Return" && root.fill-here && !root.sheet-open()
+                && keys.has-focus && !Typing.editing) {
+                if (!e.repeat) { root.fill-generate(); }
+                return accept;
+            }
             // A repair chosen for editing, not one just drawn: Esc
             // lets go of it, so the sliders go back to the brush.
             if (chord == "Esc" && root.patch != -1) { root.patch-changed(-1); return accept; }
@@ -4632,6 +4671,10 @@ export component App inherits Window {
                             fill-choice <=> root.fill-choice;
                             fill-why-not: root.fill-why-not;
                             fill-chosen(c) => { root.fill-chosen(c); }
+                            fill-painted: root.fill-here;
+                            fill-generate => { root.fill-generate(); }
+                            patch-sliding <=> root.patch-sliding;
+                            patch-settled => { root.patch-settled(); }
                             retouch-toggled(a) => { root.retouch-toggled(a); }
                             patch-changed(a) => { root.patch-changed(a); }
                             patch-lit <=> root.patch-lit;

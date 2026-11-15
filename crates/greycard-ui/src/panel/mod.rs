@@ -27,6 +27,7 @@ pub(crate) mod menu;
 pub(crate) mod merge;
 pub(crate) mod models;
 pub(crate) mod original;
+pub(crate) mod painted;
 pub(crate) mod parts;
 pub(crate) mod parts_all;
 pub(crate) mod prefs;

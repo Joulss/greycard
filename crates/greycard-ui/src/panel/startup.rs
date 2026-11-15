@@ -1382,6 +1382,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     if app.get_patch_feather_outline() != feather {
                         app.set_patch_feather_outline(feather.into());
                     }
+                    // Whether the Fill's strokes wait here, per frame,
+                    // so no way the frame or the tool changed leaves
+                    // Generate lit for strokes that are not here.
+                    let waiting = crate::panel::painted::waiting(st);
+                    if app.get_fill_painted() != waiting {
+                        app.set_fill_painted(waiting);
+                    }
                     show_shape(st, &app, &edit);
                     let chosen = chosen_shape(st, &app, &edit);
                     // An object's boxes and picks, or a sky's picks:

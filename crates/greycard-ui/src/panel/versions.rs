@@ -279,6 +279,9 @@ pub(crate) fn swap(st: &mut State, app: &App, worker: &Worker, from_menu: bool) 
         return;
     }
     let name = st.version_name(c).unwrap_or_default();
+    // The Fill's strokes waiting on either go with the line they were
+    // painted over.
+    crate::panel::painted::swapped(st, &path, &id);
     write_file(st, file);
     // The pictures trade places now; each is asked for again after,
     // from its line as it now is.
@@ -404,8 +407,10 @@ pub(crate) fn answered(st: &mut State, app: &App, worker: &Worker, answer: i32) 
         }
         let file = st.file_of(c);
         if let Some(taken) = st.sidecars[file].delete_version(id) {
-            // Gone from its sidecar, the version leaves its stack.
+            // Gone from its sidecar, the version leaves its stack, and
+            // takes the Fill's strokes waiting on it.
             crate::stacks::version_left(st, file, id);
+            crate::panel::painted::drop_frame(st, key);
             gone.push(tr!(
                 "{name} of {file}",
                 name = taken.name,

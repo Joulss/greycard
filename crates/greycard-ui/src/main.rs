@@ -1020,6 +1020,8 @@ impl State {
                 refined: HashMap::new(),
                 retouching: None,
                 patch_stroke: None,
+                painted: Default::default(),
+                fill_resized: false,
                 fill_engines: HashMap::new(),
                 patch_drag: None,
                 patch_handles: Rc::new(VecModel::default()),

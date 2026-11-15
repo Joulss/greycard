@@ -1,6 +1,7 @@
 // The RETOUCH section: the tools, the next or chosen repair's size,
-// feather and opacity, and the repairs by name; a Fill the generative
-// remove made has Another on its row, its next variation.
+// feather and opacity, the Fill's Generate, and the repairs by name;
+// a Fill the generative remove made has Another on its row, its next
+// variation.
 
 import { Theme } from "../theme.slint";
 import { TipArea, Section, EditSlider, Steps, PanelButton, Segmented } from "../controls.slint";
@@ -23,6 +24,10 @@ export component RetouchSection inherits Section {
     in-out property <string> fill-choice;
     in property <[string]> fill-why-not;
     callback fill-chosen(string);
+    // Whether the Fill has strokes painted and not yet made, which
+    // Generate makes, as Enter does.
+    in property <bool> fill-painted;
+    callback fill-generate();
     callback retouch-toggled(string);
     callback patch-another();
     callback patch-changed(int);
@@ -34,6 +39,10 @@ export component RetouchSection inherits Section {
     init => { root.patch-lit = -1; }
     callback delete-patch();
     callback patch-edited();
+    // A slider held: a chosen Fill waits for `patch-settled`, its
+    // release, before it is made again.
+    in-out property <bool> patch-sliding;
+    callback patch-settled();
 
     title: @tr("RETOUCH");
     icon: @image-url("../icons/bandage.svg");
@@ -62,7 +71,9 @@ export component RetouchSection inherits Section {
             clicked => { root.retouch-toggled("Fill"); }
         }
     }
-    if root.retouch-mode != "": VerticalLayout {
+    // The sliders: the brush's with a tool in hand, a chosen Fill's
+    // with none, which is made again once its slider is let go.
+    if root.retouch-mode != "" || root.fill-shown: VerticalLayout {
         spacing: Theme.space-2;
         EditSlider {
             label: @tr("Size");
@@ -74,7 +85,11 @@ export component RetouchSection inherits Section {
             value <=> root.patch-size;
             scale: 100;
             text: round(root.patch-size * 1000) / 10 + "%";
-            changed(v) => { root.patch-edited(); }
+            changed(v) => {
+                root.patch-sliding = self.moving;
+                root.patch-edited();
+            }
+            changed moving => { if (!self.moving) { root.patch-settled(); } }
         }
         EditSlider {
             label: @tr("Feather");
@@ -86,7 +101,11 @@ export component RetouchSection inherits Section {
             value <=> root.patch-feather;
             scale: 100;
             text: round(root.patch-feather * 100) + "%";
-            changed(v) => { root.patch-edited(); }
+            changed(v) => {
+                root.patch-sliding = self.moving;
+                root.patch-edited();
+            }
+            changed moving => { if (!self.moving) { root.patch-settled(); } }
         }
         EditSlider {
             label: @tr("Opacity");
@@ -98,7 +117,11 @@ export component RetouchSection inherits Section {
             value <=> root.patch-opacity;
             scale: 100;
             text: round(root.patch-opacity * 100) + "%";
-            changed(v) => { root.patch-edited(); }
+            changed(v) => {
+                root.patch-sliding = self.moving;
+                root.patch-edited();
+            }
+            changed moving => { if (!self.moving) { root.patch-settled(); } }
         }
     }
     if root.fill-shown: Segmented {
@@ -115,6 +138,15 @@ export component RetouchSection inherits Section {
             : self.current == "Best" ? @tr("Best")
             : self.current;
         selected(c) => { root.fill-chosen(c); }
+    }
+    // The Fill's strokes are painted first and made here, or by Enter.
+    if root.retouch-mode == "Fill": PanelButton {
+        // Retouch section: makes the Fill's painted strokes
+        text: @tr("Generate");
+        icon: @image-url("../icons/sparkles.svg");
+        enabled: root.fill-painted;
+        primary: root.fill-painted;
+        clicked => { root.fill-generate(); }
     }
     if root.patch-names.length > 0: Rectangle {
         border-radius: Theme.radius-md;

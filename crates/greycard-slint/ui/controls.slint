@@ -1273,9 +1273,10 @@ export component EditSlider inherits Rectangle {
                 if (root.track-armed) {
                     // Away from the handle, the track still jumps the
                     // value straight to where the pointer went down,
-                    // and a drag goes on from there.
-                    root.set-from(self.mouse-x);
+                    // and a drag goes on from there. The drag first, so
+                    // the jump's change already says the value is moving.
                     root.begin-drag(self.mouse-x, (self.mouse-x - track-left) / track-width);
+                    root.set-from(self.mouse-x);
                 }
                 // A press on the label or the value text just focuses:
                 // no jump, no drag latch.

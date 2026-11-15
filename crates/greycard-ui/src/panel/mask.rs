@@ -973,6 +973,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             }
             if tab != "Retouch" && st.develop.retouching.take().is_some() {
                 app.set_retouch_mode("".into());
+                // What the Fill painted waits, unseen, for its return;
+                // the sliders go back to what they now edit.
+                crate::panel::retouch::show_patches(&st, &st.develop.edit, &app);
                 crate::panel::deliver::drop_hint(&app, &mut st);
             }
             // Back on Masks with a Part on this picture asking which
@@ -1463,6 +1466,11 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             // A repair: a spot here, a stroke if the pointer travels.
             if let Some(method) = st.develop.retouching {
                 let at = view_to_source(&st, &app, x, y);
+                // The Fill's: painted, made at Generate.
+                if method == RetouchMethod::Fill {
+                    crate::panel::painted::pressed(&mut st, &app, at);
+                    return;
+                }
                 let patch = Patch {
                     id: st.develop.edit.retouch.next_id(),
                     method,
@@ -1474,13 +1482,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     seed: 0,
                     remove: false,
                     fast: false,
+                    more: Vec::new(),
                 };
-                // A Fill is made by the choice in hand where it can
-                // run, the other remove or LaMa otherwise, for good.
-                let mut patch = patch;
-                if method == RetouchMethod::Fill {
-                    patch.set_fill_choice(crate::panel::retouch::drawn_fill(&st));
-                }
                 st.develop.edit.retouch.patches.push(patch);
                 let i = st.develop.edit.retouch.patches.len() - 1;
                 st.develop.patch_stroke = Some(i);
@@ -1597,6 +1600,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let mut st = state.borrow_mut();
             let at = view_to_source(&st, &app, x, y);
+            if crate::panel::painted::dragged(&mut st, at, MIN_STEP * 4.0) {
+                app.window().request_redraw();
+                return;
+            }
             if let Some(i) = st.develop.patch_stroke {
                 if let Some(p) = st.develop.edit.retouch.patches.get_mut(i)
                     && p.points
@@ -1705,6 +1712,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
+            // A Fill's stroke stays painted; nothing is made yet.
+            if crate::panel::painted::released(&mut st, &app) {
+                return;
+            }
             if st.develop.patch_stroke.take().is_some() {
                 // The spot or stroke just finished does not stay
                 // selected: the sliders and the wheel go back to

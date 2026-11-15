@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::tr;
 use greycard_edit::Edit;
-use greycard_edit::retouch::{FillChoice, Method as RetouchMethod, Patch};
+use greycard_edit::retouch::{FillChoice, Method as RetouchMethod, Patch, Stroke};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::ai::{FillHaves, FillNotHere};
@@ -43,7 +43,7 @@ fn not_here(why: FillNotHere) -> String {
 /// of its feather's start, for the points, radius and feather they
 /// were contoured for.
 pub(crate) struct PatchShape {
-    key: (Vec<greycard_edit::mask::Pos>, f32, f32),
+    key: (Vec<Stroke>, f32),
     edge: Vec<Vec<(f32, f32)>>,
     feather: Vec<Vec<(f32, f32)>>,
 }
@@ -51,28 +51,39 @@ pub(crate) struct PatchShape {
 /// A patch's edge on the view and where its feather begins, as a
 /// Path's commands: the rings contoured in the picture's units (kept
 /// in `shape` until the patch changes), each point mapped as the
-/// handles are, so it turns, zooms and pans with the picture.
+/// handles are, so it turns, zooms and pans with the picture. A patch
+/// of several strokes is outlined as their union.
 pub(crate) fn patch_outlines(
     shape: &mut Option<PatchShape>,
     patch: &Patch,
     map: &ViewMap,
 ) -> (String, String) {
-    let key = (patch.points.clone(), patch.radius, patch.feather);
+    let key = (patch.stroke_list(), patch.feather);
     if shape.as_ref().is_none_or(|s| s.key != key) {
-        let points: Vec<(f32, f32)> = patch.points.iter().map(|p| (p[0], p[1])).collect();
-        // Cells a quarter of the radius contoured, so a spot is a
-        // polygon of two dozen sides or so.
-        let rings = |r: f32| outline::contours(&points, r, r / 4.0);
+        let strokes: Vec<(Vec<(f32, f32)>, f32)> = key
+            .0
+            .iter()
+            .map(|s| (s.points.iter().map(|p| (p[0], p[1])).collect(), s.radius))
+            .collect();
+        // Each stroke's radius times `k`, contoured in cells a quarter
+        // of the least of them, so a spot is a polygon of two dozen
+        // sides or so.
+        let rings = |k: f32| {
+            let list: Vec<(&[(f32, f32)], f32)> =
+                strokes.iter().map(|(p, r)| (p.as_slice(), r * k)).collect();
+            let least = list.iter().map(|s| s.1).fold(f32::MAX, f32::min);
+            outline::contours_of(&list, least / 4.0)
+        };
         // The feather's start as the engine draws it: the radius
         // less the feather, and never quite nothing.
         let feather = if patch.feather > 0.01 {
-            rings(patch.radius * (1.0 - patch.feather.clamp(0.0, 1.0)).max(0.02))
+            rings((1.0 - patch.feather.clamp(0.0, 1.0)).max(0.02))
         } else {
             Vec::new()
         };
         *shape = Some(PatchShape {
             key,
-            edge: rings(patch.radius),
+            edge: rings(1.0),
             feather,
         });
     }
@@ -130,6 +141,11 @@ pub(crate) fn shown_outlines(st: &mut State, app: &App, edit: &Edit) -> (String,
         edge.push_str(&e);
         feather.push_str(&f);
     }
+    // What the Fill painted and has not made, drawn as a repair being
+    // drawn is.
+    let (e, f) = crate::panel::painted::outlines(st, app);
+    edge.push_str(&e);
+    feather.push_str(&f);
     (edge, feather)
 }
 
@@ -175,13 +191,24 @@ pub(crate) fn show_patches(st: &State, edit: &Edit, app: &App) {
         .filter(|&i| i < edit.retouch.patches.len());
     app.set_patch(chosen.map_or(-1, |i| i as i32));
     let chosen = chosen.and_then(|i| edit.retouch.patches.get(i));
-    if let Some(p) = chosen {
+    // A chosen Fill's values are its sliders' only with no tool in
+    // hand; with one, the sliders are the brush's.
+    if let Some(p) = chosen.filter(|p| !brush_only(st, p)) {
         app.set_patch_size(p.radius);
         app.set_patch_feather(p.feather);
         app.set_patch_opacity(p.opacity);
     }
+    crate::panel::painted::show(st, app);
     app.set_patch_varies(chosen.is_some_and(|p| made_by_remove(st, p)));
     show_fill(st, chosen, app);
+}
+
+/// Whether the sliders, the wheel and the brush keys set the brush
+/// rather than `chosen`: a chosen Fill with a repair tool in hand. A
+/// Fill is resized with no tool in hand, its sliders let go before it
+/// is made again; a notch or a key never starts a generation.
+pub(crate) fn brush_only(st: &State, chosen: &Patch) -> bool {
+    chosen.method == RetouchMethod::Fill && st.develop.retouching.is_some()
 }
 
 /// What a Fill drawn next asks to be made by: the last chosen, else
@@ -374,6 +401,25 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             }
         });
     }
+    // What the Fill painted: made by Enter or Generate, let go by Esc.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_fill_generate(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            crate::panel::painted::generate(&mut state.borrow_mut(), &app);
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_fill_discard(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            crate::panel::painted::discard(&mut state.borrow_mut(), &app);
+        });
+    }
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_fill_chosen(move |name| {
@@ -452,10 +498,39 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Ok(i) = usize::try_from(app.get_patch()) else {
                 return;
             };
+            let brush = st
+                .develop
+                .edit
+                .retouch
+                .patches
+                .get(i)
+                .is_some_and(|p| brush_only(&st, p));
+            if brush {
+                return;
+            }
             if let Some(p) = st.develop.edit.retouch.patches.get_mut(i) {
-                p.radius = app.get_patch_size().clamp(0.002, 0.3);
+                // A repair of several strokes keeps them in proportion.
+                p.resize(app.get_patch_size().clamp(0.002, 0.3));
                 p.feather = app.get_patch_feather().clamp(0.0, 1.0);
                 p.opacity = app.get_patch_opacity().clamp(0.0, 1.0);
+                // A Fill is made again once its slider is let go, not
+                // at each step of it.
+                if p.method == RetouchMethod::Fill && app.get_patch_sliding() {
+                    st.develop.fill_resized = true;
+                    return;
+                }
+                develop_soon(&mut st, state.clone(), worker.clone(), app.as_weak());
+            }
+        });
+    }
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_patch_settled(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            if std::mem::take(&mut st.develop.fill_resized) {
                 develop_soon(&mut st, state.clone(), worker.clone(), app.as_weak());
             }
         });
@@ -807,9 +882,11 @@ mod tests {
                 .map(|w| w.to_string())
                 .collect()
         };
+        // A Fill's stroke, painted and made.
         let draw = |app: &App, x: f32| {
             app.invoke_place_pressed(x, 10.0, false);
             app.invoke_place_released();
+            app.invoke_fill_generate();
         };
 
         let app = window(1);
