@@ -685,6 +685,13 @@ comes across with its ratings and collections.
       the camera wrote it, right for clock drift and wrong by the
       shift for a zone, which readers that combine the two will show
       (decided 2026-10-18, kept simple for 0.8.0)
+- [ ] Lightroom's healed and removed spots brought across: the
+      catalog's `RetouchAreas` (heal, clone, and the Remove tool's
+      spots) as our Heal, Clone, and Fill repairs at the same places,
+      so a frame cleaned up there is not dirty again here; a Remove
+      spot needs a Generate, so it comes across as strokes or is made
+      on first open. Until then the import report could count the
+      frames whose spots stayed behind
 - [ ] Lightroom catalog import follow-ups (§337): a catalog row for a
       camera's JPEG beside its raw mapped onto the raw's frame (wants a
       catalog made with JPEGs as separate photos; none held has one); a
