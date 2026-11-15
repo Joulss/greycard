@@ -2989,7 +2989,7 @@ pub(crate) mod tests {
 
         // The mid-tones wheel pressed right of its center: in hand, at
         // a hue of 0 and some strength.
-        app.invoke_grade_press(1, 0.8, 0.5, 0);
+        app.invoke_grade_press(1, 0.8, 0.5, false, false);
         app.invoke_grade_release();
         assert_eq!(app.get_wheel_hand(), 1);
         let (_, strength) = wheel(&app);
@@ -3009,7 +3009,7 @@ pub(crate) mod tests {
         assert!(near(hue, want + 180.0), "the complement: {hue} for {want}");
 
         // The tint's ring likewise.
-        app.invoke_tint_press(0.8, 0.5, 0);
+        app.invoke_tint_press(0.8, 0.5, false, false);
         app.invoke_tint_release();
         assert_eq!(app.get_wheel_hand(), crate::panel::color::TINT_HAND);
         ctrl_click(false);
@@ -3037,7 +3037,7 @@ pub(crate) mod tests {
         app.set_tint_hue(was);
 
         // Another section's control puts it down too.
-        app.invoke_grade_press(1, 0.8, 0.5, 0);
+        app.invoke_grade_press(1, 0.8, 0.5, false, false);
         app.invoke_grade_release();
         assert_eq!(app.get_wheel_hand(), 1);
         app.set_exposure(0.5);

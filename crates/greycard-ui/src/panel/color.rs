@@ -106,25 +106,273 @@ pub(crate) fn choose_grade_range(app: &App, i: usize) {
 /// `wheel-hand` for the tint's ring; 0 to 2 are the grading wheels.
 pub(crate) const TINT_HAND: i32 = 3;
 
-/// How a press in a wheel holds its drag, as the `.slint` side reads
-/// the keys at the press.
-const HOLD_HUE: i32 = 1;
-const HOLD_AMOUNT: i32 = 2;
+/// Which of a wheel's two numbers its drag keeps, by the keys held:
+/// Shift the hue, Ctrl (⌘ on a Mac, which Slint reports as Control)
+/// the amount, and Shift when both are down.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Hold {
+    #[default]
+    Free,
+    Hue,
+    Amount,
+}
+
+impl Hold {
+    pub(crate) fn of(shift: bool, control: bool) -> Self {
+        if shift {
+            Hold::Hue
+        } else if control {
+            Hold::Amount
+        } else {
+            Hold::Free
+        }
+    }
+}
 
 /// A wheel's hue and amount after a press or a drag at `(x, y)`,
-/// from `(hue0, amount0)`, the wheel's at the press under a hold and
-/// as it stands under none: Shift's hold keeps the hue and reads the
-/// amount along its ray (nothing at the center and past it), Ctrl's
-/// keeps the amount, and a free drag takes both from the pointer (the
-/// hue kept at the center, where there is none to read).
-pub(crate) fn held_pick(x: f32, y: f32, hold: i32, (hue0, amount0): (f32, f32)) -> (f32, f32) {
-    if hold == HOLD_HUE {
+/// from `(hue0, amount0)`, the wheel's when the hold began under one
+/// and as it stands under none: Shift's hold keeps the hue and reads
+/// the amount along its ray (nothing at the center and past it),
+/// Ctrl's keeps the amount, and a free drag takes both from the
+/// pointer (the hue kept at the center, where there is none to read).
+pub(crate) fn held_pick(x: f32, y: f32, hold: Hold, (hue0, amount0): (f32, f32)) -> (f32, f32) {
+    if hold == Hold::Hue {
         return (hue0, wheel::pick_along(x, y, hue0));
     }
     let (hue, amount) = wheel::pick(x, y);
     match hold {
-        HOLD_AMOUNT => (hue.unwrap_or(hue0), amount0),
+        Hold::Amount => (hue.unwrap_or(hue0), amount0),
         _ => (hue.unwrap_or(hue0), amount),
+    }
+}
+
+/// A drag in a wheel, from its press to its release: the wheel
+/// (`wheel-hand`'s numbering), the hold its keys make, the wheel's
+/// hue and amount when that hold began, and where the pointer last
+/// was. The keys are read at the press, at every move, and at every
+/// key that goes down or up in between, so a hold can begin or end
+/// at any point of the drag.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct WheelDrag {
+    pub(crate) hand: i32,
+    hold: Hold,
+    from: (f32, f32),
+    at: (f32, f32),
+}
+
+impl WheelDrag {
+    /// A press in wheel `hand` at `at`, the wheel at `now`.
+    pub(crate) fn press(hand: i32, hold: Hold, now: (f32, f32), at: (f32, f32)) -> Self {
+        WheelDrag {
+            hand,
+            hold,
+            from: now,
+            at,
+        }
+    }
+
+    /// The keys as they stand, the wheel at `now`: a hold taken up
+    /// keeps the hue or the amount the wheel has at that moment, not
+    /// the press's, so the point does not jump back; one let go of
+    /// frees the point. Whether the hold changed, for the caller to
+    /// put the point where the pointer now says without waiting for
+    /// it to move.
+    pub(crate) fn keys(&mut self, hold: Hold, now: (f32, f32)) -> bool {
+        if hold == self.hold {
+            return false;
+        }
+        self.hold = hold;
+        self.from = now;
+        true
+    }
+
+    /// The wheel's hue and amount with the pointer at `at`, the wheel
+    /// at `now`.
+    pub(crate) fn point(&mut self, at: (f32, f32), now: (f32, f32)) -> (f32, f32) {
+        self.at = at;
+        let from = if self.hold == Hold::Free {
+            now
+        } else {
+            self.from
+        };
+        held_pick(at.0, at.1, self.hold, from)
+    }
+
+    /// Where the pointer last was.
+    pub(crate) fn at(&self) -> (f32, f32) {
+        self.at
+    }
+
+    pub(crate) fn hold(&self) -> Hold {
+        self.hold
+    }
+}
+
+/// Wheel `hand`'s hue and amount as the panel holds them.
+fn hand_values(app: &App, hand: i32) -> (f32, f32) {
+    if hand == TINT_HAND {
+        return (app.get_tint_hue(), app.get_tint_amount());
+    }
+    let i = (hand.max(0) as usize).min(2);
+    (
+        grade_values(app.get_grade_hues())[i],
+        grade_values(app.get_grade_saturations())[i],
+    )
+}
+
+/// Wheel `hand`'s picture, pixels across, as it is drawn now.
+fn hand_size(app: &App, hand: i32) -> usize {
+    if hand == TINT_HAND {
+        RING
+    } else if app.get_grade_big() == hand {
+        WHEEL_BIG
+    } else {
+        WHEEL_SMALL
+    }
+}
+
+/// The drag's wheel set from the pointer at `at`, redrawn, and its
+/// guide put on the panel.
+fn drag_to(app: &App, d: &mut WheelDrag, at: (f32, f32)) {
+    let (hue, amount) = d.point(at, hand_values(app, d.hand));
+    if d.hand == TINT_HAND {
+        app.set_tint_hue(hue);
+        app.set_tint_amount(amount);
+        show_tint(app);
+        app.window().request_redraw();
+    } else {
+        let i = (d.hand.max(0) as usize).min(2);
+        let mut hues = grade_values(app.get_grade_hues());
+        let mut sats = grade_values(app.get_grade_saturations());
+        (hues[i], sats[i]) = (hue, amount);
+        app.set_grade_hues(grade_model(&hues));
+        app.set_grade_saturations(grade_model(&sats));
+        choose_grade_range(app, i);
+    }
+    app.set_wheel_guide(wheel_guide(d.hold(), (hue, amount), hand_size(app, d.hand)));
+}
+
+/// A move in the drag's wheel, with the keys as the move carries them.
+/// The drag, if it is wheel `hand`'s and that wheel is still in hand.
+/// A wheel put down mid-drag (Esc, another section's control, or the
+/// panel shown another edit: another frame, another target, an undo)
+/// ends the drag and its hold there, the guide with them: its values
+/// are no longer what the drag began from. Slint passes a move or a
+/// key on only from a wheel whose own press is held, so a drag whose
+/// wheel went away with a view change is never read either; the next
+/// press replaces it.
+fn live_drag(app: &App, drag: &std::cell::Cell<Option<WheelDrag>>, hand: i32) -> Option<WheelDrag> {
+    let d = drag.get()?;
+    if d.hand == hand && app.get_wheel_hand() == hand {
+        return Some(d);
+    }
+    drag_released(app, drag);
+    None
+}
+
+fn drag_moved(
+    app: &App,
+    drag: &std::cell::Cell<Option<WheelDrag>>,
+    hand: i32,
+    at: (f32, f32),
+    hold: Hold,
+) {
+    let Some(mut d) = live_drag(app, drag, hand) else {
+        return;
+    };
+    d.keys(hold, hand_values(app, d.hand));
+    drag_to(app, &mut d, at);
+    drag.set(Some(d));
+}
+
+/// A key gone down or up in a drag: a changed hold takes effect with
+/// the pointer where it is, no move needed.
+fn drag_keys(app: &App, drag: &std::cell::Cell<Option<WheelDrag>>, hand: i32, hold: Hold) {
+    let Some(mut d) = live_drag(app, drag, hand) else {
+        return;
+    };
+    if d.keys(hold, hand_values(app, d.hand)) {
+        let at = d.at();
+        drag_to(app, &mut d, at);
+    }
+    drag.set(Some(d));
+}
+
+/// The drag over, and its guide gone.
+fn drag_released(app: &App, drag: &std::cell::Cell<Option<WheelDrag>>) {
+    drag.set(None);
+    app.set_wheel_guide(crate::WheelGuide::default());
+}
+
+/// The marker's outer radius in a hue circle's picture, as a fraction
+/// of its width: [`draw_hue_circle`]'s dark rim, a thirty-second of
+/// the picture and half again.
+const MARKER_RIM: f32 = 1.5 / 32.0;
+
+/// The guide a held drag draws in a wheel `n` pixels across whose hue
+/// and amount are `(hue, amount)`: under Shift, the hue's line from
+/// the center to the rim; under Ctrl, the circle the amount's radius
+/// draws; none for a free drag. In the picture's coordinates, 0 to 1
+/// across and down, on [`draw_hue_circle`]'s center and radius, and
+/// broken where the marker sits, so the marker reads as over it.
+pub(crate) fn wheel_guide(hold: Hold, (hue, amount): (f32, f32), n: usize) -> crate::WheelGuide {
+    let n = n as f32;
+    // The picture's center and rim, its pixels' centers at (i + 0.5) / n.
+    let rim = 0.5 - 1.0 / n;
+    let (mx, my) = wheel::place(hue, amount);
+    // The marker's distance from the center.
+    let t = ((2.0 * mx - 1.0).hypot(2.0 * my - 1.0)) * rim;
+    let (s, c) = hue.to_radians().sin_cos();
+    let at = |d: f32| (0.5 + d * c, 0.5 - d * s);
+    let g = MARKER_RIM;
+    match hold {
+        Hold::Free => crate::WheelGuide::default(),
+        Hold::Hue => {
+            // Center to the marker's near rim, and its far rim to the
+            // wheel's; a stroke the marker covers whole is none.
+            let near = (t - g).max(0.0);
+            let far = (t + g).min(rim);
+            let (x0, y0) = at(0.0);
+            let (x1, y1) = at(near);
+            let (x2, y2) = at(far);
+            let (x3, y3) = at(rim);
+            crate::WheelGuide {
+                kind: 1,
+                x0,
+                y0,
+                x1,
+                y1,
+                x2,
+                y2,
+                x3,
+                y3,
+                r: 0.0,
+            }
+        }
+        Hold::Amount => {
+            // The arc's ends where the circle meets the marker's rim:
+            // a chord of `g` either side of the marker. A circle the
+            // marker covers whole is none.
+            let r = if g < 2.0 * t { t } else { 0.0 };
+            let off = if r > 0.0 {
+                2.0 * (g / (2.0 * t)).asin()
+            } else {
+                0.0
+            };
+            let on = |a: f32| (0.5 + r * a.cos(), 0.5 - r * a.sin());
+            let a = hue.to_radians();
+            let (x0, y0) = on(a + off);
+            let (x1, y1) = on(a - off);
+            crate::WheelGuide {
+                kind: 2,
+                x0,
+                y0,
+                x1,
+                y1,
+                r,
+                ..Default::default()
+            }
+        }
     }
 }
 
@@ -1017,50 +1265,40 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
     }
     // Color grading: the sliders act on the chosen wheel. A press or
     // a drag in a wheel chooses it and sets its hue and strength from
-    // the pointer; release records the edit.
-    // Shift held at the press keeps the wheel's hue for the drag, and
-    // Ctrl its strength; the press takes the wheel in hand.
+    // the pointer; release records the edit. The press takes the
+    // wheel in hand. Shift keeps the wheel's hue and Ctrl its
+    // strength for as long as either is held, taken up or let go of
+    // at the press, at a move, or at the key itself (`grade-keys`).
+    // One drag at a time, the grading's or the tint's.
+    let drag: Rc<std::cell::Cell<Option<WheelDrag>>> = Rc::default();
     {
-        let app_weak = app.as_weak();
-        // The press's hold, and the wheel's hue and strength then.
-        let held = Rc::new(std::cell::Cell::new((0, 0.0, 0.0)));
-        let point = {
-            let held = held.clone();
-            move |app: &App, i: i32, x: f32, y: f32| {
-                let i = (i.max(0) as usize).min(2);
-                let mut hues = grade_values(app.get_grade_hues());
-                let mut sats = grade_values(app.get_grade_saturations());
-                let (hold, hue0, sat0) = held.get();
-                let from = if hold == 0 {
-                    (hues[i], sats[i])
-                } else {
-                    (hue0, sat0)
-                };
-                (hues[i], sats[i]) = held_pick(x, y, hold, from);
-                app.set_grade_hues(grade_model(&hues));
-                app.set_grade_saturations(grade_model(&sats));
-                choose_grade_range(app, i);
-            }
-        };
-        {
-            let (state, app_weak, point) = (state.clone(), app_weak.clone(), point.clone());
-            app.on_grade_press(move |i, x, y, hold| {
-                let Some(app) = app_weak.upgrade() else {
-                    return;
-                };
-                let w = (i.max(0) as usize).min(2);
-                held.set((
-                    hold,
-                    grade_values(app.get_grade_hues())[w],
-                    grade_values(app.get_grade_saturations())[w],
-                ));
-                take_wheel(&mut state.borrow_mut(), &app, w as i32);
-                point(&app, i, x, y);
-            });
-        }
-        app.on_grade_move(move |i, x, y| {
+        let (state, app_weak, drag) = (state.clone(), app.as_weak(), drag.clone());
+        app.on_grade_press(move |i, x, y, shift, control| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let w = (i.max(0) as usize).min(2) as i32;
+            let mut d = WheelDrag::press(w, Hold::of(shift, control), hand_values(&app, w), (x, y));
+            take_wheel(&mut state.borrow_mut(), &app, w);
+            drag_to(&app, &mut d, (x, y));
+            drag.set(Some(d));
+        });
+    }
+    {
+        let (app_weak, drag) = (app.as_weak(), drag.clone());
+        app.on_grade_move(move |i, x, y, shift, control| {
             if let Some(app) = app_weak.upgrade() {
-                point(&app, i, x, y);
+                let i = (i.max(0) as usize).min(2) as i32;
+                drag_moved(&app, &drag, i, (x, y), Hold::of(shift, control));
+            }
+        });
+    }
+    {
+        let (app_weak, drag) = (app.as_weak(), drag.clone());
+        app.on_grade_keys(move |i, shift, control| {
+            if let Some(app) = app_weak.upgrade() {
+                let i = (i.max(0) as usize).min(2) as i32;
+                drag_keys(&app, &drag, i, Hold::of(shift, control));
             }
         });
     }
@@ -1075,9 +1313,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
         });
     }
     {
-        let app_weak = app.as_weak();
+        let (app_weak, drag) = (app.as_weak(), drag.clone());
         app.on_grade_release(move || {
             if let Some(app) = app_weak.upgrade() {
+                drag_released(&app, &drag);
                 app.invoke_view_changed();
             }
         });
@@ -1148,38 +1387,35 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
     // a grading wheel's is. A double click is Reset: off.
     // Shift and Ctrl hold the hue or the amount as the wheels' do.
     {
-        let app_weak = app.as_weak();
-        let held = Rc::new(std::cell::Cell::new((0, 0.0, 0.0)));
-        let point = {
-            let held = held.clone();
-            move |app: &App, x: f32, y: f32| {
-                let (hold, hue0, amount0) = held.get();
-                let from = if hold == 0 {
-                    (app.get_tint_hue(), app.get_tint_amount())
-                } else {
-                    (hue0, amount0)
-                };
-                let (hue, amount) = held_pick(x, y, hold, from);
-                app.set_tint_hue(hue);
-                app.set_tint_amount(amount);
-                show_tint(app);
-                app.window().request_redraw();
-            }
-        };
-        {
-            let (state, app_weak, point) = (state.clone(), app_weak.clone(), point.clone());
-            app.on_tint_press(move |x, y, hold| {
-                let Some(app) = app_weak.upgrade() else {
-                    return;
-                };
-                held.set((hold, app.get_tint_hue(), app.get_tint_amount()));
-                take_wheel(&mut state.borrow_mut(), &app, TINT_HAND);
-                point(&app, x, y);
-            });
-        }
-        app.on_tint_move(move |x, y| {
+        let (state, app_weak, drag) = (state.clone(), app.as_weak(), drag.clone());
+        app.on_tint_press(move |x, y, shift, control| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut d = WheelDrag::press(
+                TINT_HAND,
+                Hold::of(shift, control),
+                hand_values(&app, TINT_HAND),
+                (x, y),
+            );
+            take_wheel(&mut state.borrow_mut(), &app, TINT_HAND);
+            drag_to(&app, &mut d, (x, y));
+            drag.set(Some(d));
+        });
+    }
+    {
+        let (app_weak, drag) = (app.as_weak(), drag.clone());
+        app.on_tint_move(move |x, y, shift, control| {
             if let Some(app) = app_weak.upgrade() {
-                point(&app, x, y);
+                drag_moved(&app, &drag, TINT_HAND, (x, y), Hold::of(shift, control));
+            }
+        });
+    }
+    {
+        let (app_weak, drag) = (app.as_weak(), drag.clone());
+        app.on_tint_keys(move |shift, control| {
+            if let Some(app) = app_weak.upgrade() {
+                drag_keys(&app, &drag, TINT_HAND, Hold::of(shift, control));
             }
         });
     }
@@ -1187,6 +1423,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
         let app_weak = app.as_weak();
         app.on_tint_release(move || {
             if let Some(app) = app_weak.upgrade() {
+                drag_released(&app, &drag);
                 app.invoke_view_changed();
             }
         });
@@ -1585,13 +1822,431 @@ mod tests {
         use crate::wheel::DEAD;
         let from = (90.0, 0.7);
         // Up, the held hue's way: the amount the radius gives.
-        let (hue, amount) = held_pick(0.5, 0.5 + 0.5 * (DEAD + 0.5 * (1.0 - DEAD)), HOLD_HUE, from);
+        let (hue, amount) = held_pick(
+            0.5,
+            0.5 + 0.5 * (DEAD + 0.5 * (1.0 - DEAD)),
+            Hold::Hue,
+            from,
+        );
         assert_eq!(hue, 90.0);
         assert!((amount - 0.5).abs() < 1e-5, "{amount}");
         // Down, past the center: nothing, where a free drag reads half.
         let (x, y) = (0.5, 0.5 - 0.5 * (DEAD + 0.5 * (1.0 - DEAD)));
-        assert_eq!(held_pick(x, y, HOLD_HUE, from), (90.0, 0.0));
-        assert!((held_pick(x, y, 0, from).1 - 0.5).abs() < 1e-5);
+        assert_eq!(held_pick(x, y, Hold::Hue, from), (90.0, 0.0));
+        assert!((held_pick(x, y, Hold::Free, from).1 - 0.5).abs() < 1e-5);
+    }
+
+    /// Where the window's keys never hear a key (another control has
+    /// them), the next move carries it: Shift down mid-drag holds the
+    /// hue the wheel had when the move came, and up frees it.
+    #[test]
+    fn a_move_carries_the_keys_into_the_drag() {
+        use crate::testing;
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 3000.0));
+        let (_state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        // The keys' own path cut, so only a move can tell.
+        app.on_grade_keys(|_, _, _| {});
+        let key = |k: Key, down: bool| {
+            let text: slint::SharedString = k.into();
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        let at = |p: (f32, f32)| slint::LogicalPosition::new(p.0, p.1);
+        let to = |p: (f32, f32)| {
+            app.window()
+                .dispatch_event(WindowEvent::PointerMoved { position: at(p) })
+        };
+        let read = || (wheels(&app)[0].hue, wheels(&app)[0].saturation);
+        center(&app, "Shadows wheel");
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+        let (cx, cy) = center(&app, "Shadows wheel");
+        to((cx + 25.0, cy));
+        app.window().dispatch_event(WindowEvent::PointerPressed {
+            position: at((cx + 25.0, cy)),
+            button: PointerEventButton::Left,
+        });
+        to((cx + 20.0, cy - 20.0));
+        let before = read();
+        key(Key::Shift, true);
+        assert_eq!(app.get_wheel_guide().kind, 0, "not heard until a move");
+        to((cx - 5.0, cy - 30.0));
+        assert_eq!(app.get_wheel_guide().kind, 1);
+        assert_eq!(read().0, before.0, "the hue the wheel had at the move");
+        key(Key::Shift, false);
+        to((cx - 6.0, cy - 30.0));
+        assert_eq!(app.get_wheel_guide().kind, 0);
+        assert!(read().0 > before.0 + 40.0, "free again: {:?}", read());
+        app.window().dispatch_event(WindowEvent::PointerReleased {
+            position: at((cx - 6.0, cy - 30.0)),
+            button: PointerEventButton::Left,
+        });
+    }
+
+    /// A window on the Develop tab over two frames, a drag begun in the
+    /// Shadows wheel and still held, and the pointer's way to move it.
+    fn mid_drag() -> (App, Rc<Shared>, Rc<Worker>, (f32, f32)) {
+        use crate::testing;
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let app = testing::window(2);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 3000.0));
+        let (state, worker) = testing::state_for(&app, testing::folder(2));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        center(&app, "Shadows wheel");
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+        let (cx, cy) = center(&app, "Shadows wheel");
+        let at = slint::LogicalPosition::new(cx + 25.0, cy);
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position: at });
+        app.window().dispatch_event(WindowEvent::PointerPressed {
+            position: at,
+            button: PointerEventButton::Left,
+        });
+        drag_to_point(&app, (cx + 20.0, cy - 20.0));
+        assert_eq!(app.get_wheel_hand(), 0);
+        (app, state, worker, (cx, cy))
+    }
+
+    fn drag_to_point(app: &App, (x, y): (f32, f32)) {
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(x, y),
+            });
+    }
+
+    fn key_event(app: &App, k: slint::platform::Key, down: bool) {
+        use slint::platform::WindowEvent;
+        let text: slint::SharedString = k.into();
+        app.window().dispatch_event(if down {
+            WindowEvent::KeyPressed { text }
+        } else {
+            WindowEvent::KeyReleased { text }
+        });
+    }
+
+    fn release_at(app: &App, (x, y): (f32, f32)) {
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerReleased {
+                position: slint::LogicalPosition::new(x, y),
+                button: slint::platform::PointerEventButton::Left,
+            });
+    }
+
+    /// After a drag whose wheel went away under it: the wheels set
+    /// anew, and Shift or Ctrl alone, down and up, must leave them be
+    /// and show no guide.
+    fn keys_leave_the_wheels_alone(app: &App) {
+        use slint::platform::Key;
+        app.set_grade_hues(grade_model(&[200.0; 3]));
+        app.set_grade_saturations(grade_model(&[0.1; 3]));
+        for k in [Key::Control, Key::Shift] {
+            key_event(app, k, true);
+            assert_eq!(app.get_wheel_guide().kind, 0, "{k:?}: no guide");
+            assert_eq!(
+                wheels(app)[0],
+                Wheel {
+                    hue: 200.0,
+                    saturation: 0.1
+                },
+                "{k:?} down"
+            );
+            key_event(app, k, false);
+            assert_eq!(
+                wheels(app)[0],
+                Wheel {
+                    hue: 200.0,
+                    saturation: 0.1
+                },
+                "{k:?} up"
+            );
+        }
+    }
+
+    /// The reviewer's case: C to the Cull tab mid-drag takes the wheel
+    /// away and its release never comes; back on Develop, a key alone
+    /// must not take up the dead drag.
+    #[test]
+    fn a_drag_whose_wheel_went_to_cull_hears_no_keys() {
+        let (app, _state, _worker, (cx, cy)) = mid_drag();
+        crate::testing::press(&app, "c");
+        assert_eq!(app.get_panel_tab(), crate::panel::cull::CULL_TAB);
+        release_at(&app, (cx, cy));
+        crate::testing::press(&app, "d");
+        assert_eq!(app.get_panel_tab(), "Develop");
+        keys_leave_the_wheels_alone(&app);
+    }
+
+    #[test]
+    fn a_drag_whose_wheel_went_with_the_tab_hears_no_keys() {
+        let (app, _state, _worker, (cx, cy)) = mid_drag();
+        app.set_panel_tab("Crop".into());
+        release_at(&app, (cx, cy));
+        app.set_panel_tab("Develop".into());
+        keys_leave_the_wheels_alone(&app);
+    }
+
+    /// Enlarging the wheel mid-drag swaps its small one for the big:
+    /// the drag was the small one's.
+    #[test]
+    fn a_drag_whose_wheel_was_enlarged_hears_no_keys() {
+        let (app, _state, _worker, (cx, cy)) = mid_drag();
+        app.set_grade_big(0);
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+        release_at(&app, (cx, cy));
+        keys_leave_the_wheels_alone(&app);
+    }
+
+    /// Another frame opened mid-drag: the drag and its hold end there;
+    /// the pointer and the keys move nothing on the new frame.
+    #[test]
+    fn a_frame_change_ends_the_drag() {
+        use slint::platform::Key;
+        let (app, _state, _worker, (cx, cy)) = mid_drag();
+        key_event(&app, Key::Shift, true);
+        assert_eq!(app.get_wheel_guide().kind, 1);
+        app.invoke_select(1);
+        let fresh = wheels(&app);
+        drag_to_point(&app, (cx - 20.0, cy + 10.0));
+        assert_eq!(wheels(&app), fresh, "the move is the dead drag's");
+        assert_eq!(app.get_wheel_guide().kind, 0, "no guide");
+        key_event(&app, Key::Shift, false);
+        key_event(&app, Key::Control, true);
+        assert_eq!(wheels(&app), fresh);
+        assert_eq!(app.get_wheel_guide().kind, 0);
+        key_event(&app, Key::Control, false);
+        release_at(&app, (cx - 20.0, cy + 10.0));
+    }
+
+    /// Esc puts the wheel down mid-drag, as it does a wheel at rest:
+    /// the drag and its hold end with it, the guide gone; the pointer
+    /// and the keys move nothing after.
+    #[test]
+    fn esc_ends_a_held_drag() {
+        use slint::platform::Key;
+        let (app, _state, _worker, (cx, cy)) = mid_drag();
+        key_event(&app, Key::Shift, true);
+        assert_eq!(app.get_wheel_guide().kind, 1);
+        crate::testing::press(&app, Key::Escape);
+        assert_eq!(app.get_wheel_hand(), -1);
+        assert_eq!(
+            app.get_wheel_guide().kind,
+            0,
+            "the guide went with the hold"
+        );
+        let put_down = wheels(&app);
+        drag_to_point(&app, (cx - 20.0, cy + 10.0));
+        key_event(&app, Key::Shift, false);
+        key_event(&app, Key::Control, true);
+        assert_eq!(wheels(&app), put_down);
+        assert_eq!(app.get_wheel_guide().kind, 0);
+        key_event(&app, Key::Control, false);
+        release_at(&app, (cx - 20.0, cy + 10.0));
+    }
+
+    #[test]
+    fn shift_wins_over_ctrl() {
+        assert_eq!(Hold::of(false, false), Hold::Free);
+        assert_eq!(Hold::of(true, false), Hold::Hue);
+        assert_eq!(Hold::of(false, true), Hold::Amount);
+        assert_eq!(Hold::of(true, true), Hold::Hue);
+    }
+
+    /// A hold taken up mid-drag keeps what the wheel has then, not
+    /// what it had at the press; let go of, the point is the
+    /// pointer's again; one key for the other starts from where the
+    /// first left the wheel.
+    #[test]
+    fn a_hold_begins_and_ends_where_the_drag_is() {
+        use crate::wheel::place;
+        let mut d = WheelDrag::press(0, Hold::Free, (200.0, 0.3), place(0.0, 0.8));
+        let mut now = d.point(place(0.0, 0.8), (200.0, 0.3));
+        assert!(now.0.abs() < 0.01 && (now.1 - 0.8).abs() < 1e-4, "{now:?}");
+        now = d.point(place(60.0, 0.5), now);
+        // Shift down: the hue it has now, 60, kept.
+        assert!(d.keys(Hold::Hue, now));
+        assert!(!d.keys(Hold::Hue, now), "the same keys change nothing");
+        let held = d.point(place(150.0, 0.9), now);
+        assert_eq!(held.0, now.0, "the hue at the key, not the press's");
+        assert!(held.1 < now.1, "150 is past square to 60: {held:?}");
+        // Shift up: the pointer's own.
+        assert!(d.keys(Hold::Free, held));
+        let free = d.point(d.at(), held);
+        assert!((free.0 - 150.0).abs() < 0.01 && (free.1 - 0.9).abs() < 1e-4);
+        // Ctrl down: the amount it has now, 0.9, kept.
+        assert!(d.keys(Hold::Amount, free));
+        let held = d.point(place(300.0, 0.2), free);
+        assert!((held.0 - 300.0).abs() < 0.01);
+        assert_eq!(held.1, free.1);
+        // Shift with it: the hue it has now, kept, and the amount free.
+        assert!(d.keys(Hold::of(true, true), held));
+        let both = d.point(place(300.0, 0.4), held);
+        assert_eq!(both.0, held.0);
+        assert!((both.1 - 0.4).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_guide_is_the_held_hues_line_or_the_held_amounts_circle() {
+        let n = WHEEL_SMALL;
+        let rim = 0.5 - 1.0 / n as f32;
+        let near = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).hypot(a.1 - b.1);
+        // The marker's center, in the picture, y down.
+        let marker = |hue: f32, amount: f32| {
+            let (x, y) = wheel::place(hue, amount);
+            (0.5 + (2.0 * x - 1.0) * rim, 0.5 - (2.0 * y - 1.0) * rim)
+        };
+        assert_eq!(
+            wheel_guide(Hold::Free, (120.0, 0.5), n),
+            crate::WheelGuide::default()
+        );
+
+        // Shift: center to rim along 90 degrees, up the picture, broken
+        // at the marker by its rim.
+        let g = wheel_guide(Hold::Hue, (90.0, 0.5), n);
+        let m = marker(90.0, 0.5);
+        assert_eq!(g.kind, 1);
+        assert_eq!((g.x0, g.y0), (0.5, 0.5));
+        assert!(near((g.x3, g.y3), (0.5, 0.5 - rim)) < 1e-5);
+        for p in [(g.x1, g.y1), (g.x2, g.y2)] {
+            assert!((p.0 - 0.5).abs() < 1e-5, "on the ray: {g:?}");
+            assert!((near(p, m) - MARKER_RIM).abs() < 1e-5, "{g:?}");
+        }
+        assert!(g.y1 > m.1 && m.1 > g.y2, "the marker between: {g:?}");
+        // At nothing the marker covers the center: no inner stroke.
+        let g = wheel_guide(Hold::Hue, (0.0, 0.0), n);
+        assert_eq!((g.x0, g.y0), (g.x1, g.y1));
+
+        // Ctrl: the circle through the marker, its gap the marker's.
+        let g = wheel_guide(Hold::Amount, (210.0, 0.6), n);
+        let m = marker(210.0, 0.6);
+        assert_eq!(g.kind, 2);
+        assert!((g.r - near(m, (0.5, 0.5))).abs() < 1e-5, "{g:?}");
+        for p in [(g.x0, g.y0), (g.x1, g.y1)] {
+            assert!((near(p, (0.5, 0.5)) - g.r).abs() < 1e-5, "{g:?}");
+            assert!((near(p, m) - MARKER_RIM).abs() < 1e-5, "{g:?}");
+        }
+        // At nothing the marker covers the whole circle: none drawn.
+        assert_eq!(wheel_guide(Hold::Amount, (210.0, 0.0), n).r, 0.0);
+    }
+
+    /// Shift or Ctrl pressed in the middle of a drag holds what the
+    /// wheel has then, at once, without the pointer moving, with the
+    /// guide on; let go, the point is the pointer's again at once and
+    /// the guide off; Shift wins over Ctrl; the drag's release takes
+    /// the guide down whatever is held. A grading wheel and the
+    /// tint's ring alike.
+    #[test]
+    fn a_key_held_mid_drag_holds_the_wheel_from_there() {
+        use crate::testing;
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 3000.0));
+        let (_state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        let key = |k: Key, down: bool| {
+            let text: slint::SharedString = k.into();
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        let at = |p: (f32, f32)| slint::LogicalPosition::new(p.0, p.1);
+        let to = |p: (f32, f32)| {
+            app.window()
+                .dispatch_event(WindowEvent::PointerMoved { position: at(p) })
+        };
+        let kind = || app.get_wheel_guide().kind;
+        // The angle of the pointer `(dx, dy)` from a wheel's center,
+        // y down, as a hue.
+        let angle = |dx: f32, dy: f32| (-dy).atan2(dx).to_degrees().rem_euclid(360.0);
+        let apart = |a: f32, b: f32| (a - b).abs().min(360.0 - (a - b).abs());
+
+        let check = |(cx, cy): (f32, f32), read: &dyn Fn() -> (f32, f32)| {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+            let p = (cx + 25.0, cy);
+            to(p);
+            app.window().dispatch_event(WindowEvent::PointerPressed {
+                position: at(p),
+                button: PointerEventButton::Left,
+            });
+            assert_eq!(kind(), 0, "a free drag shows no guide");
+            to((cx + 20.0, cy - 20.0));
+            let before = read();
+            assert!(apart(before.0, 45.0) < 2.0, "{before:?}");
+
+            // Shift down, the pointer still: the guide on, nothing moved.
+            key(Key::Shift, true);
+            assert_eq!(kind(), 1, "Shift's line, at once");
+            let held = read();
+            assert_eq!(held.0, before.0);
+            assert!((held.1 - before.1).abs() < 1e-4, "{held:?} {before:?}");
+            // A move: the hue at the key, not the press's (0).
+            to((cx - 5.0, cy - 30.0));
+            assert_eq!(read().0, before.0, "the hue Shift found");
+            assert_eq!(kind(), 1);
+
+            // Shift up, the pointer still: free at once, to the pointer.
+            key(Key::Shift, false);
+            assert_eq!(kind(), 0, "the guide off");
+            let free = read();
+            assert!(apart(free.0, angle(-5.0, -30.0)) < 2.0, "{free:?}");
+
+            // Ctrl down: the amount it has now, kept.
+            key(Key::Control, true);
+            assert_eq!(kind(), 2, "Ctrl's circle, at once");
+            to((cx + 30.0, cy + 5.0));
+            let ctrl = read();
+            assert_eq!(ctrl.1, free.1, "the amount Ctrl found");
+            assert!(apart(ctrl.0, angle(30.0, 5.0)) < 2.0, "{ctrl:?}");
+
+            // Shift with it: Shift's, from the hue there.
+            key(Key::Shift, true);
+            assert_eq!(kind(), 1, "Shift wins");
+            to((cx - 20.0, cy - 20.0));
+            assert_eq!(read().0, ctrl.0, "the hue Shift found");
+
+            // The drag released with both held: the guide goes with it.
+            app.window().dispatch_event(WindowEvent::PointerReleased {
+                position: at((cx - 20.0, cy - 20.0)),
+                button: PointerEventButton::Left,
+            });
+            assert_eq!(kind(), 0, "no drag, no guide");
+            let after = read();
+            key(Key::Shift, false);
+            key(Key::Control, false);
+            assert_eq!(kind(), 0);
+            assert_eq!(read(), after, "keys outside a drag move nothing");
+        };
+
+        // Scrolled into view, and measured where the scroll leaves it.
+        center(&app, "Shadows wheel");
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+        check(center(&app, "Shadows wheel"), &|| {
+            (wheels(&app)[0].hue, wheels(&app)[0].saturation)
+        });
+        assert_eq!(app.get_wheel_hand(), 0);
+
+        let ring =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "CurveEditor")
+                .find(|e| e.size().width == 176.0)
+                .expect("the tint ring is on screen");
+        let (pos, size) = (ring.absolute_position(), ring.size());
+        check(
+            (pos.x + size.width / 2.0, pos.y + size.height / 2.0),
+            &|| (app.get_tint_hue(), app.get_tint_amount()),
+        );
+        assert_eq!(app.get_wheel_hand(), TINT_HAND);
     }
 
     /// A pick from the picture onto a wheel at nothing gives it an
@@ -2524,5 +3179,180 @@ mod tests {
             },
             &keys,
         );
+    }
+
+    /// The guides as they draw, for an eye to judge: a grading wheel
+    /// and the tint's ring mid-drag, Shift's line and Ctrl's circle,
+    /// at scales 1 and 2, on Charcoal and Light, drawn by Slint's
+    /// software renderer. A drag in the middle cannot be had from
+    /// outside the window, so the state is set here. Run with
+    /// `GREYCARD_WHEEL_CAPTURES=DIR` and `--ignored`.
+    #[test]
+    #[ignore]
+    fn capture_the_wheel_guides() {
+        use crate::testing;
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+        let Some(dir) = std::env::var_os("GREYCARD_WHEEL_CAPTURES") else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        testing::drawing_backend();
+        for theme in ["Charcoal", "Light"] {
+            for scale in [1.0f32, 2.0] {
+                for ring in [false, true] {
+                    for held in [Key::Shift, Key::Control] {
+                        let app = testing::window(1);
+                        app.window()
+                            .dispatch_event(WindowEvent::ScaleFactorChanged {
+                                scale_factor: scale,
+                            });
+                        // The testing window takes a size as physical
+                        // and logical both; the snapshot's buffer is the
+                        // physical, the layout the logical.
+                        app.window().set_size(slint::PhysicalSize::new(
+                            (1200.0 * scale) as u32,
+                            (3000.0 * scale) as u32,
+                        ));
+                        app.window().dispatch_event(WindowEvent::Resized {
+                            size: slint::LogicalSize::new(1200.0, 3000.0),
+                        });
+                        app.global::<crate::Theme>().set_name(theme.into());
+                        let (_state, _worker) = testing::state_for(&app, testing::folder(1));
+                        app.invoke_select(0);
+                        app.set_panel_tab("Develop".into());
+                        // The sections' opening animations run out first,
+                        // or the ring is found where it stood before them.
+                        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(
+                            1,
+                        ));
+                        // The wheel scrolled into view and where it is
+                        // then; the crop, a margin round it (round the
+                        // row of three for the grading).
+                        let (c, crop) = if ring {
+                            let e =
+                                i_slint_backend_testing::ElementHandle::find_by_element_type_name(
+                                    &app,
+                                    "CurveEditor",
+                                )
+                                .find(|e| e.size().width == 176.0)
+                                .expect("the tint ring is on screen");
+                            let (at, size) = (e.absolute_position(), e.size());
+                            (
+                                (at.x + size.width / 2.0, at.y + size.height / 2.0),
+                                (
+                                    at.x - 24.0,
+                                    at.y - 24.0,
+                                    size.width + 48.0,
+                                    size.height + 48.0,
+                                ),
+                            )
+                        } else {
+                            let _ = center(&app, "Shadows wheel");
+                            i_slint_backend_testing::mock_elapsed_time(
+                                std::time::Duration::from_secs(1),
+                            );
+                            let (a, sa) = testing::labeled(&app, "Shadows wheel");
+                            let (b, sb) = testing::labeled(&app, "Highlights wheel");
+                            (
+                                (a.x + sa.width / 2.0, a.y + sa.height / 2.0),
+                                (
+                                    a.x - 12.0,
+                                    a.y - 12.0,
+                                    b.x + sb.width - a.x + 24.0,
+                                    sa.height + 24.0,
+                                ),
+                            )
+                        };
+                        let (cx, cy) = c;
+                        let k = if ring { 1.8 } else { 1.0 };
+                        let at = |dx: f32, dy: f32| {
+                            slint::LogicalPosition::new(cx + k * dx, cy + k * dy)
+                        };
+                        let to = |dx, dy| {
+                            app.window().dispatch_event(WindowEvent::PointerMoved {
+                                position: at(dx, dy),
+                            })
+                        };
+                        let key = |down: bool| {
+                            let text: slint::SharedString = held.into();
+                            app.window().dispatch_event(if down {
+                                WindowEvent::KeyPressed { text }
+                            } else {
+                                WindowEvent::KeyReleased { text }
+                            });
+                        };
+                        to(25.0, 0.0);
+                        app.window().dispatch_event(WindowEvent::PointerPressed {
+                            position: at(25.0, 0.0),
+                            button: PointerEventButton::Left,
+                        });
+                        to(20.0, -20.0);
+                        key(true);
+                        // On past the key, so the hold shows: Shift's
+                        // pointer off its ray, Ctrl's round its circle.
+                        if held == Key::Shift {
+                            to(32.0, -6.0);
+                        } else {
+                            to(-26.0, 6.0);
+                        }
+                        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(
+                            1,
+                        ));
+                        assert_ne!(app.get_wheel_guide().kind, 0);
+                        // The ring measured again: the panel has moved
+                        // under it since the press (the picture's
+                        // develop settling above), and the snapshot is
+                        // of now.
+                        let crop = if ring {
+                            let e =
+                                i_slint_backend_testing::ElementHandle::find_by_element_type_name(
+                                    &app,
+                                    "CurveEditor",
+                                )
+                                .find(|e| e.size().width == 176.0)
+                                .expect("the tint ring is on screen");
+                            let (at, size) = (e.absolute_position(), e.size());
+                            (
+                                at.x - 24.0,
+                                at.y - 24.0,
+                                size.width + 48.0,
+                                size.height + 48.0,
+                            )
+                        } else {
+                            crop
+                        };
+                        let shot = app.window().take_snapshot().expect("a drawing backend");
+                        key(false);
+                        app.window().dispatch_event(WindowEvent::PointerReleased {
+                            position: at(0.0, 0.0),
+                            button: PointerEventButton::Left,
+                        });
+                        let full = image::RgbaImage::from_raw(
+                            shot.width(),
+                            shot.height(),
+                            shot.as_bytes().to_vec(),
+                        )
+                        .unwrap();
+                        let (x, y, w, h) = crop;
+                        let px = |v: f32| (v * scale).max(0.0).round() as u32;
+                        let part =
+                            image::imageops::crop_imm(&full, px(x), px(y), px(w), px(h)).to_image();
+                        let name = format!(
+                            "{}-x{}-{}-{}.png",
+                            theme.to_lowercase(),
+                            scale as u32,
+                            if ring { "tint" } else { "wheels" },
+                            if held == Key::Shift {
+                                "shift-line"
+                            } else {
+                                "ctrl-circle"
+                            },
+                        );
+                        part.save(dir.join(name)).unwrap();
+                    }
+                }
+            }
+        }
     }
 }

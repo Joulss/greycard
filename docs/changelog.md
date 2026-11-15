@@ -192,6 +192,11 @@ design note behind it.
   to. A crop you already made is kept as it is. The library reads
   these files' headers once more to learn the frame (issue 145,
   [§681](https://github.com/jessolmstead/greycard/blob/master/docs/notes/681-a-frame-opens-at-the-cameras-aspect.md)).
+- On the grading wheels and the Tint ring, Shift (keep the hue) and
+  Ctrl (keep the strength) work whenever they are held during the
+  drag, not only at the press, and a line or a circle in the wheel
+  shows what is kept
+  ([§682](https://github.com/jessolmstead/greycard/blob/master/docs/notes/682-wheel-holds-that-follow-the-keys-and-their-guide.md)).
 
 ### Fixes
 

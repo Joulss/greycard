@@ -112,6 +112,26 @@ export struct Pt {
     y: float,
 }
 
+/// The guide a wheel in a held drag shows (`panel::color::wheel_guide`):
+/// `kind` 0 none, 1 the held hue's line, 2 the held strength's circle.
+/// In the wheel's picture, 0 to 1 across and down. The line is two
+/// strokes, (x0, y0) to (x1, y1) and (x2, y2) to (x3, y3), with the
+/// marker between; the circle is an arc of radius `r` about the
+/// center from (x0, y0) round the long way to (x1, y1), the marker in
+/// the short way's gap.
+export struct WheelGuide {
+    kind: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    x3: float,
+    y3: float,
+    r: float,
+}
+
 /// The color under the pointer, one mark of it on the scope: where,
 /// as fractions of the scope's picture, and what it marks, 0 to 2 a
 /// channel and 3 the luma (`scope::Mark`).

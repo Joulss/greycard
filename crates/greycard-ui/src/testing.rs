@@ -51,10 +51,35 @@ thread_local! {
 /// thread, whether the tests run one at a time or all at once, since
 /// the backend is a thread's own and setting it twice panics.
 pub(crate) fn backend() {
-    thread_local! {
-        static BACKEND: () = i_slint_backend_testing::init_no_event_loop();
-    }
-    BACKEND.with(|()| ());
+    BACKEND.with(|set| {
+        if !set.replace(true) {
+            i_slint_backend_testing::init_no_event_loop();
+        }
+    });
+}
+
+thread_local! {
+    static BACKEND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [`backend`] with Slint's software renderer in it, so the window can
+/// be drawn (`Window::take_snapshot`), for a test that captures what a
+/// drag shows: first on its thread, ahead of [`window`].
+pub(crate) fn drawing_backend() {
+    BACKEND.with(|set| {
+        assert!(
+            !set.replace(true),
+            "a backend is already set on this thread"
+        );
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some("software".into()),
+            },
+        )))
+        .expect("no platform yet on this thread");
+    });
 }
 
 /// An App with a folder of eleven frames on it, shown and

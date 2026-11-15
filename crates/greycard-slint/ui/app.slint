@@ -9,10 +9,10 @@ import { Palette } from "std-widgets.slint";
 import { Theme, ScrollBars, LabelColumn } from "theme.slint";
 // The theme's name and the label column are read on the Rust side's tests.
 export { Theme, ScrollBars, LabelColumn } from "theme.slint";
-import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge } from "controls.slint";
+import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge, HeldKeys } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys, ButtonKeys } from "controls.slint";
-import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, ProfileRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
+import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, WheelGuide, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, ProfileRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -1820,10 +1820,11 @@ export component App inherits Window {
     // one is enlarged, none at -1.
     in property <[image]> grade-images: [];
     in-out property <int> grade-big: -1;
-    // The last, the hold: 0 free, 1 the hue held (Shift), 2 the
-    // amount held (Ctrl).
-    callback grade-press(int, float, float, int);
-    callback grade-move(int, float, float);
+    // The last two, Shift and Ctrl (⌘ on a Mac) as they stand at the
+    // press and at each move: Shift keeps the wheel's hue, Ctrl its
+    // amount.
+    callback grade-press(int, float, float, bool, bool);
+    callback grade-move(int, float, float, bool, bool);
     callback grade-release();
     callback grade-double(int);
     callback grade-chose(int);
@@ -1846,8 +1847,16 @@ export component App inherits Window {
     // Slint cannot hold a trailing zero.
     in property <image> tint-image;
     in property <string> tint-hue-text: "0.0\u{00b0}";
-    callback tint-press(float, float, int);
-    callback tint-move(float, float);
+    callback tint-press(float, float, bool, bool);
+    callback tint-move(float, float, bool, bool);
+    // Shift and Ctrl after a key goes down or up while a wheel's press
+    // is held (`HeldKeys`), so its drag takes up a hold, or lets one
+    // go, with the pointer still.
+    callback grade-keys(int, bool, bool);
+    callback tint-keys(bool, bool);
+    // The guide a held drag draws in the wheel in hand: the held hue's
+    // line or the held amount's circle; kind 0, none, outside a hold.
+    in property <WheelGuide> wheel-guide;
     callback tint-release();
     property <brush> hue-circle: @linear-gradient(90deg,
         #e680a1 0%, #eb8373 8.33%, #df8f48 16.67%, #c4a032 25%,
@@ -3054,6 +3063,8 @@ export component App inherits Window {
         focus-gained(reason) => { root.menu-up = false; }
         key-released(e) => {
             root.shift-held = e.modifiers.shift;
+            HeldKeys.modifiers = e.modifiers;
+            HeldKeys.count += 1;
             let chord = root.key-chord(e.text, e.modifiers.control, e.modifiers.shift,
                 e.modifiers.alt, e.modifiers.meta);
             if (chord == "Space" && root.hand-key) {
@@ -3068,6 +3079,8 @@ export component App inherits Window {
             // Not a key a focused slider passed on: its release stays
             // with the slider and would never let go of the hand.
             if (keys.has-focus) { root.shift-held = e.modifiers.shift; }
+            HeldKeys.modifiers = e.modifiers;
+            HeldKeys.count += 1;
             // A key takes the hover text down, as it does a tooltip: a
             // row or a panel the key removes never hears the pointer go.
             root.tip-text = "";
@@ -4389,8 +4402,10 @@ export component App inherits Window {
                             grade-images: root.grade-images;
                             grade-big <=> root.grade-big;
                             wheel-hand: root.wheel-hand;
-                            grade-press(a, b, c, d) => { root.grade-press(a, b, c, d); }
-                            grade-move(a, b, c) => { root.grade-move(a, b, c); }
+                            wheel-guide: root.wheel-guide;
+                            grade-press(a, b, c, d, e) => { root.grade-press(a, b, c, d, e); }
+                            grade-move(a, b, c, d, e) => { root.grade-move(a, b, c, d, e); }
+                            grade-keys(a, b, c) => { root.grade-keys(a, b, c); }
                             grade-release => { root.grade-release(); }
                             grade-double(a) => { root.grade-double(a); }
                             grade-chose(a) => { root.grade-chose(a); }
@@ -4415,8 +4430,10 @@ export component App inherits Window {
                             tint-image: root.tint-image;
                             tint-hue-text: root.tint-hue-text;
                             in-hand: root.wheel-hand == 3;
-                            tint-press(a, b, c) => { root.tint-press(a, b, c); }
-                            tint-move(a, b) => { root.tint-move(a, b); }
+                            guide: root.wheel-hand == 3 ? root.wheel-guide : { kind: 0 };
+                            tint-press(a, b, c, d) => { root.tint-press(a, b, c, d); }
+                            tint-move(a, b, c, d) => { root.tint-move(a, b, c, d); }
+                            tint-keys(a, b) => { root.tint-keys(a, b); }
                             tint-release => { root.tint-release(); }
                             hue-circle: root.hue-circle;
                             tint-changed => { root.tint-changed(); }

@@ -3,6 +3,7 @@
 
 import { Theme } from "../theme.slint";
 import { Section, EditSlider, Steps, Toggle, PanelButton, Segmented, CurveEditor, Swatches } from "../controls.slint";
+import { WheelGuide } from "../structs.slint";
 
 export component WhiteBalanceSection inherits Section {
     in-out property <bool> as-shot;
@@ -507,11 +508,48 @@ export component BlackWhiteSection inherits Section {
     }
 }
 
-// How a press in a wheel holds its drag: 0 free, 1 the hue held
-// (Shift), 2 the amount held (Ctrl).
-global WheelHold {
-    public pure function of(m: KeyboardModifiers) -> int {
-        return m.shift ? 1 : m.control ? 2 : 0;
+// The guide a held drag draws in its wheel (`WheelGuide`, worked out
+// in `panel::color::wheel_guide`): the held hue's line from the center
+// to the rim, or the held strength's circle. A hairline in the ink of
+// a ring round a light swatch: the wheel's picture is the same light
+// ground in every theme, so its ink is the same too. It stops short
+// of the marker, which so reads as drawn over it. Sized to the
+// picture it lies on; it takes no pointer and moves nothing.
+component WheelGuideLines inherits Rectangle {
+    in property <WheelGuide> guide;
+    property <float> w: self.width / 1px;
+    if root.guide.kind == 1: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: root.w;
+        viewbox-height: root.w;
+        stroke: Theme.over-plate-dense;
+        stroke-width: 1px;
+        MoveTo { x: root.guide.x0 * root.w; y: root.guide.y0 * root.w; }
+        LineTo { x: root.guide.x1 * root.w; y: root.guide.y1 * root.w; }
+        MoveTo { x: root.guide.x2 * root.w; y: root.guide.y2 * root.w; }
+        LineTo { x: root.guide.x3 * root.w; y: root.guide.y3 * root.w; }
+    }
+    if root.guide.kind == 2 && root.guide.r > 0: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: root.w;
+        viewbox-height: root.w;
+        stroke: Theme.over-plate-dense;
+        stroke-width: 1px;
+        MoveTo { x: root.guide.x0 * root.w; y: root.guide.y0 * root.w; }
+        ArcTo {
+            x: root.guide.x1 * root.w;
+            y: root.guide.y1 * root.w;
+            radius-x: root.guide.r * root.w;
+            radius-y: root.guide.r * root.w;
+            large-arc: true;
+            sweep: false;
+        }
     }
 }
 
@@ -534,8 +572,13 @@ component GradeWheel inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> chosen;
     in property <bool> in-hand;
-    callback pressed(float, float, int);
-    callback moved(float, float);
+    in property <WheelGuide> guide;
+    // The press and every move, with Shift and Ctrl (⌘ on a Mac) as
+    // they stand then.
+    callback pressed(float, float, bool, bool);
+    callback moved(float, float, bool, bool);
+    // Shift and Ctrl gone down or up while its press is held.
+    callback keyed(bool, bool);
     callback released();
     callback double-clicked(float, float);
     height: self.width;
@@ -556,17 +599,27 @@ component GradeWheel inherits Rectangle {
         height: self.width;
         on: root.in-hand;
     }
-    CurveEditor {
+    editor := CurveEditor {
         x: 4px;
         y: 4px;
         width: parent.width - 8px;
         picture: root.picture;
         enabled: root.enabled;
         background: transparent;
-        pressed(x, y) => { root.pressed(x, y, WheelHold.of(self.press-modifiers)); }
-        moved(x, y) => { root.moved(x, y); }
+        pressed(x, y) => { root.pressed(x, y, self.modifiers.shift, self.modifiers.control); }
+        moved(x, y) => { root.moved(x, y, self.modifiers.shift, self.modifiers.control); }
+        keys-changed => { root.keyed(self.modifiers.shift, self.modifiers.control); }
         released => { root.released(); }
         double-clicked(x, y) => { root.double-clicked(x, y); }
+    }
+    WheelGuideLines {
+        x: 4px;
+        y: 4px;
+        width: parent.width - 8px;
+        height: self.width;
+        // Only while its own press is held: a guide left over from a
+        // drag that ended some other way is never drawn.
+        guide: editor.held ? root.guide : { kind: 0 };
     }
 }
 
@@ -583,8 +636,11 @@ export component GradingSection inherits Section {
     // The wheel in hand: 0 to 2 a grading wheel, 3 the tint's, -1
     // none.
     in property <int> wheel-hand: -1;
-    callback grade-press(int, float, float, int);
-    callback grade-move(int, float, float);
+    // The guide of a held drag, drawn in the wheel in hand.
+    in property <WheelGuide> wheel-guide;
+    callback grade-press(int, float, float, bool, bool);
+    callback grade-move(int, float, float, bool, bool);
+    callback grade-keys(int, bool, bool);
     callback grade-release();
     callback grade-double(int);
     callback grade-chose(int);
@@ -611,10 +667,12 @@ export component GradingSection inherits Section {
         enabled: root.grading-enabled;
         chosen: root.grade-range == root.grade-big;
         in-hand: root.wheel-hand == root.grade-big;
+        guide: root.wheel-hand == root.grade-big ? root.wheel-guide : { kind: 0 };
         // Spoken by a screen reader: the color grading wheel shown large
         accessible-label: @tr("Enlarged wheel");
-        pressed(x, y, hold) => { root.grade-press(root.grade-big, x, y, hold); }
-        moved(x, y) => { root.grade-move(root.grade-big, x, y); }
+        pressed(x, y, shift, control) => { root.grade-press(root.grade-big, x, y, shift, control); }
+        moved(x, y, shift, control) => { root.grade-move(root.grade-big, x, y, shift, control); }
+        keyed(shift, control) => { root.grade-keys(root.grade-big, shift, control); }
         released => { root.grade-release(); }
         double-clicked(x, y) => { root.grade-double(root.grade-big); }
     }
@@ -628,10 +686,12 @@ export component GradingSection inherits Section {
                 enabled: root.grading-enabled;
                 chosen: root.grade-range == i;
                 in-hand: root.wheel-hand == i;
+                guide: root.wheel-hand == i ? root.wheel-guide : { kind: 0 };
                 // Spoken by a screen reader: the color grading wheel for {}
                 accessible-label: @tr("{} wheel", name);
-                pressed(x, y, hold) => { root.grade-press(i, x, y, hold); }
-                moved(x, y) => { root.grade-move(i, x, y); }
+                pressed(x, y, shift, control) => { root.grade-press(i, x, y, shift, control); }
+                moved(x, y, shift, control) => { root.grade-move(i, x, y, shift, control); }
+                keyed(shift, control) => { root.grade-keys(i, shift, control); }
                 released => { root.grade-release(); }
                 double-clicked(x, y) => { root.grade-double(i); }
             }
@@ -738,10 +798,13 @@ export component TintSection inherits Section {
     in property <color> tint-color;
     in property <image> tint-image;
     in property <string> tint-hue-text;
-    callback tint-press(float, float, int);
-    callback tint-move(float, float);
+    callback tint-press(float, float, bool, bool);
+    callback tint-move(float, float, bool, bool);
+    callback tint-keys(bool, bool);
     callback tint-release();
     in property <bool> in-hand;
+    // The guide of a held drag in the ring.
+    in property <WheelGuide> guide;
     in property <brush> hue-circle;
     callback tint-changed();
     callback tint-reset();
@@ -771,16 +834,24 @@ export component TintSection inherits Section {
         Rectangle {
             width: 176px;
             height: self.width;
-            CurveEditor {
+            ring := CurveEditor {
                 width: 176px;
                 picture: root.tint-image;
                 enabled: root.tint-enabled;
                 background: transparent;
-                pressed(x, y) => { root.tint-press(x, y, WheelHold.of(self.press-modifiers)); }
-                moved(x, y) => { root.tint-move(x, y); }
+                pressed(x, y) => { root.tint-press(x, y, self.modifiers.shift, self.modifiers.control); }
+                moved(x, y) => { root.tint-move(x, y, self.modifiers.shift, self.modifiers.control); }
+                keys-changed => { root.tint-keys(self.modifiers.shift, self.modifiers.control); }
                 released => { root.tint-release(); }
                 // Off, which is what Reset is.
                 double-clicked(x, y) => { root.tint-reset(); }
+            }
+            WheelGuideLines {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: self.width;
+                guide: ring.held ? root.guide : { kind: 0 };
             }
             HandRing {
                 x: 0;

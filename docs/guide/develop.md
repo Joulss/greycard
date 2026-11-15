@@ -379,9 +379,12 @@ Turns the picture monochrome. Choosing a filter turns the section on.
 Three wheels: **Shadows**, **Midtones** and **Highlights**.
 
 - Drag in a wheel to set its color. The angle is the hue, and the
-  distance from the center is the strength. Hold **Shift** as you
-  press to keep the hue and move only the strength, or **Ctrl** (⌘ on
-  a Mac) to keep the strength and move only the hue.
+  distance from the center is the strength. Hold **Shift** to keep the
+  hue and move only the strength, or **Ctrl** (⌘ on a Mac) to keep the
+  strength and move only the hue; Shift wins if both are down. Press
+  or let go of either during the drag: the hold starts from where the
+  wheel is then, and a line along the hue or a circle at the strength
+  shows what is kept.
 - The wheel last pressed is in hand, its ring drawn heavier.
   Ctrl-click (⌘-click on a Mac) the picture to set its hue to the
   color there, or Ctrl+Shift-click for the opposite hue; its strength
@@ -414,7 +417,9 @@ greys take the tint's hue.
 
 - Drag in the ring. The angle sets the hue, and the distance from the
   center sets the amount. Double-click the ring to clear it. Shift,
-  Ctrl, and a Ctrl-click on the picture work as on the grading wheels.
+  Ctrl (pressed or let go of during the drag, with their line or
+  circle), and a Ctrl-click on the picture work as on the grading
+  wheels.
 - **Hue** (0 to 360°) is for fine adjustment. **Amount** goes from 0
   to 100%.
 - The small swatch shows what a mid grey turns into.

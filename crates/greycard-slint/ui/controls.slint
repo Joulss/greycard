@@ -1670,6 +1670,14 @@ export component Segmented inherits Rectangle {
     }
 }
 
+// The keys as the window's own last saw them, counted up at each that
+// goes down or up: for a held press (`CurveEditor`) that follows them,
+// which the window's keys cannot reach otherwise.
+export global HeldKeys {
+    in-out property <int> count: 0;
+    in-out property <KeyboardModifiers> modifiers;
+}
+
 // A point curve over a picture of it. The host draws the picture
 // (grid, histogram, curve, points) and owns the points; this maps the
 // pointer to curve coordinates, x and y in 0 to 1, y up.
@@ -1685,9 +1693,27 @@ export component CurveEditor inherits Rectangle {
     // picture is drawn at that size.
     callback resized(float);
     property <float> physical-width: self.width / 1phx;
-    // The keys held at the last press, for a caller that reads them
-    // in its `pressed`.
-    out property <KeyboardModifiers> press-modifiers;
+    // The keys as the window reported them on the last pointer event,
+    // the press's and each move's: Slint calls `pointer-event` with
+    // them just ahead of `moved`, so a caller reads them fresh in its
+    // `pressed` and its `moved` alike.
+    out property <KeyboardModifiers> modifiers;
+    // Whether a press of its own is held: false again at the release,
+    // and gone with the editor if a view change takes it away mid-drag,
+    // which no release then reaches.
+    out property <bool> held: ta.held;
+    // A key gone down or up while a press of its own is held, the
+    // pointer still or not: `modifiers` are the window's then. Only a
+    // live, held editor hears it, so a drag its editor did not outlive
+    // hears nothing.
+    callback keys-changed();
+    property <int> keys-seen: HeldKeys.count;
+    changed keys-seen => {
+        if (ta.held) {
+            root.modifiers = HeldKeys.modifiers;
+            root.keys-changed();
+        }
+    }
     height: self.width;
     init => { root.resized(self.physical-width); }
     changed physical-width => { root.resized(self.physical-width); }
@@ -1709,6 +1735,7 @@ export component CurveEditor inherits Rectangle {
         // that closed a menu comes here without one.
         property <bool> held;
         pointer-event(e) => {
+            root.modifiers = e.modifiers;
             // Cancel carries button `other`: read ahead of the filter,
             // it ends a drag the window took back.
             if (e.kind == PointerEventKind.cancel) {
@@ -1718,7 +1745,6 @@ export component CurveEditor inherits Rectangle {
                 if (e.kind == PointerEventKind.down) {
                     self.held = true;
                     Typing.close-all();
-                    root.press-modifiers = e.modifiers;
                     root.pressed(self.mouse-x / root.width, 1 - self.mouse-y / root.height);
                 } else if (e.kind == PointerEventKind.up && self.held) {
                     self.held = false;
