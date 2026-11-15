@@ -1,7 +1,7 @@
 //! The open frame, its develop and the tools on it: [`Develop`].
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -48,6 +48,10 @@ pub(crate) struct Develop {
     /// What the session has learned of files' mosaics from the worker:
     /// its read ahead of a decode, and the decoded frames.
     pub(crate) mosaics: HashMap<PathBuf, crate::panel::browser::OpenMosaic>,
+    /// The files the session has decoded as a monochrome sensor's:
+    /// the white balance rests on one from the moment it is chosen
+    /// again (`panel::color::open_is_monochrome`).
+    pub(crate) monochromes: HashSet<PathBuf>,
     /// The kind of the picture on the GPU, set where its develop is
     /// uploaded: what the viewport finishes it as. Until the open
     /// frame's develop lands the picture there is the last frame's,

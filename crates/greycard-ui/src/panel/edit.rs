@@ -779,6 +779,7 @@ pub(crate) fn show_white(st: &State, edit: &Edit, app: &App) {
     // sliders as.
     let picture = crate::panel::color::open_is_picture(st);
     app.set_picture_open(picture);
+    app.set_monochrome_open(crate::panel::color::open_is_monochrome(st));
     // A white of the other kind develops as none, so it shows as As shot:
     // a kelvin light on a picture (a paste from before a picture had a
     // white balance of its own), an offset on a raw (a hand edit).
@@ -817,6 +818,42 @@ pub(crate) fn show_white(st: &State, edit: &Edit, app: &App) {
             app.set_as_shot(false);
             app.set_temperature(temperature as f32);
             app.set_tint(tint as f32);
+        }
+    }
+}
+
+/// A mask's own white balance on the panel: on, or switched off with
+/// its light kept, the sliders show that light; off with none kept,
+/// they keep what they last said, and turning it on starts them at the
+/// global's (`local-wb-toggled`). Held to the sliders' range, as the
+/// finish reads it. Follow global on, they show the offset from the
+/// global's.
+pub(crate) fn show_local_white(white: LocalWhite, app: &App) {
+    let white = white.clamped();
+    match white {
+        LocalWhite::Absolute { temperature, tint }
+        | LocalWhite::Kept { temperature, tint }
+        | LocalWhite::Relative {
+            mired: temperature,
+            tint,
+        }
+        | LocalWhite::KeptRelative {
+            mired: temperature,
+            tint,
+        } => {
+            app.set_local_wb_on(matches!(
+                white,
+                LocalWhite::Absolute { .. } | LocalWhite::Relative { .. }
+            ));
+            app.set_local_wb_kept(true);
+            app.set_local_wb_relative(white.is_relative());
+            app.set_local_temperature(temperature as f32);
+            app.set_local_tint(tint as f32);
+        }
+        LocalWhite::Off => {
+            app.set_local_wb_on(false);
+            app.set_local_wb_kept(false);
+            app.set_local_wb_relative(false);
         }
     }
 }
@@ -977,39 +1014,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_tint_hue(look.tint.hue);
     app.set_tint_amount(look.tint.amount);
     show_tint(app);
-    // A mask's own white balance: on, or switched off with its light
-    // kept, the sliders show that light; off with none kept, they keep
-    // what they last said, and turning it on starts them at the
-    // global's (`local-wb-toggled`).
-    // Held to the sliders' range, as the finish reads it.
-    // Follow global on, they show the offset from the global's.
-    let white = look.white_balance.clamped();
-    match white {
-        LocalWhite::Absolute { temperature, tint }
-        | LocalWhite::Kept { temperature, tint }
-        | LocalWhite::Relative {
-            mired: temperature,
-            tint,
-        }
-        | LocalWhite::KeptRelative {
-            mired: temperature,
-            tint,
-        } => {
-            app.set_local_wb_on(matches!(
-                white,
-                LocalWhite::Absolute { .. } | LocalWhite::Relative { .. }
-            ));
-            app.set_local_wb_kept(true);
-            app.set_local_wb_relative(white.is_relative());
-            app.set_local_temperature(temperature as f32);
-            app.set_local_tint(tint as f32);
-        }
-        LocalWhite::Off => {
-            app.set_local_wb_on(false);
-            app.set_local_wb_kept(false);
-            app.set_local_wb_relative(false);
-        }
-    }
+    show_local_white(look.white_balance, app);
     // A mask's own Detail; the global look's is the default, never
     // shown, since its section is on the Masks tab alone.
     app.set_local_detail_enabled(look.detail.enabled);

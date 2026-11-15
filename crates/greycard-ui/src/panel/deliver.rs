@@ -502,6 +502,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     .is_some_and(|f| greycard_engine::stages::Facts::raw(f, 0).measures_ca()),
             );
             st.develop.frame = frame.zip(profile);
+            crate::panel::color::learn_monochrome(&mut st, app);
             // The camera the file names, and what the profile
             // directory holds for it: read on open, not on develop.
             st.develop.camera = st
@@ -2853,6 +2854,41 @@ mod tests {
         assert_eq!(app.get_export_quality(), 70.0);
         // Nothing was written: the state has no settings file.
         assert!(state.borrow().window.settings_file.is_none());
+    }
+
+    /// A preset's Delete takes the focus and goes disabled as the
+    /// preset it deleted leaves None chosen: Return then is the dead
+    /// button's, taken and doing nothing, not the sheet's Export.
+    #[test]
+    fn return_on_a_dead_delete_does_not_export() {
+        use slint::platform::Key;
+        let app = crate::testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        state.borrow_mut().window.batch = true;
+        state.borrow_mut().work.export_presets = vec![ExportPreset {
+            name: "Web".into(),
+            sheet: Sheet::default(),
+        }];
+        show_presets_picker(&app, &state.borrow().work.export_presets, None);
+        app.invoke_export_preset_chosen("Web".into());
+        let exports = Rc::new(std::cell::Cell::new(0));
+        let counted = exports.clone();
+        app.on_export(move || counted.set(counted.get() + 1));
+        app.set_export_open(true);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(crate::testing::count_labeled(&app, "Delete"), 1);
+        let (at, size) = crate::testing::labeled(&app, "Delete");
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(app.get_export_preset(), NO_PRESET);
+        assert!(state.borrow().work.export_presets.is_empty());
+        crate::testing::press(&app, Key::Return);
+        crate::testing::press(&app, " ");
+        slint::platform::update_timers_and_animations();
+        assert_eq!(exports.get(), 0, "no export");
+        assert!(app.get_export_open(), "the sheet still up");
     }
 
     #[test]

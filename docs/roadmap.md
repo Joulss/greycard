@@ -26,9 +26,8 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Texture alone differs by 1.9e-4 between the device and the CPU
       on one monochrome file: the CPU's running sums against the
       shader's window sums, most likely (§668)
-- [ ] A monochrome frame: Temperature and Tint do nothing and are not
-      dimmed (§668); waits on a decision. Untested there: the camera
-      match, and HDR, panorama, and focus merges
+- [ ] A monochrome frame, untested: the camera match, and HDR,
+      panorama, and focus merges (§668)
 - [ ] Dehaze alone still collapses the capture sharpen's threshold
       on a noisy frame (ISO 3200, Dehaze +50: to zero). The guide
       could be taken before Dehaze too, at the cost of changing

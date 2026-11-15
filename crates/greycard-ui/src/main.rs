@@ -962,6 +962,7 @@ impl State {
                 frame: None,
                 panel_mosaic: None,
                 mosaics: HashMap::new(),
+                monochromes: Default::default(),
                 drawn_kind: finish::Source::SCENE,
                 drawn_guide: Arc::new(finish::Guide::NONE),
                 drawn_generation: 0,

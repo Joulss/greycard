@@ -65,6 +65,9 @@ design note behind it.
   labels first, then to their tracks, so a label the default width
   cuts ("Roundness", and many more in French) reads whole
   ([§672](https://github.com/jessolmstead/greycard/blob/master/docs/notes/672-the-panels-label-column-grows-with-the-panel.md)).
+- A screen reader hears the panel's toggles, buttons, and section
+  switches by name, with on or off and whether they are disabled
+  ([§673](https://github.com/jessolmstead/greycard/blob/master/docs/notes/673-white-balance-rests-on-a-monochrome-frame.md)).
 
 ### Library
 
@@ -161,8 +164,9 @@ design note behind it.
 - DNGs from monochrome sensors open (Leica Monochrom bodies, the
   Ricoh GR IV Monochrome); before, each failed with "Linear layout
   with 1 samples per pixel". They develop to a neutral grey, and
-  Temperature and Tint leave them alone; tone them with color grading
-  ([§668](https://github.com/jessolmstead/greycard/blob/master/docs/notes/668-monochrome-sensors-open.md)).
+  WHITE BALANCE is dimmed on them; tone them with color grading
+  ([§668](https://github.com/jessolmstead/greycard/blob/master/docs/notes/668-monochrome-sensors-open.md),
+  [§673](https://github.com/jessolmstead/greycard/blob/master/docs/notes/673-white-balance-rests-on-a-monochrome-frame.md)).
 - A sidecar with brush masks is about a quarter the size: a stroke's
   points are written on one line, not a number a line. One tester's
   went from 28 MB to 6.6 MB. A sidecar takes the new layout the next

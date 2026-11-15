@@ -684,3 +684,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§670. The right panel's sections and tools](notes/670-the-right-panels-sections-and-tools.md) (2026-11-14)
 - [§671. Olympus .ORI files and Gradation Auto](notes/671-olympus-ori-files-and-gradation-auto.md) (2026-11-14)
 - [§672. The panel's label column grows with the panel](notes/672-the-panels-label-column-grows-with-the-panel.md) (2026-11-14)
+- [§673. WHITE BALANCE rests on a monochrome frame](notes/673-white-balance-rests-on-a-monochrome-frame.md) (2026-11-14)

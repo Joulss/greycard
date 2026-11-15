@@ -655,6 +655,52 @@ pub(crate) fn open_is_picture(st: &State) -> bool {
         .is_some_and(|p| greycard_core::picture::is_picture_path(p))
 }
 
+/// Whether the open file is a monochrome sensor's, as far as the
+/// session knows: its decode said so, now or on an earlier open. One
+/// not yet decoded is taken for a color frame until its decode lands.
+pub(crate) fn open_is_monochrome(st: &State) -> bool {
+    st.current
+        .and_then(|c| st.path_at(c))
+        .is_some_and(|p| st.develop.monochromes.contains(p))
+}
+
+/// The open frame decoded (`st.develop.frame`): whether it is a
+/// monochrome sensor's, kept for the session and put on the panel,
+/// where the white balance rests on one (the window puts the white's
+/// dropper down as it does). The edit's white is left as it is.
+pub(crate) fn learn_monochrome(st: &mut State, app: &App) {
+    let monochrome = st
+        .develop
+        .frame
+        .as_ref()
+        .is_some_and(|(f, _)| f.layout == greycard_core::raw::SensorLayout::Monochrome);
+    if let Some(path) = st.current.and_then(|c| st.path_at(c)).cloned() {
+        if monochrome {
+            st.develop.monochromes.insert(path);
+        } else {
+            st.develop.monochromes.remove(&path);
+        }
+    }
+    app.set_monochrome_open(monochrome);
+}
+
+/// Whether a change to the white is refused: on a monochrome frame no
+/// white tints the picture, and the edit keeps the one it holds. One
+/// that reached the panel anyway is taken back, the edit's whites shown
+/// again, so nothing reads it into the edit.
+pub(crate) fn white_refused(st: &State, app: &App) -> bool {
+    if !app.get_monochrome_open() {
+        return false;
+    }
+    let edit = &st.develop.edit;
+    crate::panel::edit::show_white(st, edit, app);
+    if st.develop.target.is_some() {
+        let local = edit.target_look(st.develop.target).white_balance;
+        crate::panel::edit::show_local_white(local, app);
+    }
+    true
+}
+
 /// The open picture's own white, the one its offset is from, once its
 /// develop has said it; none for a raw.
 pub(crate) fn picture_own(st: &State) -> Option<greycard_core::TempTint> {
@@ -737,6 +783,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            if white_refused(&state.borrow(), &app) {
+                return;
+            }
             as_shot_switched(&mut state.borrow_mut(), &app);
             app.invoke_develop_changed();
         });
@@ -746,12 +795,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
     // A raw's only: a picture's sliders are an offset from its own
     // white, which no preset's light is read against.
     {
-        let app_weak = app.as_weak();
+        let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_wb_preset(move |key| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            if app.get_picture_open() {
+            if app.get_picture_open() || white_refused(&state.borrow(), &app) {
                 return;
             }
             let Some((temperature, tint)) = white_preset(key.as_str()) else {
@@ -776,6 +825,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            if white_refused(&state.borrow(), &app) {
+                return;
+            }
             let Some(camera) = state.borrow().develop.as_shot_white else {
                 return;
             };
@@ -800,6 +852,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            if white_refused(&state.borrow(), &app) {
+                return;
+            }
             if app.get_local_wb_on() {
                 if !app.get_local_wb_kept() {
                     start_at_global(&mut state.borrow_mut(), &app);
@@ -819,6 +874,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            if white_refused(&state.borrow(), &app) {
+                return;
+            }
             app.set_local_wb_on(false);
             app.set_local_wb_kept(false);
             app.set_local_wb_relative(false);
@@ -837,6 +895,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            if white_refused(&state.borrow(), &app) {
+                return;
+            }
             let relative = app.get_local_wb_relative();
             let Some(global) = panel_global(&mut state.borrow_mut(), &app) else {
                 app.set_local_wb_relative(!relative);
@@ -1149,7 +1210,7 @@ mod tests {
     use greycard_edit::Edit;
 
     use super::*;
-    use crate::worker::WhiteBase;
+    use crate::worker::{Outcome, WhiteBase};
 
     #[test]
     fn a_hue_circle_is_painted_the_colors_its_slider_track_carries() {
@@ -1668,5 +1729,800 @@ mod tests {
             app.invoke_view_changed();
             assert!(!app.get_show_mask(), "switched {on} hides the overlay");
         }
+    }
+
+    // A monochrome sensor's frame: the WHITE BALANCE rests.
+
+    /// A click on the switch at the right of the header titled `title`.
+    fn click_header_switch(app: &App, title: &str) {
+        use i_slint_backend_testing::ElementHandle;
+        let (head, size) = crate::testing::labeled(app, title);
+        let y = head.y + size.height / 2.0;
+        let (at, size) = ElementHandle::find_by_element_id(app, "Switch::root")
+            .map(|e| (e.absolute_position(), e.size()))
+            .find(|(at, s)| y >= at.y - 4.0 && y <= at.y + s.height + 4.0)
+            .unwrap_or_else(|| panic!("no switch on {title:?}"));
+        crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        slint::platform::update_timers_and_animations();
+    }
+
+    /// The control `id` names ("Toggle::root", "PanelButton::root")
+    /// around the words `label`, scrolled into view.
+    fn control_around(app: &App, id: &str, label: &str) -> i_slint_backend_testing::ElementHandle {
+        use i_slint_backend_testing::ElementHandle;
+        let (at, size) = crate::testing::labeled(app, label);
+        let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+        ElementHandle::find_by_element_id(app, id)
+            .find(|e| {
+                let (p, s) = (e.absolute_position(), e.size());
+                x >= p.x && x <= p.x + s.width && y >= p.y && y <= p.y + s.height
+            })
+            .unwrap_or_else(|| panic!("no {id} around {label:?}"))
+    }
+
+    /// Whether the control `id` names around the words `label` takes a
+    /// hand, as it tells a screen reader.
+    fn control_enabled(app: &App, id: &str, label: &str) -> bool {
+        control_around(app, id, label)
+            .accessible_enabled()
+            .unwrap_or_else(|| panic!("{id} around {label:?} says nothing of it"))
+    }
+
+    /// What a screen reader hears of `e`: its role, its name, whether
+    /// it takes a hand, and, for a switch, whether it is on.
+    fn heard(
+        e: &i_slint_backend_testing::ElementHandle,
+    ) -> (
+        Option<i_slint_backend_testing::AccessibleRole>,
+        String,
+        Option<bool>,
+        Option<bool>,
+    ) {
+        let checked = e
+            .accessible_checkable()
+            .unwrap_or(false)
+            .then(|| e.accessible_checked().unwrap_or(false));
+        (
+            e.accessible_role(),
+            e.accessible_label().unwrap_or_default().to_string(),
+            e.accessible_enabled(),
+            checked,
+        )
+    }
+
+    /// The one element a screen reader knows as `label` in `role`,
+    /// scrolled into view.
+    fn the_one(
+        app: &App,
+        role: i_slint_backend_testing::AccessibleRole,
+        label: &str,
+    ) -> i_slint_backend_testing::ElementHandle {
+        use i_slint_backend_testing::ElementHandle;
+        crate::testing::labeled(app, label);
+        let found: Vec<_> = ElementHandle::find_by_accessible_label(app, label)
+            .filter(|e| e.accessible_role() == Some(role))
+            .collect();
+        assert_eq!(found.len(), 1, "one {role:?} named {label:?}");
+        found.into_iter().next().unwrap()
+    }
+
+    /// What a screen reader hears of the white balance's controls, on
+    /// a color frame and on a monochrome one: As shot a switch named by
+    /// its label, on or off; Neutral a button named by its own text,
+    /// which is heard once; Undo, a picture alone, a button named Undo
+    /// (by its own label, as every such button in the window is; one
+    /// without would take its pointer words); a mask's section switch
+    /// named by the section's title,
+    /// on or off as it shows. Each says whether it takes a hand.
+    #[test]
+    fn a_screen_reader_hears_the_white_balance() {
+        use i_slint_backend_testing::AccessibleRole::{Button, Switch, Text};
+        let m = mono("mono-heard", true);
+        let app = &m.app;
+        for (row, monochrome) in [(1, false), (0, true)] {
+            app.set_panel_tab("Develop".into());
+            app.invoke_tab_changed("Develop".into());
+            m.open(row);
+            assert_eq!(app.get_monochrome_open(), monochrome);
+            let live = Some(!monochrome);
+            let as_shot = the_one(app, Switch, "As shot");
+            assert_eq!(
+                heard(&as_shot),
+                (
+                    Some(Switch),
+                    "As shot".into(),
+                    live,
+                    Some(app.get_as_shot())
+                ),
+            );
+            assert_eq!(
+                crate::testing::count_labeled(app, "As shot"),
+                1,
+                "heard once"
+            );
+            let neutral = control_around(app, "PanelButton::root", "Neutral");
+            assert_eq!(heard(&neutral), (Some(Button), String::new(), live, None));
+            assert_eq!(the_one(app, Text, "Neutral").accessible_role(), Some(Text));
+            assert_eq!(
+                crate::testing::count_labeled(app, "Neutral"),
+                1,
+                "heard once"
+            );
+            // The picture-alone button itself.
+            let undo: Vec<_> = i_slint_backend_testing::ElementHandle::find_by_element_id(
+                app,
+                "PanelButton::root",
+            )
+            .filter(|e| e.accessible_label().as_deref() == Some("Undo"))
+            .collect();
+            assert_eq!(undo.len(), 1, "one button named Undo by its words");
+            assert_eq!(heard(&undo[0]).0, Some(Button));
+
+            app.set_panel_tab("Masks".into());
+            app.invoke_tab_changed("Masks".into());
+            app.invoke_target_changed(1);
+            m.settle();
+            let switch = the_one(app, Switch, "WHITE BALANCE");
+            // On in the edit either way: shown off where it does not act.
+            assert!(app.get_local_wb_on());
+            assert_eq!(
+                heard(&switch),
+                (
+                    Some(Switch),
+                    "WHITE BALANCE".into(),
+                    live,
+                    Some(!monochrome)
+                ),
+            );
+        }
+    }
+
+    /// The mixer's switch is dead while the black and white has its
+    /// section: a click on it neither switches it nor falls through to
+    /// the header row under it, which would fold the section. Live
+    /// again, the click switches it and folds nothing either.
+    #[test]
+    fn a_dead_switch_takes_the_click() {
+        let app = crate::testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        state.borrow_mut().window.batch = true;
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        app.set_collapsed_mixer(false);
+        app.set_bw_enabled(true);
+        let on = app.get_mixer_enabled();
+        click_header_switch(&app, "COLOR MIXER");
+        assert_eq!(app.get_mixer_enabled(), on, "not switched");
+        assert!(!app.get_collapsed_mixer(), "not folded");
+        app.set_bw_enabled(false);
+        click_header_switch(&app, "COLOR MIXER");
+        assert_eq!(app.get_mixer_enabled(), !on, "live, switched");
+        assert!(!app.get_collapsed_mixer(), "not folded");
+    }
+
+    /// A monochrome DNG and a color one of our own writing, opened
+    /// through a real worker, each frame arriving with a white of its
+    /// own, as from a paste or a sync, and the first mask's too.
+    struct Mono {
+        dir: std::path::PathBuf,
+        app: App,
+        state: Rc<Shared>,
+        _worker: Rc<Worker>,
+        heard: std::sync::mpsc::Receiver<Outcome>,
+    }
+
+    // Whites the panel's sliders hold exactly, so a save that reads
+    // them back from the panel writes the same.
+    const ARRIVED: WhiteBalance = WhiteBalance::Custom {
+        temperature: 4000.0,
+        tint: 0.0078125,
+    };
+    const MASK_ARRIVED: LocalWhite = LocalWhite::Absolute {
+        temperature: 3200.0,
+        tint: -0.00390625,
+    };
+
+    fn mono(what: &str, mask: bool) -> Mono {
+        let dir = crate::testing::scratch_dir(what);
+        let mono = dir.join("mono.dng");
+        crate::testing::monochrome_dng(&mono, 96, 64);
+        let color = dir.join("color.dng");
+        crate::testing::linear_dng(&color, 96, 64, "Greycard", "Test Body");
+        let app = crate::testing::window(2);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (tx, heard) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let worker = Rc::new(Worker::new(move |o| {
+            let _ = tx.lock().unwrap().send(o);
+        }));
+        let state = crate::testing::state_with(&app, vec![mono, color], worker.clone());
+        // A batch state: no offer of models or lenses comes up over the
+        // panel, nor is the user's settings file written.
+        state.borrow_mut().window.batch = true;
+        app.set_collapsed_wb(false);
+        for line in &mut state.borrow_mut().sidecars {
+            line.current.white_balance = ARRIVED;
+            if mask {
+                line.current.adjustments.push(greycard_edit::Adjustment {
+                    id: 1,
+                    name: "Lamp".into(),
+                    look: greycard_edit::Look {
+                        white_balance: MASK_ARRIVED,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+            }
+        }
+        Mono {
+            dir,
+            app,
+            state,
+            _worker: worker,
+            heard,
+        }
+    }
+
+    impl Mono {
+        /// Row `row` chosen and its open and develop taken in, as the
+        /// window's event loop takes them.
+        fn open(&self, row: i32) {
+            self.app.invoke_select(row);
+            self.land();
+        }
+
+        /// The open and develop of the frame chosen last taken in, as
+        /// the window takes them: each open and develop handed over,
+        /// which drops one of an older generation, until the current
+        /// generation's develop.
+        fn land(&self) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            loop {
+                assert!(std::time::Instant::now() < deadline, "waiting for the open");
+                let Ok(o) = self
+                    .heard
+                    .recv_timeout(std::time::Duration::from_millis(50))
+                else {
+                    continue;
+                };
+                let generation = self.state.borrow().develop.generation;
+                let last = match &o {
+                    Outcome::Opened { .. } => false,
+                    Outcome::Developed { generation: g, .. } => *g == generation,
+                    Outcome::Failed { message, .. } => panic!("{message}"),
+                    _ => continue,
+                };
+                crate::panel::deliver::deliver(&self.app, o);
+                if last {
+                    break;
+                }
+            }
+            self.settle();
+        }
+
+        fn settle(&self) {
+            for _ in 0..2 {
+                i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                    crate::panel::edit::SAVE_MS + 100,
+                ));
+                slint::platform::update_timers_and_animations();
+            }
+        }
+
+        /// What a press could have moved: the edit, the open frame's
+        /// sidecar and its history, the develop asked, the panel's
+        /// whites, and the dropper.
+        fn moved(&self) -> String {
+            let st = self.state.borrow();
+            let c = st.current.unwrap();
+            let line = st.line(c).unwrap();
+            format!(
+                "{:#?}",
+                (
+                    c,
+                    format!("{:?}", st.develop.edit),
+                    format!("{:?}", line.current),
+                    line.history.len(),
+                    st.develop.generation,
+                    (
+                        self.app.get_as_shot(),
+                        self.app.get_temperature(),
+                        self.app.get_tint(),
+                    ),
+                    (
+                        self.app.get_local_wb_on(),
+                        self.app.get_local_wb_relative(),
+                        self.app.get_local_temperature(),
+                        self.app.get_local_tint(),
+                    ),
+                    self.app.get_picking().to_string(),
+                )
+            )
+        }
+
+        /// Whether the slider labeled `label` takes a hand.
+        fn enabled(&self, label: &str) -> bool {
+            let (at, _) = crate::testing::labeled(&self.app, label);
+            assert!(at.x > 0.0, "{label:?} on screen");
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(&self.app, label)
+                .find_map(|e| e.accessible_enabled())
+                .unwrap_or_else(|| panic!("no slider {label:?}"))
+        }
+
+        /// A drag along the slider labeled `label`, from its handle's
+        /// side of the track a fifth of the way across.
+        fn drag(&self, label: &str) {
+            let (at, size) = crate::testing::labeled(&self.app, label);
+            let (left, right) = (at.x + 68.0, at.x + size.width - 60.0);
+            let x = left + 0.3 * (right - left);
+            let y = at.y + size.height / 2.0;
+            crate::testing::drag(&self.app, &[(x, y), (x + 10.0, y), (x + 60.0, y)]);
+            self.settle();
+        }
+
+        /// A double-click on the slider labeled `label`, a reset.
+        fn double_click(&self, label: &str) {
+            self.settle();
+            let (at, size) = crate::testing::labeled(&self.app, label);
+            let (x, y) = (at.x + 30.0, at.y + size.height / 2.0);
+            crate::testing::click(&self.app, x, y);
+            crate::testing::click(&self.app, x, y);
+            self.settle();
+        }
+
+        /// The whites alone: what the keys must leave, where a slider
+        /// they do reach may move something else.
+        fn whites(&self) -> String {
+            let st = self.state.borrow();
+            format!(
+                "{:?}",
+                (
+                    st.current,
+                    &st.develop.edit.white_balance,
+                    st.develop
+                        .edit
+                        .adjustments
+                        .iter()
+                        .map(|a| a.look.white_balance)
+                        .collect::<Vec<_>>(),
+                    (
+                        self.app.get_as_shot(),
+                        self.app.get_temperature(),
+                        self.app.get_tint(),
+                    ),
+                    (
+                        self.app.get_local_wb_on(),
+                        self.app.get_local_temperature(),
+                        self.app.get_local_tint(),
+                    ),
+                )
+            )
+        }
+
+        /// The sliders' keys: Exposure focused, comma walks up the
+        /// column twice toward the white's sliders, and Up steps
+        /// whichever slider has the keys. A disabled slider never takes
+        /// them, so no white moves.
+        fn keys(&self) {
+            use slint::platform::Key;
+            let (at, size) = crate::testing::labeled(&self.app, "Exposure");
+            crate::testing::click(&self.app, at.x + 30.0, at.y + size.height / 2.0);
+            crate::testing::press(&self.app, ",");
+            crate::testing::press(&self.app, ",");
+            crate::testing::press(&self.app, Key::UpArrow);
+            crate::testing::press(&self.app, Key::Escape);
+            self.settle();
+        }
+
+        /// A click on the button labeled `label` in the white
+        /// balance's row of Neutral, and on its right edge (a menu's
+        /// chevron) too.
+        fn click_row(&self, label: &str) {
+            let (neutral, _) = crate::testing::labeled(&self.app, "Neutral");
+            let (at, size) =
+                i_slint_backend_testing::ElementHandle::find_by_accessible_label(&self.app, label)
+                    .map(|e| (e.absolute_position(), e.size()))
+                    .find(|(at, _)| (at.y - neutral.y).abs() < 4.0)
+                    .unwrap_or_else(|| panic!("no {label:?} by Neutral"));
+            let y = at.y + size.height / 2.0;
+            crate::testing::click(&self.app, at.x + size.width / 2.0, y);
+            crate::testing::click(&self.app, at.x + size.width + 12.0, y);
+            self.settle();
+        }
+
+        /// A click on the switch at the right of the header titled
+        /// `title`.
+        fn click_header_switch(&self, title: &str) {
+            click_header_switch(&self.app, title);
+            self.settle();
+        }
+
+        /// The presets' six, as many as are on screen.
+        fn presets_shown(&self) -> usize {
+            WHITE_PRESETS
+                .iter()
+                .map(|(n, ..)| crate::testing::count_labeled(&self.app, n))
+                .sum()
+        }
+    }
+
+    impl Drop for Mono {
+        fn drop(&mut self) {
+            crate::testing::remove_dir_retry(&self.dir);
+        }
+    }
+
+    /// On a monochrome frame the Develop tab's WHITE BALANCE rests
+    /// whole: its sliders are disabled, and a drag, a double-click, the
+    /// keys, As shot, Auto and its presets, Neutral, W, and the calls
+    /// behind them change neither the edit nor the picture, which keeps
+    /// the white it arrived with. The section still folds. A color frame
+    /// opened after it is live again, and the monochrome one chosen
+    /// again rests before its decode lands.
+    #[test]
+    fn a_monochrome_frames_white_balance_rests() {
+        let m = mono("mono-white", false);
+        let app = &m.app;
+        // A color frame first, the dropper taken up on it: opening the
+        // monochrome frame puts it down.
+        m.open(1);
+        assert!(!app.get_monochrome_open());
+        assert!(!app.invoke_sheet_open(), "no sheet over the keys");
+        crate::testing::press(app, "w");
+        assert_eq!(app.get_picking(), "White");
+        m.open(0);
+        assert!(!app.invoke_sheet_open());
+        assert!(app.get_monochrome_open());
+        assert_eq!(app.get_picking(), "", "the dropper put down");
+        assert_eq!(m.state.borrow().develop.edit.white_balance, ARRIVED);
+        assert!(!app.get_as_shot());
+
+        let before = m.moved();
+        assert!(!m.enabled("Temperature") && !m.enabled("Tint"));
+        assert!(!control_enabled(app, "Toggle::root", "As shot"));
+        assert!(!control_enabled(app, "PanelButton::root", "Neutral"));
+        m.drag("Temperature");
+        m.drag("Tint");
+        m.double_click("Temperature");
+        m.double_click("Tint");
+        crate::testing::click_switch(app, "As shot");
+        m.settle();
+        m.click_row("Auto");
+        assert!(!app.get_menu_up(), "no presets' menu");
+        m.click_row("Neutral");
+        assert_eq!(app.get_picking(), "");
+        crate::testing::press(app, "w");
+        assert_eq!(app.get_picking(), "");
+        // W from a tab without the dropper does not bring Develop.
+        app.set_panel_tab("Masks".into());
+        crate::testing::press(app, "w");
+        assert_eq!(app.get_panel_tab(), "Masks");
+        assert_eq!(app.get_picking(), "");
+        app.set_panel_tab("Develop".into());
+        app.set_wb_presets_shown(true);
+        assert_eq!(m.presets_shown(), 0, "the menu asked for does not open");
+        // A warm picture for Auto to read: no white from it, and no
+        // word of a miss either.
+        crate::panel::viewport::AUTO_WHITE_GRID
+            .with(|g| *g.borrow_mut() = Some((vec![[0.3, 0.2, 0.1]; 1600], 40)));
+        app.set_status("".into());
+        app.invoke_wb_auto();
+        assert_eq!(app.get_status(), "");
+        crate::panel::viewport::AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = None);
+        app.invoke_wb_preset("Tungsten".into());
+        app.invoke_pick_started("White".into());
+        assert_eq!(app.get_picking(), "");
+        // A press with the dropper somehow in hand reads nothing, nor
+        // says it waits for the develop.
+        app.set_status("".into());
+        app.set_picking("White".into());
+        app.invoke_pick_pressed(600.0, 300.0);
+        assert_eq!(app.get_status(), "");
+        app.set_picking("".into());
+        // The calls behind As shot and a slider's reset, as a key or a
+        // click that reached the control would make them: refused, the
+        // edit's white shown again.
+        app.set_as_shot(!app.get_as_shot());
+        app.invoke_as_shot_toggled();
+        m.settle();
+        assert_eq!(m.moved(), before, "As shot");
+        app.set_temperature(app.get_temperature() + 500.0);
+        app.invoke_wb_slider_reset("tint".into());
+        m.settle();
+        assert_eq!(m.moved(), before, "a slider's reset");
+        assert_eq!(m.state.borrow().develop.edit.white_balance, ARRIVED);
+        let whites = m.whites();
+        m.keys();
+        assert_eq!(m.whites(), whites);
+
+        // It folds and opens as any section does.
+        let folded = app.get_collapsed_wb();
+        let (at, size) = crate::testing::labeled(app, "WHITE BALANCE");
+        crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(app.get_collapsed_wb(), !folded);
+        crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(app.get_collapsed_wb(), folded);
+        m.settle();
+
+        // A color frame: live, its white the one it arrived with until
+        // a drag moves it.
+        m.open(1);
+        assert!(!app.get_monochrome_open());
+        assert!(m.enabled("Temperature") && m.enabled("Tint"));
+        assert!(control_enabled(app, "Toggle::root", "As shot"));
+        assert!(control_enabled(app, "PanelButton::root", "Neutral"));
+        let before = m.moved();
+        m.drag("Temperature");
+        assert_ne!(m.moved(), before);
+        assert_ne!(m.state.borrow().develop.edit.white_balance, ARRIVED);
+        crate::testing::press(app, "w");
+        assert_eq!(app.get_picking(), "White");
+
+        // The monochrome frame again: known, so it rests from the
+        // moment it is chosen, the dropper put down; its sidecar's
+        // white is still its own.
+        app.invoke_select(0);
+        assert!(app.get_monochrome_open(), "known before the decode");
+        m.settle();
+        assert_eq!(app.get_picking(), "", "put down before the decode");
+        m.land();
+        assert!(app.get_monochrome_open());
+        assert_eq!(m.state.borrow().develop.edit.white_balance, ARRIVED);
+    }
+
+    /// A mask's WHITE BALANCE on a monochrome frame rests too: its
+    /// switch, Temperature, Tint, Follow global, and Neutral change
+    /// neither the mask's white it arrived with nor the picture; on a
+    /// color frame they are live.
+    #[test]
+    fn a_monochrome_frames_mask_white_balance_rests() {
+        let m = mono("mono-mask-white", true);
+        let app = &m.app;
+        let to_mask = || {
+            app.set_panel_tab("Masks".into());
+            app.invoke_tab_changed("Masks".into());
+            app.invoke_target_changed(1);
+            assert_eq!(app.get_target(), 1);
+            m.settle();
+        };
+        m.open(0);
+        assert!(app.get_monochrome_open());
+        to_mask();
+        // As the panel holds it: what a save would write.
+        let mask_white = || {
+            let st = m.state.borrow();
+            crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target).adjustments[0]
+                .look
+                .white_balance
+        };
+        assert_eq!(mask_white(), MASK_ARRIVED);
+        assert!(app.get_local_wb_on());
+
+        let before = m.moved();
+        assert!(!m.enabled("Temperature") && !m.enabled("Tint"));
+        assert!(!control_enabled(app, "Toggle::root", "Follow global"));
+        assert!(!control_enabled(app, "PanelButton::root", "Neutral"));
+        m.drag("Temperature");
+        m.drag("Tint");
+        m.double_click("Temperature");
+        crate::testing::click_switch(app, "Follow global");
+        m.settle();
+        let (at, size) = crate::testing::labeled(app, "Neutral");
+        crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::press(app, "w");
+        let folded = app.get_collapsed_wb();
+        m.click_header_switch("\u{b7}  WHITE BALANCE");
+        assert_eq!(
+            app.get_collapsed_wb(),
+            folded,
+            "the dead switch folds nothing"
+        );
+        // The calls behind the switch, Follow global, and a double-click,
+        // as a key or a click that reached the control would make them:
+        // refused, the mask's white shown again.
+        m.settle();
+        assert_eq!(m.moved(), before);
+        app.set_local_wb_relative(!app.get_local_wb_relative());
+        app.invoke_local_wb_relative_toggled();
+        m.settle();
+        assert_eq!(m.moved(), before, "Follow global");
+        app.set_local_wb_on(!app.get_local_wb_on());
+        app.invoke_local_wb_toggled();
+        m.settle();
+        assert_eq!(m.moved(), before, "the switch");
+        app.invoke_local_wb_reset();
+        m.settle();
+        assert_eq!(m.moved(), before, "the reset");
+        assert_eq!(mask_white(), MASK_ARRIVED);
+        let whites = m.whites();
+        m.keys();
+        assert_eq!(m.whites(), whites);
+
+        // A color frame's mask: live.
+        app.set_panel_tab("Develop".into());
+        app.invoke_tab_changed("Develop".into());
+        m.open(1);
+        assert!(!app.get_monochrome_open());
+        to_mask();
+        assert!(m.enabled("Temperature") && m.enabled("Tint"));
+        assert!(control_enabled(app, "Toggle::root", "Follow global"));
+        assert!(control_enabled(app, "PanelButton::root", "Neutral"));
+        let before = m.moved();
+        m.drag("Temperature");
+        assert_ne!(m.moved(), before);
+        assert_ne!(mask_white(), MASK_ARRIVED);
+    }
+
+    /// How the open frame came to be known monochrome while a white
+    /// control held the focus.
+    enum Route {
+        /// Left from a color frame to a monochrome one already known.
+        Left,
+        /// Home from a color frame to a monochrome one already known.
+        Home,
+        /// The monochrome frame's own decode landing, the control
+        /// focused in the moment before it, when the frame was not yet
+        /// known. A mask's controls go with the mask a frame change
+        /// unchooses, so this is their only way.
+        Decode,
+    }
+
+    /// A white control holding the focus when the open frame turns out
+    /// monochrome takes its own keys and does nothing: focused, then
+    /// the frame known monochrome by `route`, then `keys`. The
+    /// monochrome frame's stored whites are the ones it arrived with,
+    /// and nothing reached the window: no frame step, no zoom, no grid
+    /// or cull.
+    fn a_focused_control_takes_no_key(
+        what: &str,
+        mask: bool,
+        route: Route,
+        focus: impl Fn(&Mono),
+        keys: &[slint::SharedString],
+    ) {
+        use slint::platform::Key;
+        let m = mono(what, mask);
+        let app = &m.app;
+        match route {
+            Route::Left | Route::Home => {
+                m.open(0);
+                m.open(1);
+            }
+            Route::Decode => app.invoke_select(0),
+        }
+        assert!(!app.get_monochrome_open());
+        assert!(!app.invoke_sheet_open(), "no sheet over the keys");
+        if mask {
+            app.set_panel_tab("Masks".into());
+            app.invoke_tab_changed("Masks".into());
+            app.invoke_target_changed(1);
+            m.settle();
+        }
+        // Twice, so the white is as it was, and the control keeps the
+        // focus.
+        focus(&m);
+        focus(&m);
+        let key = match route {
+            Route::Left => Some(Key::LeftArrow),
+            Route::Home => Some(Key::Home),
+            Route::Decode => None,
+        };
+        if let Some(key) = key {
+            crate::testing::press(app, key);
+            m.settle();
+        }
+        m.land();
+        assert_eq!(m.state.borrow().current, Some(0));
+        assert!(app.get_monochrome_open());
+        if mask {
+            assert_eq!(app.get_target(), 1, "the mask still chosen");
+        }
+        let window = || {
+            let st = m.state.borrow();
+            (
+                st.current,
+                st.develop.zoom,
+                app.get_grid_open(),
+                st.culling.cull.is_some(),
+            )
+        };
+        let (before, shown) = (m.moved(), window());
+        for k in keys {
+            crate::testing::press(app, k.clone());
+        }
+        m.settle();
+        assert_eq!(m.moved(), before);
+        assert_eq!(window(), shown, "no key reached the window");
+        stored_arrived(&m);
+    }
+
+    /// Space and Return, a button's own keys.
+    fn button_keys() -> Vec<slint::SharedString> {
+        vec![" ".into(), slint::platform::Key::Return.into()]
+    }
+
+    /// The monochrome frame's stored whites, read off its sidecar.
+    fn stored_arrived(m: &Mono) {
+        let st = m.state.borrow();
+        let line = st.line(0).unwrap();
+        assert_eq!(line.current.white_balance, ARRIVED);
+        if let Some(a) = line.current.adjustments.first() {
+            assert_eq!(a.look.white_balance, MASK_ARRIVED);
+        }
+    }
+
+    fn click_as_shot(m: &Mono) {
+        crate::testing::click_switch(&m.app, "As shot");
+        m.settle();
+    }
+
+    fn click_follow_global(m: &Mono) {
+        crate::testing::click_switch(&m.app, "Follow global");
+        m.settle();
+    }
+
+    #[test]
+    fn a_focused_as_shot_takes_no_key_on_a_monochrome_frame() {
+        // Left alone: As shot asks a develop, whose newer generation
+        // the open landing after it then gives way to.
+        a_focused_control_takes_no_key(
+            "mono-focus-left",
+            false,
+            Route::Left,
+            click_as_shot,
+            &button_keys(),
+        );
+    }
+
+    #[test]
+    fn a_focused_mask_switch_takes_no_key_on_a_monochrome_frame() {
+        a_focused_control_takes_no_key(
+            "mono-focus-switch",
+            true,
+            Route::Decode,
+            |m| m.click_header_switch("\u{b7}  WHITE BALANCE"),
+            &button_keys(),
+        );
+    }
+
+    #[test]
+    fn a_focused_follow_global_takes_no_key_on_a_monochrome_frame() {
+        a_focused_control_takes_no_key(
+            "mono-focus-follow",
+            true,
+            Route::Decode,
+            click_follow_global,
+            &button_keys(),
+        );
+    }
+
+    /// A focused Temperature, Home to the monochrome frame, and its
+    /// step keys: no step, and no frame stepped by the arrows either.
+    /// The slider's own guard alone keeps this white: the develop a
+    /// step asks for reads the panel as any slider's does.
+    #[test]
+    fn a_focused_temperature_takes_no_step_on_a_monochrome_frame() {
+        use slint::platform::Key;
+        // More up than down, so steps taken would not cancel out.
+        let keys: Vec<slint::SharedString> = [Key::UpArrow, Key::RightArrow, Key::LeftArrow]
+            .into_iter()
+            .map(Into::into)
+            .chain(["+".into(), "=".into()])
+            .collect();
+        a_focused_control_takes_no_key(
+            "mono-focus-temperature",
+            false,
+            Route::Home,
+            |m| {
+                // On the label: focused, the value left where it is.
+                let (at, size) = crate::testing::labeled(&m.app, "Temperature");
+                crate::testing::click(&m.app, at.x + 30.0, at.y + size.height / 2.0);
+                m.settle();
+            },
+            &keys,
+        );
     }
 }

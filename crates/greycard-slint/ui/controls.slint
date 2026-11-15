@@ -173,6 +173,8 @@ export global ButtonKeys {
 export component Switch inherits Rectangle {
     in-out property <bool> checked: true;
     in property <bool> enabled: true;
+    // Its name to a screen reader: the section's title.
+    in property <string> label;
     // Shown off whatever `checked` says: for a switch another
     // section has taken over, which keeps what it was set to for
     // when it is handed back.
@@ -182,6 +184,13 @@ export component Switch inherits Rectangle {
     height: 16px;
     border-radius: 8px;
     property <bool> shown: root.checked && !root.force-off;
+    // To a screen reader a switch, on or off as it shows, and whether
+    // it takes a hand: a dead one is heard as disabled.
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.shown;
+    accessible-enabled: root.enabled;
     property <bool> active: enabled && (ta.has-hover || ta.pressed || fs.has-focus);
     background: !root.enabled ? Theme.border
         : root.shown ? (root.active ? Theme.accent-hover : Theme.accent)
@@ -200,22 +209,31 @@ export component Switch inherits Rectangle {
     }
     fs := FocusScope {
         enabled: root.enabled;
+        // Disabled while it held the focus (a FocusScope keeps it):
+        // its own keys are taken and do nothing, so none acts on the
+        // window or a sheet behind it either.
         key-pressed(e) => {
             if (e.text == " " || e.text == Key.Return) {
-                root.checked = !root.checked;
-                root.toggled();
+                if (root.enabled) {
+                    root.checked = !root.checked;
+                    root.toggled();
+                }
                 return accept;
             }
             return ButtonKeys.pass(e) ? accept : reject;
         }
     }
+    // Enabled either way: a disabled switch takes the press and does
+    // nothing, so it never falls through to the header row under it,
+    // which would fold the section.
     ta := TouchArea {
-        enabled: root.enabled;
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         clicked => {
-            fs.focus();
-            root.checked = !root.checked;
-            root.toggled();
+            if (root.enabled) {
+                fs.focus();
+                root.checked = !root.checked;
+                root.toggled();
+            }
         }
     }
 }
@@ -276,10 +294,11 @@ export component Section inherits VerticalLayout {
         let y = SliderKeys.reveal-y - root.absolute-position.y;
         return x >= 0 && x <= root.width && y >= 0 && y < root.height;
     }
-    // Another section has taken this one over and it does not act
-    // whatever its switch says: the switch shows off and is dead,
-    // the body is dimmed, and `on` keeps what it was for when the
-    // other section lets go.
+    // Another section has taken this one over, or the frame has
+    // nothing for it to act on (a monochrome sensor's white balance),
+    // and it does not act whatever its switch says: the switch shows
+    // off and is dead, the body is dimmed, and `on` keeps what it was
+    // for when it acts again.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
     // Whether a fold moves or lands at once: a click on the header
@@ -486,6 +505,7 @@ export component Section inherits VerticalLayout {
                 }
             }
             if root.switchable: Switch {
+                label: root.title;
                 checked <=> root.on;
                 enabled: !root.superseded;
                 force-off: root.superseded;
@@ -570,7 +590,7 @@ export component Section inherits VerticalLayout {
             height: !root.shares ? self.preferred-height
                 : max(parent.height, self.preferred-height, parent.folding ? parent.span : 0px);
             spacing: root.boxed ? 0px : Theme.space-1;
-            opacity: root.switchable && (!root.on || root.superseded) ? 0.45 : 1;
+            opacity: (root.switchable && !root.on) || root.superseded ? 0.45 : 1;
             animate opacity { duration: Theme.quick; }
             @children
         }
@@ -720,6 +740,10 @@ export component ValueField inherits Rectangle {
     property <int> cancels: Typing.cancel;
     changed cancels => {
         if (root.editing) { root.close(); }
+    }
+    // Disabled while typed in: what was typed does not count.
+    changed enabled => {
+        if (!root.enabled && root.editing) { root.close(); }
     }
     public function edit() {
         if (root.enabled) {
@@ -1032,7 +1056,10 @@ export component EditSlider inherits Rectangle {
         root.last-x = x;
         root.set-fraction(root.drag-fraction(x));
     }
+    // Disabled while it held the focus (a FocusScope keeps it), its
+    // step keys are still its own, taken and doing nothing.
     function nudge(by: float) {
+        if (!root.enabled) { return; }
         value = root.logarithmic
             ? clamp(value * pow(2, by), minimum, maximum)
             : clamp(value + by, minimum, maximum);
@@ -1336,6 +1363,14 @@ export component Toggle inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> follows: false;
     callback toggled();
+    // To a screen reader a switch named by its label, on or off, and
+    // whether it takes a hand; the label's Text says nothing itself,
+    // so the name is heard once.
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
     height: Theme.control-height;
     property <bool> active: enabled && (ta.has-hover || ta.pressed || fs.has-focus);
     /// The switch at the row's right edge, the label up against it on
@@ -1354,6 +1389,7 @@ export component Toggle inherits Rectangle {
     property <length> room: max(0, root.width - knob-track.width - root.gap);
 
     lbl := Text {
+        accessible-role: none;
         x: root.switch-at-end || root.label == "" ? max(0, knob-track.x - root.gap - self.width) : 0;
         width: root.label == "" ? 0 : min(self.preferred-width, root.room);
         visible: self.width > 0;
@@ -1394,12 +1430,16 @@ export component Toggle inherits Rectangle {
         x: ta.x;
         width: ta.width;
         enabled: root.enabled;
+        // Disabled while it held the focus: its own keys taken and
+        // nothing done, as a Switch's.
         key-pressed(e) => {
             if (e.text == " " || e.text == Key.Return) {
-                if (!root.follows) {
-                    root.checked = !root.checked;
+                if (root.enabled) {
+                    if (!root.follows) {
+                        root.checked = !root.checked;
+                    }
+                    root.toggled();
                 }
-                root.toggled();
                 return accept;
             }
             return ButtonKeys.pass(e) ? accept : reject;
@@ -1431,6 +1471,12 @@ export component PanelButton inherits Rectangle {
     /// For a button with a picture and no text: its name, a word or
     /// two, at the pointer after a rest.
     in property <string> words;
+    // To a screen reader a button, and whether it takes a hand. A
+    // worded one is named by its text, which says it; one with a
+    // picture alone by its words.
+    accessible-role: button;
+    accessible-label: root.text != "" ? "" : root.words;
+    accessible-enabled: root.enabled;
     /// A menu of its own: a chevron at the right edge, which a click
     /// opens it from, as a right-click anywhere on the button does.
     in property <bool> has-menu: false;
@@ -1508,7 +1554,12 @@ export component PanelButton inherits Rectangle {
             }
         }
         key-pressed(e) => {
-            if (e.text == " " || e.text == Key.Return) { root.clicked(); return accept; }
+            // Disabled while it held the focus: its own keys taken and
+            // nothing done, as a Switch's.
+            if (e.text == " " || e.text == Key.Return) {
+                if (root.enabled) { root.clicked(); }
+                return accept;
+            }
             return ButtonKeys.pass(e) ? accept : reject;
         }
     }

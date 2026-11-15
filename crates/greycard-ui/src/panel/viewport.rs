@@ -1964,6 +1964,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            // No white tints a monochrome frame: nothing to read.
+            if crate::panel::color::white_refused(&state.borrow(), &app) {
+                return;
+            }
             auto_white(state.borrow_mut(), &app);
         });
     }
@@ -1976,6 +1980,11 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            // The white's dropper does not apply to a monochrome
+            // frame: nothing is put down or taken up.
+            if kind == "White" && crate::panel::color::white_refused(&state.borrow(), &app) {
+                return;
+            }
             let same = app.get_picking() == kind;
             app.invoke_stop_placing();
             if !same {
@@ -1998,6 +2007,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let mut st = state.borrow_mut();
             let picking = app.get_picking();
+            // The white's dropper reads nothing on a monochrome frame.
+            if picking == "White" && crate::panel::color::white_refused(&st, &app) {
+                return;
+            }
             if !dropper_reads_develop(&st) {
                 crate::panel::deliver::show_hint(&app, &mut st, &waiting_said(picking.as_str()));
                 return;

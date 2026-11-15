@@ -35,10 +35,14 @@ export component WhiteBalanceSection inherits Section {
     // section's title, Follow global where As shot would be, its
     // sliders live while it is on.
     in property <bool> local: false;
+    // A monochrome sensor's frame: no white tints it, so the section
+    // rests whole, as one another has taken over does, and the edit
+    // keeps whatever white it holds.
+    in property <bool> monochrome: false;
     // Whether the sliders move the picture. The global's always do:
     // under As shot they show the camera's white, and moving either
     // turns As shot off and keeps the white where the pointer left it.
-    property <bool> live: root.local ? root.on : true;
+    property <bool> live: !root.monochrome && (root.local ? root.on : true);
     callback develop-changed();
     // As shot switched: on, the sliders go back to the camera's white.
     callback as-shot-toggled();
@@ -62,9 +66,11 @@ export component WhiteBalanceSection inherits Section {
     title: @tr("WHITE BALANCE");
     icon: @image-url("../icons/thermometer.svg");
     collapsed <=> root.collapsed-wb;
+    superseded: root.monochrome;
     if !root.local: Toggle {
         label: @tr("As shot");
         switch-at-end: true;
+        enabled: !root.monochrome;
         checked <=> root.as-shot;
         toggled => { root.as-shot-toggled(); }
     }
@@ -148,6 +154,7 @@ export component WhiteBalanceSection inherits Section {
         // is an offset: neither has the menu.
         if !root.local: PanelButton {
             text: @tr("Auto");
+            enabled: !root.monochrome;
             has-menu: !root.picture;
             clicked => { root.wb-auto(); }
             menu(x, y) => {
@@ -159,7 +166,7 @@ export component WhiteBalanceSection inherits Section {
             changed want => {
                 if (self.want) {
                     root.presets-shown = false;
-                    if (self.has-menu) {
+                    if (self.has-menu && self.enabled) {
                         root.menu-opening();
                         presets.show({ x: self.width - self.chevron-w, y: self.height });
                     }
@@ -209,6 +216,7 @@ export component WhiteBalanceSection inherits Section {
             // White balance: the dropper's button, click something neutral
             text: @tr("Neutral");
             icon: @image-url("../icons/pipette.svg");
+            enabled: !root.monochrome;
             // On a mask the patch is made neutral under the mask, and
             // the mask's white is switched on to do it.
             primary: root.picking == "White";

@@ -3275,7 +3275,7 @@ mod tests {
     /// key.
     #[test]
     fn the_export_keys_are_nobodys_under_the_match_sheet() {
-        use crate::testing::{click, labeled, settle};
+        use crate::testing::{click, settle};
         let (app, _state, _worker) = develop_window();
         // The no-op worker never lands the frame: done, as far as an
         // export asks.
@@ -3302,7 +3302,9 @@ mod tests {
         }
         app.set_match_open(true);
         settle(&app);
-        let (at, size) = labeled(&app, "Replace existing looks");
+        // On its label: a Toggle's name is the whole row's, whose
+        // empty run past the label takes no click.
+        let (at, size) = crate::testing::toggle(&app, "Replace existing looks").label;
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         let passed = app.global::<crate::ButtonKeys>().get_passed();
         for shift in [true, false] {

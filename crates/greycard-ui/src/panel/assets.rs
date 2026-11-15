@@ -3280,11 +3280,10 @@ mod tests {
         app.set_panel_scroll(0.0);
         for _ in 0..40 {
             crate::testing::settle(app);
+            // A Toggle is named by its label; the label's Text says
+            // nothing itself.
             let found = ElementHandle::find_by_element_id(app, "Toggle::root").find(|root| {
-                root.query_descendants()
-                    .match_id("Toggle::lbl")
-                    .find_first()
-                    .and_then(|l| l.accessible_label())
+                root.accessible_label()
                     .is_some_and(|l| l == "Show all cameras")
             });
             if let Some(root) = found {
