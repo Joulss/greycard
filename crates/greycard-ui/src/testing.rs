@@ -571,3 +571,18 @@ pub(crate) fn keeps_its_last_line(app: &App, last: &str, pane_width: (f32, f32),
         .set_size(slint::LogicalSize::new(1500.0, 400.0));
     wheel_brings_in(app, last, pane_width);
 }
+
+/// The middle of a panel slider's track, where a centered slider
+/// rests: a click there focuses it and moves nothing. The row's own
+/// middle is not it, the label's column and the value's field being
+/// different widths.
+pub(crate) fn track_middle(app: &App, label: &str) -> (f32, f32) {
+    use i_slint_backend_testing::ElementHandle;
+    let (at, size) = labeled(app, label);
+    let field = ElementHandle::find_by_accessible_label(app, &format!("{label} value"))
+        .next()
+        .unwrap_or_else(|| panic!("{label}'s value"));
+    let from = at.x + app.global::<crate::LabelColumn>().get_width();
+    let to = field.absolute_position().x - 8.0;
+    ((from + to) / 2.0, at.y + size.height / 2.0)
+}

@@ -5591,7 +5591,7 @@ mod tests {
         assert_eq!(crate::testing::count_labeled(&app, "Sync"), 1);
         let (at, size) = crate::testing::labeled(&app, "Sync");
         // In the panel's head, on the right, above the tabs.
-        assert!(at.x > 1500.0 - 320.0, "{at:?}");
+        assert!(at.x > 1500.0 - crate::panel::sizes::RIGHT, "{at:?}");
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         assert!(app.get_sync_open());
         assert!(!app.get_sync_paste());

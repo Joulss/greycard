@@ -62,9 +62,11 @@ design note behind it.
   Joulss (PR 136,
   [§670](https://github.com/jessolmstead/greycard/blob/master/docs/notes/670-the-right-panels-sections-and-tools.md)).
 - Dragging the right panel wider gives the width to the sliders'
-  labels first, then to their tracks, so a label the default width
-  cuts ("Roundness", and many more in French) reads whole
-  ([§672](https://github.com/jessolmstead/greycard/blob/master/docs/notes/672-the-panels-label-column-grows-with-the-panel.md)).
+  labels first, then to their tracks, so a long label (many in
+  French) reads whole, and the panel starts 14 px wider, at 334 px,
+  where no English label is cut
+  ([§672](https://github.com/jessolmstead/greycard/blob/master/docs/notes/672-the-panels-label-column-grows-with-the-panel.md),
+  [§675](https://github.com/jessolmstead/greycard/blob/master/docs/notes/675-the-develop-panel-starts-at-334-px.md)).
 - A screen reader hears the panel's toggles, buttons, and section
   switches by name, with on or off and whether they are disabled
   ([§673](https://github.com/jessolmstead/greycard/blob/master/docs/notes/673-white-balance-rests-on-a-monochrome-frame.md)).

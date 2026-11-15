@@ -11,8 +11,8 @@ use crate::settings::Settings;
 /// The left pane's width the window starts at, and a double-click on
 /// its edge goes back to.
 pub(crate) const LEFT: f32 = 240.0;
-/// The develop panel's.
-pub(crate) const RIGHT: f32 = 320.0;
+/// The develop panel's: the narrowest at which no English label is cut.
+pub(crate) const RIGHT: f32 = 334.0;
 
 /// The sizes the last run left; one not kept is the default.
 pub(crate) fn show(app: &App, kept: &Settings) {
@@ -176,8 +176,8 @@ mod tests {
         let app = loupe();
         let (vw, _) = view(&app);
         drag_by(&app, "right-edge", -100.0, 0.0);
-        assert_eq!(app.get_right_size(), 420.0);
-        assert_eq!(line(&app, "right-edge"), W - 420.0);
+        assert_eq!(app.get_right_size(), RIGHT + 100.0);
+        assert_eq!(line(&app, "right-edge"), W - RIGHT - 100.0);
         assert_eq!(view(&app).0, vw - 100.0);
         drag_by(&app, "right-edge", -600.0, 0.0);
         assert_eq!(app.get_right_size(), W / 3.0);
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(line(&app, "left-edge"), 480.0);
         sized(&app, 900.0, 600.0);
         assert_eq!(line(&app, "left-edge"), 300.0);
-        assert_eq!(line(&app, "right-edge"), 900.0 - 320.0);
+        assert_eq!(line(&app, "right-edge"), 900.0 - RIGHT);
         // The strip a third of the window's height.
         assert!(
             (app.get_strip_h() - 200.0).abs() < 0.01,
@@ -624,6 +624,10 @@ mod tests {
     /// The label column's width at the default panel, and its cap.
     const LEAST: f32 = 68.0;
     const MOST: f32 = 116.0;
+    /// The panel width the column starts to grow from.
+    const FROM: f32 = 320.0;
+    /// The column at the panel's default width.
+    const REST: f32 = LEAST + RIGHT - FROM;
     /// The gap between a slider's label and its track, and the room
     /// its value has at the right.
     const GAP: f32 = 8.0;
@@ -671,15 +675,16 @@ mod tests {
     fn a_wider_panel_widens_the_labels_first() {
         let app = loupe();
         let column = |app: &App| app.global::<crate::LabelColumn>().get_width();
-        assert_eq!(column(&app), LEAST);
+        assert_eq!(column(&app), REST);
         let (label, track) = slider_parts(&app, "Roundness");
-        assert_eq!(label, LEAST);
-        // The narrowest panel takes its room from the tracks alone.
+        assert_eq!(label, REST);
+        // The narrowest panel gives the labels' extra back, then takes
+        // its room from the tracks.
         right_at(&app, 280.0);
         assert_eq!(column(&app), LEAST);
         assert_eq!(slider_parts(&app, "Roundness"), (LEAST, track - 40.0));
         // Wider: the labels first.
-        for (panel, label) in [(344.0, 92.0), (RIGHT + MOST - LEAST, MOST)] {
+        for (panel, label) in [(344.0, 92.0), (FROM + MOST - LEAST, MOST)] {
             right_at(&app, panel);
             assert_eq!(column(&app), label, "at {panel}");
             assert_eq!(
@@ -692,12 +697,12 @@ mod tests {
         // Past the cap, the tracks.
         right_at(&app, 420.0);
         assert_eq!(column(&app), MOST);
-        let grown = 420.0 - RIGHT - (MOST - LEAST);
+        let grown = 420.0 - FROM - (MOST - LEAST);
         assert_eq!(slider_parts(&app, "Roundness"), (MOST, track + grown));
         // As wide as the window lets it, a third of it.
         right_at(&app, W / 3.0);
         assert_eq!(column(&app), MOST);
-        let grown = W / 3.0 - RIGHT - (MOST - LEAST);
+        let grown = W / 3.0 - FROM - (MOST - LEAST);
         assert_eq!(slider_parts(&app, "Roundness"), (MOST, track + grown));
         // The Crop tab's rows with a control keep to the same column.
         app.set_panel_tab("Crop".into());
@@ -706,12 +711,13 @@ mod tests {
         assert_eq!(label_text(&app, "Aspect").size().width, MOST);
         // Back to the default: as it was.
         right_at(&app, RIGHT);
-        assert_eq!(column(&app), LEAST);
-        assert_eq!(label_text(&app, "Aspect").size().width, LEAST);
+        assert_eq!(column(&app), REST);
+        assert_eq!(label_text(&app, "Aspect").size().width, REST);
     }
 
-    /// "Roundness", the longest English slider label that the default
-    /// column cuts, is whole from a 324 px panel on: 62.6 px at the
+    /// "Roundness", the longest English slider label that the least
+    /// column cuts, is whole from a 324 px panel on, and so at the
+    /// panel's default: 62.6 px at the
     /// panel's type in Noto Sans, the Linux default (Segoe UI and San
     /// Francisco set it narrower), in a column 72 px wide less the gap.
     #[test]
@@ -719,7 +725,10 @@ mod tests {
         const ROUNDNESS: f32 = 62.6;
         let app = loupe();
         let (label, _) = slider_parts(&app, "Roundness");
-        assert!(label - GAP < ROUNDNESS, "cut at the default");
+        assert!(label - GAP >= ROUNDNESS, "whole at the default: {label}");
+        right_at(&app, 320.0);
+        let (label, _) = slider_parts(&app, "Roundness");
+        assert!(label - GAP < ROUNDNESS, "cut at 320");
         right_at(&app, 324.0);
         let (label, _) = slider_parts(&app, "Roundness");
         assert!(label - GAP >= ROUNDNESS, "whole at 324: {label}");

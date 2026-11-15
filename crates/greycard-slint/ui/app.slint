@@ -2821,16 +2821,16 @@ export component App inherits Window {
     // the settings beside the hidden flags; a double-click on an edge
     // goes back to the default.
     in-out property <length> left-size: 240px;
-    in-out property <length> right-size: 320px;
+    in-out property <length> right-size: 334px;
     // The three widths, read by the layout and by the arrows on the
     // viewport's edges: each pane's size held to its floor and to a
     // third of the window's width, never under its default, so a
     // narrow window lays out as it did before the panes took a size.
     property <length> left-most: 240px;
-    property <length> right-most: 320px;
+    property <length> right-most: 334px;
     function ceilings() {
         root.left-most = max(240px, root.width / 3);
-        root.right-most = max(320px, root.width / 3);
+        root.right-most = max(334px, root.width / 3);
         root.strip-photo-most = max(root.strip-photo-default,
             root.height / 3 - root.strip-pad - root.strip-cell-rest - root.strip-foot);
     }
@@ -5617,7 +5617,7 @@ export component App inherits Window {
         height: root.height - root.strip-h;
         started => { root.size-from = root.right-w; }
         dragged(d) => { root.right-size = clamp(root.size-from - d, 280px, root.right-most); }
-        evened => { root.right-size = 320px; }
+        evened => { root.right-size = 334px; }
     }
     if !root.strip-hidden && !root.grid-open: strip-edge := DragEdge {
         x: 0;

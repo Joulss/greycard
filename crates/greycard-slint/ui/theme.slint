@@ -59,14 +59,15 @@ export global ScrollBars {
 
 // The develop panel's label column: the room a row's label has before
 // its slider's track or its control, one width down the whole panel so
-// the tracks line up. `least` at the panel's default width and under;
-// as the panel is dragged wider the column takes the extra first, up to
-// `most`, and only then do the tracks grow. `most` holds the panel's
+// the tracks line up. `least` at a 320 px panel and under; as the panel
+// widens the column takes the extra first, up to `most`, and only then
+// do the tracks grow. The panel's default, 334 px, is the width where
+// no English label is cut. `most` holds the panel's
 // longest labels, English and French, at the panel's type. The window
 // sets `panel-width` as the panel's width changes. The sheets keep a
 // 68 px column of their own.
 export global LabelColumn {
-    in-out property <length> panel-width: 320px;
+    in-out property <length> panel-width: 334px;
     out property <length> least: 68px;
     out property <length> most: 116px;
     out property <length> width: clamp(least + panel-width - 320px, least, most);

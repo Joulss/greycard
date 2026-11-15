@@ -686,3 +686,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§672. The panel's label column grows with the panel](notes/672-the-panels-label-column-grows-with-the-panel.md) (2026-11-14)
 - [§673. WHITE BALANCE rests on a monochrome frame](notes/673-white-balance-rests-on-a-monochrome-frame.md) (2026-11-14)
 - [§674. An open dropped by a develop asked while it decodes](notes/674-an-open-dropped-by-a-develop-asked-while-it-decodes.md) (2026-11-14)
+- [§675. The develop panel starts at 334 px](notes/675-the-develop-panel-starts-at-334-px.md) (2026-11-14)

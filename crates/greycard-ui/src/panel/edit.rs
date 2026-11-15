@@ -1766,8 +1766,7 @@ mod tests {
         app.invoke_select(0);
         app.set_panel_tab("Develop".into());
         app.set_exposure(0.0);
-        let (at, size) = testing::labeled(&app, "Exposure");
-        let center = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let center = testing::track_middle(&app, "Exposure");
         // A click on the slider focuses it, so the wheel is its own.
         testing::click(&app, center.0, center.1);
         let scroll = |delta_y: f32| {
@@ -1816,8 +1815,7 @@ mod tests {
         app.invoke_select(0);
         app.set_panel_tab("Develop".into());
         app.set_exposure(0.0);
-        let (at, size) = testing::labeled(&app, "Exposure");
-        let center = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let center = testing::track_middle(&app, "Exposure");
         testing::click(&app, center.0, center.1);
         let sideways = |delta_x: f32| {
             app.window().dispatch_event(WindowEvent::PointerScrolled {
@@ -1870,8 +1868,7 @@ mod tests {
         app.invoke_select(0);
         app.set_panel_tab("Develop".into());
         app.set_exposure(0.0);
-        let (at, size) = testing::labeled(&app, "Exposure");
-        let center = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let center = testing::track_middle(&app, "Exposure");
         testing::click(&app, center.0, center.1);
         let vertical = |delta_y: f32| {
             app.window().dispatch_event(WindowEvent::PointerScrolled {

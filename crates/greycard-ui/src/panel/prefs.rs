@@ -2028,7 +2028,8 @@ mod tests {
         assert_eq!(kept().proof_intent, "Perceptual");
         // The canvas's first swatch, right of its word.
         let (at, size) = crate::testing::labeled(&app, "Canvas");
-        crate::testing::click(&app, at.x + 68.0 + 8.0 + 4.0, at.y + size.height / 2.0);
+        let column = app.global::<crate::LabelColumn>().get_width();
+        crate::testing::click(&app, at.x + column + 8.0 + 4.0, at.y + size.height / 2.0);
         assert_eq!(kept().canvas_color, crate::render::CANVAS_NAMES[0]);
         open_editing(&app);
         assert_eq!(

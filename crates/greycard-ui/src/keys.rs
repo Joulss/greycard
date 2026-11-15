@@ -3792,8 +3792,8 @@ mod tests {
         for (name, set, get) in sheets {
             for back in [false, true] {
                 let (app, state, _worker) = develop_window();
-                let (at, size) = crate::testing::labeled(&app, "Exposure");
-                crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+                let (x, y) = crate::testing::track_middle(&app, "Exposure");
+                crate::testing::click(&app, x, y);
                 set(&app, true);
                 crate::testing::settle(&app);
                 assert!(get(&app), "{name} opened");
