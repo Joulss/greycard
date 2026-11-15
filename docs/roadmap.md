@@ -1242,18 +1242,18 @@ clears or a tester asks for it.
 - [ ] Camera tethering
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
-- [ ] Learned highlight reconstruction, scored on the benchmark
-      (§677): today's develop cuts every method at the brightest
-      channel's clip, so a fully clipped area is measured, not
-      improvable, until a method enters with that ceiling raised; a
-      region with one or two channels left is where a method can win
-      inside the engine (opposed 0.09 stop, a perfect chroma offset a
-      third better). Infer, never invent; the classical fill stays
-      the default until a model beats it
-- [ ] darktable's guided laplacians ported as the classical ceiling,
-      after its own numbers on the benchmark's frames say what it
-      wins (the darktable and RawTherapee adapters are written and
-      unverified; neither is installed here)
+- [ ] Learned highlight reconstruction, a trial for 0.13.0: the
+      develop's ceiling raised so a fill may pass the brightest
+      channel's clip, and a small model trained on unclipped frames
+      clipped by the benchmark (§677), scored there before it nears
+      the editor. With one or two channels left we are within 0.002
+      of the best of darktable and RawTherapee; with none left
+      darktable's segmentation with its rebuild is the bar (0.077
+      against our 0.092, one rebuild setting tried), a sixth of what
+      the raised ceiling's oracle shows. Guided laplacians lost to
+      opposed in every one of 103 comparisons and is not ported
+      (measured 2026-11-15). It invents, so it is an option, off by
+      default; the classical fill stays the default
 - [ ] Maybe: MCP
 - [ ] Maybe: Depth mapping for blur
 - [ ] Maybe: a Fill painted but not generated kept in the sidecar, as
