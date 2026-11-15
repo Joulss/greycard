@@ -862,10 +862,13 @@ pub(crate) fn turn_frames(
     // same matrix on its next frame, which is a redraw and not a
     // decode.
     st.develop.image_size = (0, 0);
+    // Whatever the panel was holding was recorded on the way in; the
+    // turn itself added no state. A frame the worker was not sent (a
+    // pick reading its sidecar) develops when its open goes out.
     if developing {
-        // Whatever the panel was holding was recorded on the way in;
-        // the turn itself added no state.
         show_history(st, app);
+    }
+    if developing && crate::panel::edit::develops_here(st) {
         st.develop.generation += 1;
         st.develop.turn_pressed = Some(std::time::Instant::now());
         app.set_status(tr!("developing...").into());
@@ -2312,10 +2315,23 @@ pub(crate) fn time_select(
 /// The window's frame has changed (or gone): where a mark that hid
 /// its frame carried the window, or a move away from there, which ends
 /// Develop's reach of that mark ([`tags::History::opened`]). Called
-/// wherever the current frame is set.
+/// wherever the current frame is set. Another frame than the last
+/// open's ends that open's visit: what it says is no longer taken, nor
+/// on a return to its frame without an open of its own (a pick still
+/// reading its sidecar), only from the next open sent.
 pub(crate) fn current_moved(st: &mut State) {
     let file = st.current.and_then(|c| st.path_at(c)).cloned();
     st.culling.tags.opened(file.as_deref());
+    if st.develop.open_sent.as_ref().map(|(_, frame)| frame)
+        != crate::panel::edit::develop_of(st).as_ref()
+    {
+        st.develop.open_sent = None;
+    }
+    // A move is of the frame it moved; another frame's visit has none.
+    if st.develop.moved_from.as_ref().map(|(at, _)| at) != file.as_ref() {
+        st.develop.moved_from = None;
+        st.develop.reopen_due = false;
+    }
 }
 
 /// Open the frame on browser row `row`: decode and develop it on the
@@ -2678,9 +2694,11 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
     crate::panel::mask::learned_for(st, &path);
     crate::panel::mask::learned_anew(st, st.cells[i].version.clone());
     let learned = crate::panel::mask::asks_at_open(st, &edit);
+    let version = st.cells[i].version.clone();
+    sending_open(st, &path, &version);
     Job::Open {
         path,
-        version: st.cells[i].version.clone(),
+        version,
         edit,
         generation: st.develop.generation,
         seed_blend: match st.views.queued_open {
@@ -2694,6 +2712,143 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
         stance_known: known_mosaic(st, i) != OpenMosaic::Unknown,
         learned,
     }
+}
+
+/// An open of the frame `path`, `version` is sent at the current
+/// generation: what it says of the frame is taken from here on, while
+/// that frame is the one chosen ([`opened_is_current`]).
+fn sending_open(st: &mut State, path: &Path, version: &Option<std::sync::Arc<str>>) {
+    st.develop.open_sent = Some((st.develop.generation, (path.to_path_buf(), version.clone())));
+    st.develop.reopen_due = false;
+}
+
+/// File `file`'s path changed from `was` to `to` under the window (found
+/// moved, followed to an archive's copy, a move made), its bytes the
+/// same: everything the window keeps of it by path follows in the same
+/// step. Its stance, its mosaic, the size its develop lands at, the
+/// mosaic the panel shows, the command line's overrides, the lens frame,
+/// a crop fit due, the walk's last step, and the file the learned masks
+/// and their failures are of. The frame on screen's file is the frame's
+/// still, and what a job the worker was running on it says under `was`
+/// is taken as the frame's (`moved_from`). The worker, which holds the
+/// file by the path
+/// it was sent, is not told: an open it was sent under `was` ends with
+/// the move (`open_sent`, so no develop is asked of a path the worker
+/// does not hold), and the frame is opened again under `to` by the
+/// follow's caller (`reopen_moved`), which sets every path the worker
+/// keeps of it in one job.
+pub(crate) fn file_moved(st: &mut State, file: usize, was: &Path, to: &Path) {
+    let on_screen = st.current.and_then(|c| st.file_at(c)) == Some(file);
+    let d = &mut st.develop;
+    if let Some(s) = d.stances.remove(was) {
+        d.stances.insert(to.to_path_buf(), s);
+    }
+    if let Some(m) = d.mosaics.remove(was) {
+        d.mosaics.insert(to.to_path_buf(), m);
+    }
+    for (path, _) in d.opened_sizes.iter_mut().filter(|(p, _)| p == was) {
+        *path = to.to_path_buf();
+    }
+    let follow = |p: &mut PathBuf| {
+        if p == was {
+            *p = to.to_path_buf();
+        }
+    };
+    if let Some((p, _)) = d.panel_mosaic.as_mut() {
+        follow(p);
+    }
+    if let Some(p) = d.learned_of.as_mut() {
+        follow(p);
+    }
+    for (_, p) in d.masks_failed.values_mut() {
+        if let Some(p) = p.as_mut() {
+            follow(p);
+        }
+    }
+    if let Some(k) = d.lens_frame.as_mut() {
+        follow(&mut k.path);
+    }
+    if let Some((p, _)) = d.crop_fit_due.as_mut() {
+        follow(p);
+    }
+    if let Some((k, _)) = d.before_as_shot.as_mut() {
+        follow(&mut k.path);
+    }
+    if let Some((k, _)) = d.zoom_back.as_mut().and_then(|b| b.frame.as_mut()) {
+        follow(&mut k.path);
+    }
+    if let Some((p, _)) = st.launch.overridden.as_mut() {
+        follow(p);
+    }
+    st.develop.walk.file_moved(was, to);
+    let d = &mut st.develop;
+    if on_screen {
+        // Moved again: every earlier path is still what a job then
+        // running may say.
+        let mut earlier = match d.moved_from.take() {
+            Some((at, earlier)) if at == was => earlier,
+            _ => Vec::new(),
+        };
+        if !earlier.iter().any(|p| p == was) {
+            earlier.push(was.to_path_buf());
+        }
+        d.moved_from = Some((to.to_path_buf(), earlier));
+    }
+    if d.open_sent.as_ref().is_some_and(|(_, (p, _))| p == was) {
+        d.open_sent = None;
+        d.reopen_due = true;
+    }
+}
+
+/// The frame on screen's file was followed to another path while the
+/// worker held it under the old one (`file_moved`): it is opened again
+/// under the new path, as a file written again under the window is
+/// (`reread_open`). Whether it was.
+pub(crate) fn reopen_moved(st: &mut State, app: &App, worker: &Worker) -> bool {
+    std::mem::take(&mut st.develop.reopen_due) && reread_open(st, app, worker)
+}
+
+/// Whether `file`, as an outcome of the worker names it, is the frame
+/// on screen's: its path, or a path it was followed from in this visit,
+/// which a job running on it when it moved still says.
+pub(crate) fn is_open_file(st: &State, file: &Path) -> bool {
+    let open = st.current.and_then(|c| st.path_at(c));
+    open.map(PathBuf::as_path) == Some(file) || open.is_some_and(|o| was_at(st, o, file))
+}
+
+/// Whether the frame on screen, at `now`, was at `file` earlier in this
+/// visit, its file followed from there.
+pub(crate) fn was_at(st: &State, now: &Path, file: &Path) -> bool {
+    st.develop
+        .moved_from
+        .as_ref()
+        .is_some_and(|(at, earlier)| at == now && earlier.iter().any(|p| p == file))
+}
+
+/// Whether the worker's `Opened` at `generation` is for the frame
+/// chosen now, and what it says of the frame (its kind, its mosaic, its
+/// white, its lens, its shot) to be taken. It is when it is the
+/// generation waited on, as it is unless a develop was asked since; and
+/// when it is the last open sent, or that open with a develop of its
+/// frame folded in by the worker (`Queue::take_develop_of`), at a
+/// generation a develop asked since has moved on from, while the frame
+/// it was sent for is still the one chosen. An open of a frame left
+/// since, or one sent before the last (the same frame opened again, its
+/// file written again), is not. Its picture is another matter: a
+/// develop lands only at the generation waited on.
+pub(crate) fn opened_is_current(st: &State, generation: u64) -> bool {
+    if generation == st.develop.generation {
+        return true;
+    }
+    // Culling, entered while it decoded, takes no word of it: leaving
+    // culling sends the open the frame is developed under.
+    if st.culling.cull.is_some() {
+        return false;
+    }
+    st.develop.open_sent.as_ref().is_some_and(|(sent, frame)| {
+        (*sent..=st.develop.generation).contains(&generation)
+            && crate::panel::edit::develop_of(st).as_ref() == Some(frame)
+    })
 }
 
 /// The open frame's file was written again under it, unasked (another
@@ -2727,6 +2882,9 @@ pub(crate) fn reread_open(st: &mut State, app: &App, worker: &Worker) -> bool {
     }
     let edit = crate::panel::edit::edit_to_develop(app, &st.develop.edit);
     st.develop.generation += 1;
+    // The masks' file, which a move has followed already.
+    let path = st.path_of(i).clone();
+    crate::panel::mask::learned_for(st, &path);
     crate::panel::original::rewritten(st, st.develop.generation);
     crate::panel::parts::picture_changed(st, app);
     app.set_busy(true);
@@ -2737,8 +2895,9 @@ pub(crate) fn reread_open(st: &mut State, app: &App, worker: &Worker) -> bool {
         "{}: written again under the window; read again",
         file_name(st.path_of(i))
     );
+    sending_open(st, &path, &version);
     worker.send(Job::Open {
-        path: st.path_of(i).clone(),
+        path,
         version,
         edit,
         generation: st.develop.generation,
@@ -3043,6 +3202,18 @@ impl Walk {
         crate::worker::Heading {
             ahead: self.ahead,
             streak: self.streak,
+        }
+    }
+}
+
+impl Walk {
+    /// The file the walk was last at moved from `was` to `to`: the next
+    /// step is counted from it still.
+    fn file_moved(&mut self, was: &Path, to: &Path) {
+        if let Some((_, p)) = self.from.as_mut()
+            && p == was
+        {
+            *p = to.to_path_buf();
         }
     }
 }

@@ -402,6 +402,20 @@ pub(crate) struct Develop {
     /// way. Cleared when a develop lands.
     pub(crate) planes_asked: greycard_edit::DetailWants,
     pub(crate) generation: u64,
+    /// The last open sent to the worker: its generation and its frame,
+    /// the file and the version. What that open says of the frame is
+    /// taken while the frame is still the one chosen, a develop asked
+    /// since or not (`browser::opened_is_current`).
+    pub(crate) open_sent: Option<(u64, crate::worker::DevelopOf)>,
+    /// The frame on screen's file followed to other paths in this
+    /// visit: the path it is at now, and every earlier one. What a job
+    /// the worker was running on it says under an earlier path is the
+    /// frame's (`browser::is_open_file`).
+    pub(crate) moved_from: Option<(PathBuf, Vec<PathBuf>)>,
+    /// The frame on screen's file moved while the worker held it under
+    /// the old path: it is opened again under the new one by the
+    /// follow's caller (`browser::reopen_moved`).
+    pub(crate) reopen_due: bool,
     /// What the worker was last told of the open frame's neighbors, for
     /// them to be sent again once when what they are moves
     /// (`browser::neighbors_moved`).

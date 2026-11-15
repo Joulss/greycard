@@ -159,14 +159,16 @@ pub(crate) fn people_found(
     file: Option<PathBuf>,
     people: Result<(Vec<Candidate>, &'static str, f64), String>,
 ) -> bool {
+    // Another picture since: its people are not this one's, and the
+    // press waiting is left for its own answer.
+    if let Some(f) = &file
+        && !crate::panel::browser::is_open_file(st, f)
+    {
+        return false;
+    }
     let Some(pending) = st.develop.part_pending.take() else {
         return false;
     };
-    let open = st.current.and_then(|c| st.path_at(c)).cloned();
-    if file.is_some() && file != open {
-        // Another picture since: its people are not this one's.
-        return false;
-    }
     let (people, provider, seconds) = match people {
         Ok(p) => p,
         Err(e) => {
@@ -1397,6 +1399,41 @@ mod tests {
             greycard_ai::sam3::PERSON,
         ] {
             assert!(phrases.contains(&own), "{own}");
+        }
+    }
+
+    /// A Part asked before its frame's file moved twice (A to B to C, or
+    /// A to B and back to A), each followed and opened again: the people
+    /// found on an earlier path are the frame's, and the part is made.
+    /// An answer for another file is not, and leaves the press waiting.
+    #[test]
+    fn a_part_asked_before_two_moves_is_made() {
+        for to in [["/nowhere/B.CR3", "/nowhere/C.CR3"], ["/nowhere/B.CR3", ""]] {
+            let (app, state, worker) = masks();
+            let mut st = state.borrow_mut();
+            pending(&mut st, "Iris");
+            let first = st.path_of(0).to_string_lossy().into_owned();
+            let to = [
+                to[0],
+                if to[1].is_empty() {
+                    first.as_str()
+                } else {
+                    to[1]
+                },
+            ];
+            let paths = crate::testing::open_and_follow(&mut st, &app, &worker, &to);
+            let one = || Ok((vec![two().remove(0)], "CPU", 0.1));
+            assert!(!people_found(
+                &mut st,
+                &app,
+                Some(std::path::PathBuf::from("/nowhere/other.CR3")),
+                one()
+            ));
+            assert!(st.develop.part_pending.is_some(), "still waiting");
+            assert!(people_found(&mut st, &app, Some(paths[1].clone()), one()));
+            assert_eq!(shapes(&st).len(), 1, "{to:?}");
+            assert!(!people_found(&mut st, &app, Some(paths[2].clone()), one()));
+            assert_eq!(shapes(&st).len(), 1);
         }
     }
 }

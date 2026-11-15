@@ -1,5 +1,6 @@
 //! The worker's thread: the loop that takes the queue's jobs in turn.
 
+use super::handle::{Holds, holds};
 use super::prefetch::{self, Due, Fetched};
 use super::shelf::{FileKey, Shelf};
 use super::*;
@@ -160,6 +161,9 @@ pub(super) fn run(
     // The generation of the last open whose develop landed: the
     // neighbors the window sent with that open are the ones prefetched.
     let mut landed: Option<u64> = None;
+    // The file whose open failed last, with what it failed of, until an
+    // open succeeds: a develop of that frame is answered with it.
+    let mut failed_open: Option<(PathBuf, String)> = None;
     // What the log was last told of the prefetch's depth and the
     // walk's direction, said again only when either changes.
     let mut depth_said: Option<(prefetch::Depth, prefetch::Side)> = None;
@@ -937,14 +941,20 @@ pub(super) fn run(
         if developing && let Some(b) = &background {
             b.hold(true);
         }
-        let blame = Blame::of(&job);
+        let mut blame = Blame::of(&job);
+        // The file an open is for: one that panics before the file is
+        // the worker's is a failed open of it, as one whose read fails.
+        let opening = match &job {
+            Job::Open { path, .. } => Some(path.clone()),
+            _ => None,
+        };
         // A panic in a job is the hook's to write, with its
         // backtrace; here it becomes the failure the UI is waiting
         // on, and the develop state is dropped rather than trusted.
         let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
             Job::Open {
                 path,
-                version: _,
+                version,
                 edit,
                 generation,
                 seed_blend,
@@ -957,8 +967,67 @@ pub(super) fn run(
                 // file the shelf has not seen; what the decode says of
                 // the frame is added once it has said it.
                 let coming = FileKey::of(&path);
-                match open_told(&path, stance_known, &deliver) {
+                // A decoder that panics fails the read as one that errs,
+                // in the same words a panic anywhere fails a job in, so
+                // what follows (the fold, the failure remembered) is the
+                // same.
+                let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let read = open_told(&path, stance_known, &deliver);
+                    #[cfg(test)]
+                    {
+                        let mut q = lock.lock().expect("worker queue");
+                        let (held, panics) = (
+                            q.open_held_by_test.take(),
+                            q.open_panics_by_test
+                                .take_if(|at| *at == super::OpenPanic::Reading),
+                        );
+                        drop(q);
+                        if let Some((told, go)) = held {
+                            let _ = told.send(());
+                            let _ = go.recv();
+                        }
+                        if panics.is_some() {
+                            panic!("a test's decoder");
+                        }
+                    }
+                    read
+                }))
+                .unwrap_or_else(|payload| {
+                    let message = panic_message(payload.as_ref());
+                    lost_seen |= says_lost(&message);
+                    Err(anyhow::anyhow!(super::panicked(&message)))
+                });
+                // A develop of this frame asked for while its file was
+                // read (a slider's, the Original's, an undo) moved the
+                // window on from the open's generation: it is this open
+                // now, under its edit, generation, and turn, so what the
+                // open says of the frame lands at the generation the
+                // window waits on, and the develop runs once, under the
+                // newer edit, its blend seeded as the open's would be.
+                let (edit, generation, wanted) = match lock
+                    .lock()
+                    .expect("worker queue")
+                    .take_develop_of(&path, &version, generation)
+                {
+                    Some(folded) => {
+                        blame = Blame::Develop(folded.1);
+                        folded
+                    }
+                    None => (edit, generation, wanted),
+                };
+                match read {
                     Ok((opened, m)) => {
+                        #[cfg(test)]
+                        if lock
+                            .lock()
+                            .expect("worker queue")
+                            .open_panics_by_test
+                            .take_if(|at| *at == super::OpenPanic::Landing)
+                            .is_some()
+                        {
+                            panic!("a test's open, after its read");
+                        }
+                        failed_open = None;
                         let taken = m
                             .exif
                             .date_time_original
@@ -1125,6 +1194,9 @@ pub(super) fn run(
                     Err(e) => {
                         landed = None;
                         lock.lock().expect("worker queue").landed = None;
+                        // Its develops asked for after this are answered
+                        // with it (`handle::holds`).
+                        failed_open = Some((path, e.to_string()));
                         deliver(Outcome::Failed {
                             generation,
                             message: e.to_string(),
@@ -1136,9 +1208,17 @@ pub(super) fn run(
                 edit,
                 generation,
                 turn: wanted,
-                ..
+                of,
             } => {
-                if let Some(f) = &input {
+                let held = holds(failed_open.as_ref(), opened_path.as_deref(), of.as_ref());
+                if let Holds::Failed(message) = held {
+                    deliver(Outcome::Failed {
+                        generation,
+                        message: message.to_string(),
+                    });
+                } else if held == Holds::Other {
+                    not_held(of.as_ref(), opened_path.as_deref());
+                } else if let Some(f) = &input {
                     turn = wanted % 4;
                     let mut round = Round::first();
                     ai.clear_shorts();
@@ -1179,9 +1259,17 @@ pub(super) fn run(
                 edit,
                 generation,
                 turn: wanted,
-                ..
+                of,
             } => {
-                if let Some(f) = &input {
+                let held = holds(failed_open.as_ref(), opened_path.as_deref(), of.as_ref());
+                if let Holds::Failed(message) = held {
+                    deliver(Outcome::Failed {
+                        generation,
+                        message: message.to_string(),
+                    });
+                } else if held == Holds::Other {
+                    not_held(of.as_ref(), opened_path.as_deref());
+                } else if let Some(f) = &input {
                     ai.clear_shorts();
                     let outcome = develop_aside(
                         f,
@@ -1495,6 +1583,13 @@ pub(super) fn run(
             // under the old ones goes with them.
             ai.forget(opened_path.clone());
             let message = panic_message(payload.as_ref());
+            // An open that panicked before its file was the worker's is
+            // a failed open of that file, as one whose read failed.
+            if let Some(path) = opening.filter(|p| opened_path.as_ref() != Some(p)) {
+                landed = None;
+                lock.lock().expect("worker queue").landed = None;
+                failed_open = Some((path, super::panicked(&message)));
+            }
             if let Some(outcome) = blame.outcome(message) {
                 deliver(outcome);
             }
@@ -1520,6 +1615,17 @@ pub(super) fn run(
             }
         }
     }
+}
+
+/// A develop sent for another file than the one in hand, which the
+/// window does not send (`edit::develops_here`): made, it would be a
+/// picture of the wrong file under this one's name, so it is left.
+fn not_held(of: Option<&super::DevelopOf>, opened: Option<&std::path::Path>) {
+    tracing::warn!(
+        "a develop of {} left: the file in hand is {}",
+        of.map_or_else(String::new, |o| file_label(&o.0)),
+        opened.map_or_else(|| "none".to_string(), file_label)
+    );
 }
 
 /// The fills the open frame's develop left to make after its picture

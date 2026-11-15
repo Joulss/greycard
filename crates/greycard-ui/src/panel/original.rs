@@ -157,6 +157,7 @@ pub(crate) fn key(st: &mut State, app: &App, worker: &Worker) {
         return;
     };
     if st.culling.cull.is_some()
+        || !crate::panel::edit::develops_here(st)
         || crate::panel::viewport::own_develop(st).is_none()
         || crate::panel::cull::standing_in(st).is_some()
     {
@@ -236,7 +237,7 @@ pub(crate) fn off(st: &mut State, app: &App, follows: bool) {
     let generation = st.develop.generation;
     if edited.is_some_and(|p| p.put_up(st, generation)) {
         app.set_busy(false);
-    } else if !follows {
+    } else if !follows && crate::panel::edit::develops_here(st) {
         app.set_busy(true);
         let edit = edit_to_develop(app, &st.develop.edit);
         let turn = current_turn(st);

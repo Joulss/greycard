@@ -2248,3 +2248,59 @@ fn the_last_frame_of_a_folder_deleted_goes_from_the_window() {
     drop(writer);
     crate::testing::remove_dir_retry(&dir);
 }
+
+/// The develops a frame standing in from its row could be asked for:
+/// a slider's after its debounce, the Original key, and a turn. None
+/// reaches the worker, whose slot keeps what it held (`held`): the
+/// worker was never sent the frame's file, and a develop would be made
+/// from the file it has, another frame's, and shown as this one's.
+fn asks_no_develop(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>, held: &str) {
+    let before = worker.slot_by_test();
+    let generation = state.borrow().develop.generation;
+    app.set_exposure(app.get_exposure() + 0.5);
+    app.invoke_develop_changed();
+    i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(
+        crate::panel::edit::DEBOUNCE_MS + 50,
+    ));
+    app.invoke_original_key();
+    let current = state.borrow().current.expect("a frame chosen");
+    crate::panel::browser::turn_frames(&mut state.borrow_mut(), app, worker, &[current], 1);
+    assert_eq!(worker.slot_by_test(), before, "{held}: no develop sent");
+    assert_eq!(state.borrow().develop.generation, generation, "{held}");
+}
+
+/// A frame under an offline root, chosen after another was opened, is
+/// developed from nothing: no develop of it is asked.
+#[test]
+fn an_offline_frame_asks_no_develop() {
+    let (dir, _away, _files, writer, app, state, worker) = offline_view("offline-develop");
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
+    crate::rows::land_pending(&state, &app, &worker);
+    assert!(worker.stop(), "what is sent stays in the slot");
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
+    assert_eq!(state.borrow().current, Some(1));
+    asks_no_develop(&app, &state, &worker, "offline");
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    drop(writer);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A pick still reading its sidecar asks no develop either: its open
+/// goes out when the read lands.
+#[test]
+fn a_pick_reading_its_sidecar_asks_no_develop() {
+    let (dir, files, writer, app, state, worker) = rated_under_a_root("pick-develop");
+    open_view(&state, &app, &worker, View::Roots(None));
+    land_all(&state, &app, &worker);
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
+    crate::rows::land_pending(&state, &app, &worker);
+    assert!(worker.stop(), "what is sent stays in the slot");
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
+    assert_eq!(state.borrow().views.pick_pending, Some(files[1].clone()));
+    asks_no_develop(&app, &state, &worker, "pick");
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    drop(writer);
+    crate::testing::remove_dir_retry(&dir);
+}

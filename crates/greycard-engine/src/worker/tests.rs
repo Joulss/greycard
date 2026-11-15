@@ -7076,3 +7076,498 @@ fn a_monochrome_raw_gets_a_grey_thumbnail() {
     let at = |x: u32| rgb[((h / 2 * w + x) * 3 + 1) as usize];
     assert!(at(w - 1) > at(0) + 50, "{} to {}", at(0), at(w - 1));
 }
+
+/// What a worker said of its opens and develops, in order: an open's
+/// generation, a develop's with its picture's size and mean, a
+/// failure's with its message.
+#[derive(Debug, PartialEq)]
+enum Said {
+    Opened(u64),
+    Developed(u64, (u32, u32), f32),
+    Failed(u64, String),
+}
+
+/// A worker whose opens and develops are said on the channel returned.
+fn saying() -> (Worker, std::sync::mpsc::Receiver<Said>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        let said = match o {
+            Outcome::Opened { generation, .. } => Said::Opened(generation),
+            Outcome::Developed {
+                generation, image, ..
+            } => {
+                let Developed::Halves(h) = image else {
+                    panic!("a test's worker has no device");
+                };
+                let rgb: Vec<f32> = h
+                    .pixels
+                    .chunks(4)
+                    .flat_map(|p| [p[0], p[1], p[2]])
+                    .map(|v| v.to_f32())
+                    .collect();
+                Said::Developed(
+                    generation,
+                    (h.width, h.height),
+                    rgb.iter().sum::<f32>() / rgb.len() as f32,
+                )
+            }
+            Outcome::Failed {
+                generation,
+                message,
+            } => Said::Failed(generation, message),
+            _ => return,
+        };
+        let _ = tx.lock().unwrap().send(said);
+    });
+    (worker, rx)
+}
+
+/// The next `n` things said, each within a minute.
+fn next_said(rx: &std::sync::mpsc::Receiver<Said>, n: usize) -> Vec<Said> {
+    (0..n)
+        .map(|_| {
+            rx.recv_timeout(std::time::Duration::from_secs(60))
+                .expect("the worker says it")
+        })
+        .collect()
+}
+
+fn open_of(path: &std::path::Path, edit: Edit, generation: u64) -> Job {
+    Job::Open {
+        path: path.to_path_buf(),
+        version: None,
+        edit,
+        generation,
+        seed_blend: false,
+        turn: 0,
+        stance_known: true,
+        learned: Vec::new(),
+    }
+}
+
+fn develop_of(path: &std::path::Path, edit: Edit, generation: u64) -> Job {
+    Job::Develop {
+        edit,
+        generation,
+        turn: 0,
+        of: Some((path.to_path_buf(), None)),
+    }
+}
+
+/// An edit whose develop is not the default's: its Dehaze runs in the
+/// engine, where the light's sliders are the viewport's.
+fn hazed() -> Edit {
+    let mut edit = Edit::default();
+    edit.detail.enabled = true;
+    edit.detail.dehaze = 0.8;
+    edit
+}
+
+/// The open of `path` at `generation` sent, and held once it has read
+/// the file: the sender returned lets it go on.
+fn open_held(
+    worker: &Worker,
+    path: &std::path::Path,
+    generation: u64,
+) -> std::sync::mpsc::Sender<()> {
+    let (held, go) = worker.hold_open_by_test();
+    worker.send(open_of(path, Edit::default(), generation));
+    held.recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the open reads its file");
+    go
+}
+
+/// A develop of the frame asked for while its open reads the file (a
+/// slider's debounce, the Original key, an undo) is that open: what the
+/// open says of the frame lands at the develop's generation, which the
+/// window waits on, and the one develop that runs is the newer edit's.
+/// The open's neighbors and the open the worker says landed follow it.
+#[test]
+fn a_develop_asked_while_an_open_reads_its_file_is_that_open() {
+    let (dir, paths) = dngs("open-read-fold", &["rf-A.dng"], 64, 48);
+    let a = &paths[0];
+    let (worker, said) = saying();
+    let (held, go) = worker.hold_open_by_test();
+    worker.send(open_of(a, Edit::default(), 1));
+    worker.neighbors(1, Heading::steady(Side::Next), Vec::new());
+    held.recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the open reads its file");
+    worker.send(Job::Develop {
+        edit: hazed(),
+        generation: 2,
+        turn: 1,
+        of: Some((a.clone(), None)),
+    });
+    drop(go);
+    let first = next_said(&said, 2);
+    assert_eq!(first[0], Said::Opened(2), "{first:?}");
+    // At the develop's turn, a quarter round.
+    let Said::Developed(2, (48, 64), folded) = first[1] else {
+        panic!("the develop at the newer generation: {first:?}");
+    };
+    {
+        let q = worker.queue.0.lock().unwrap();
+        assert_eq!(q.landed, Some((2, a.clone())));
+        assert_eq!(q.folded, Some((1, 2)));
+    }
+    // The picture is the newer edit's: that edit's developed again, not
+    // the open's own.
+    worker.send(develop_of(a, Edit::default(), 3));
+    let own = next_said(&said, 1);
+    worker.send(develop_of(a, hazed(), 4));
+    let again = next_said(&said, 1);
+    let ([Said::Developed(3, _, own)], [Said::Developed(4, _, again)]) = (&own[..], &again[..])
+    else {
+        panic!("nothing else came between: {own:?} {again:?}");
+    };
+    assert!((folded - again).abs() < 1e-5, "{folded} against {again}");
+    assert!((again - own).abs() > 1e-3, "{again} against {own}");
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// An open that fails with a develop of its frame asked for while it
+/// read the file says so at the develop's generation; a develop or an
+/// aside of that frame asked after is answered with the same failure,
+/// and never made from the file the worker still has open, another
+/// frame's. A later open that succeeds develops as before.
+#[test]
+fn a_develop_of_a_frame_whose_open_failed_is_that_failure() {
+    let (dir, paths) = dngs("open-read-failed", &["rf-ok.dng"], 64, 48);
+    let a = &paths[0];
+    let junk = dir.join("rf-junk.CR3");
+    std::fs::write(&junk, vec![0x33u8; 4096]).unwrap();
+    let (worker, said) = saying();
+    worker.send(open_of(a, Edit::default(), 1));
+    let first = next_said(&said, 2);
+    assert!(
+        matches!(first[..], [Said::Opened(1), Said::Developed(1, ..)]),
+        "{first:?}"
+    );
+    let go = open_held(&worker, &junk, 2);
+    worker.send(develop_of(&junk, hazed(), 3));
+    drop(go);
+    let Said::Failed(3, message) = next_said(&said, 1).remove(0) else {
+        panic!("the failure at the develop's generation");
+    };
+    worker.send(develop_of(&junk, Edit::default(), 4));
+    assert_eq!(next_said(&said, 1), [Said::Failed(4, message.clone())]);
+    worker.send(Job::DevelopAside {
+        edit: Edit::default(),
+        generation: 5,
+        turn: 0,
+        of: Some((junk.clone(), None)),
+    });
+    assert_eq!(next_said(&said, 1), [Said::Failed(5, message)]);
+    worker.send(open_of(a, Edit::default(), 6));
+    let back = next_said(&said, 2);
+    assert!(
+        matches!(back[..], [Said::Opened(6), Said::Developed(6, ..)]),
+        "{back:?}"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// Two opens in quick succession: the second, and a develop of its
+/// frame folded into it as it waits, are not the first's, which reads
+/// its file meanwhile and lands at its own generation.
+#[test]
+fn two_opens_in_quick_succession_land_each_at_its_own() {
+    let (dir, paths) = dngs("open-read-two", &["rf-1.dng", "rf-2.dng"], 64, 48);
+    let (worker, said) = saying();
+    let go = open_held(&worker, &paths[0], 1);
+    worker.send(open_of(&paths[1], Edit::default(), 2));
+    worker.send(develop_of(&paths[1], hazed(), 3));
+    drop(go);
+    let all = next_said(&said, 4);
+    assert!(
+        matches!(
+            all[..],
+            [
+                Said::Opened(1),
+                Said::Developed(1, ..),
+                Said::Opened(3),
+                Said::Developed(3, ..)
+            ]
+        ),
+        "{all:?}"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// Another version of the file being opened is another frame: a
+/// develop of it asked while the open reads is not folded in.
+#[test]
+fn an_open_reading_its_file_takes_no_develop_of_another_version() {
+    let (dir, paths) = dngs("open-read-version", &["rf-v.dng"], 64, 48);
+    let a = &paths[0];
+    let (worker, said) = saying();
+    let go = open_held(&worker, a, 1);
+    worker.send(Job::Develop {
+        edit: hazed(),
+        generation: 2,
+        turn: 0,
+        of: Some((a.clone(), Some("v1".into()))),
+    });
+    drop(go);
+    let all = next_said(&said, 3);
+    assert!(
+        matches!(
+            all[..],
+            [
+                Said::Opened(1),
+                Said::Developed(1, ..),
+                Said::Developed(2, ..)
+            ]
+        ),
+        "{all:?}"
+    );
+    assert_eq!(worker.queue.0.lock().unwrap().folded, None);
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A develop of a file the worker has not been sent an open of (a pick
+/// still reading its sidecar, a frame under an offline root), asked
+/// while an open of another reads its file: not that open's, which
+/// lands at its own generation, and never made from the file in hand.
+#[test]
+fn an_open_reading_its_file_takes_no_develop_of_another_frame() {
+    let (dir, paths) = dngs("open-read-other", &["ro-A.dng"], 64, 48);
+    let a = &paths[0];
+    let other = dir.join("ro-other.CR3");
+    let (worker, said) = saying();
+    let go = open_held(&worker, a, 1);
+    worker.send(develop_of(&other, hazed(), 2));
+    drop(go);
+    let all = next_said(&said, 2);
+    assert!(
+        matches!(all[..], [Said::Opened(1), Said::Developed(1, ..)]),
+        "{all:?}"
+    );
+    assert_eq!(worker.queue.0.lock().unwrap().folded, None);
+    // The other's develop made nothing: the next said is A's own.
+    worker.send(develop_of(&other, hazed(), 3));
+    worker.send(develop_of(a, Edit::default(), 4));
+    let next = next_said(&said, 1);
+    assert!(matches!(next[..], [Said::Developed(4, ..)]), "{next:?}");
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The panic's words, as the window is told them.
+fn panicked_with(what: &str) -> String {
+    super::panicked(what)
+}
+
+/// A decoder that panics while a develop of its frame is asked is a
+/// failed open at the develop's generation, in the words of a panic;
+/// a develop of that frame after it is the same failure, and the file
+/// still in hand, another frame's, is never developed for it.
+#[test]
+fn a_decoder_that_panics_with_a_develop_asked_fails_the_open() {
+    let (dir, paths) = dngs("open-panic-race", &["pr-A.dng", "pr-B.dng"], 64, 48);
+    let (worker, said) = saying();
+    worker.send(open_of(&paths[0], Edit::default(), 1));
+    let first = next_said(&said, 2);
+    assert!(
+        matches!(first[..], [Said::Opened(1), Said::Developed(1, ..)]),
+        "{first:?}"
+    );
+    worker.open_panics_by_test(super::OpenPanic::Reading);
+    let go = open_held(&worker, &paths[1], 2);
+    worker.send(develop_of(&paths[1], hazed(), 3));
+    drop(go);
+    let message = panicked_with("a test's decoder");
+    assert_eq!(next_said(&said, 1), [Said::Failed(3, message.clone())]);
+    worker.send(develop_of(&paths[1], Edit::default(), 4));
+    assert_eq!(next_said(&said, 1), [Said::Failed(4, message)]);
+    assert_eq!(worker.queue.0.lock().unwrap().landed, None);
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// Without the race: a decoder that panics fails its open, and a
+/// develop of that frame after it is the same failure.
+#[test]
+fn a_decoder_that_panics_is_a_failed_open() {
+    let (dir, paths) = dngs("open-panic", &["pn-A.dng", "pn-B.dng"], 64, 48);
+    let (worker, said) = saying();
+    worker.send(open_of(&paths[0], Edit::default(), 1));
+    let first = next_said(&said, 2);
+    assert!(
+        matches!(first[..], [Said::Opened(1), Said::Developed(1, ..)]),
+        "{first:?}"
+    );
+    worker.open_panics_by_test(super::OpenPanic::Reading);
+    worker.send(open_of(&paths[1], Edit::default(), 2));
+    let message = panicked_with("a test's decoder");
+    assert_eq!(next_said(&said, 1), [Said::Failed(2, message.clone())]);
+    worker.send(develop_of(&paths[1], Edit::default(), 3));
+    assert_eq!(next_said(&said, 1), [Said::Failed(3, message)]);
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// An open that panics after its read, a develop of its frame taken in,
+/// and before its file is the worker's (its profile, its base): the
+/// panic is the develop's generation's, and the frame's develops after
+/// it are that failure, not the last frame's picture.
+#[test]
+fn an_open_that_panics_after_its_read_is_a_failed_open() {
+    let (dir, paths) = dngs("open-panic-late", &["pl-A.dng", "pl-B.dng"], 64, 48);
+    let (worker, said) = saying();
+    worker.send(open_of(&paths[0], Edit::default(), 1));
+    let first = next_said(&said, 2);
+    assert!(
+        matches!(first[..], [Said::Opened(1), Said::Developed(1, ..)]),
+        "{first:?}"
+    );
+    worker.open_panics_by_test(super::OpenPanic::Landing);
+    let go = open_held(&worker, &paths[1], 2);
+    worker.send(develop_of(&paths[1], hazed(), 3));
+    drop(go);
+    let message = panicked_with("a test's open, after its read");
+    assert_eq!(next_said(&said, 1), [Said::Failed(3, message.clone())]);
+    worker.send(develop_of(&paths[1], Edit::default(), 4));
+    assert_eq!(next_said(&said, 1), [Said::Failed(4, message)]);
+    // The worker goes on: the first frame opens again.
+    worker.send(open_of(&paths[0], Edit::default(), 5));
+    let back = next_said(&said, 2);
+    assert!(
+        matches!(back[..], [Said::Opened(5), Said::Developed(5, ..)]),
+        "{back:?}"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The failure of an open is remembered for the frame until it opens:
+/// its file written again and read again (the window's re-read, an
+/// open of the same file) clears it, and the frame develops.
+#[test]
+fn a_failed_open_read_again_develops() {
+    let dir = crate::testing::scratch_dir("open-failed-again");
+    let path = dir.join("fa.dng");
+    std::fs::write(&path, vec![0x33u8; 4096]).unwrap();
+    let (worker, said) = saying();
+    worker.send(open_of(&path, Edit::default(), 1));
+    let Said::Failed(1, _) = next_said(&said, 1).remove(0) else {
+        panic!("junk fails");
+    };
+    worker.send(develop_of(&path, Edit::default(), 2));
+    assert!(matches!(next_said(&said, 1)[..], [Said::Failed(2, _)]));
+    crate::testing::linear_dng(&path, 64, 48, "Test", "Cam");
+    worker.send(open_of(&path, Edit::default(), 3));
+    let again = next_said(&said, 2);
+    assert!(
+        matches!(again[..], [Said::Opened(3), Said::Developed(3, ..)]),
+        "{again:?}"
+    );
+    worker.send(develop_of(&path, Edit::default(), 4));
+    assert!(matches!(next_said(&said, 1)[..], [Said::Developed(4, ..)]));
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The frame's file moved on disk and the window followed it: what the
+/// window then sends is the frame opened again under the new path
+/// (`browser::reopen_moved`). A develop still waiting under the old
+/// path gives way to that open in the slot, which sets every path the
+/// worker keeps of the frame; nothing is left waiting on an answer.
+#[test]
+fn a_develop_waiting_when_its_file_moves_gives_way_to_the_open_again() {
+    let (dir, paths) = dngs("moved-develop", &["md-A.dng"], 64, 48);
+    let (a, to) = (&paths[0], dir.join("md-A-moved.dng"));
+    let (worker, said) = saying();
+    let go = open_held(&worker, a, 1);
+    worker.send(develop_of(a, hazed(), 2));
+    std::fs::rename(a, &to).unwrap();
+    worker.send(open_of(&to, Edit::default(), 3));
+    drop(go);
+    let all = next_said(&said, 4);
+    assert!(
+        matches!(
+            all[..],
+            [
+                Said::Opened(1),
+                Said::Developed(1, ..),
+                Said::Opened(3),
+                Said::Developed(3, ..)
+            ]
+        ),
+        "{all:?}"
+    );
+    assert_eq!(worker.queue.0.lock().unwrap().landed, Some((3, to.clone())));
+    worker.send(develop_of(&to, Edit::default(), 4));
+    assert!(matches!(next_said(&said, 1)[..], [Said::Developed(4, ..)]));
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// An open of the frame still waiting when its file moves gives way to
+/// the open under the new path: the old path, gone, is never read, so
+/// no failure is remembered under it.
+#[test]
+fn an_open_waiting_when_its_file_moves_gives_way_to_the_open_again() {
+    let (dir, paths) = dngs("moved-open", &["mo-B.dng", "mo-A.dng"], 64, 48);
+    let (b, a, to) = (&paths[0], &paths[1], dir.join("mo-A-moved.dng"));
+    let (worker, said) = saying();
+    let go = open_held(&worker, b, 1);
+    worker.send(open_of(a, Edit::default(), 2));
+    std::fs::rename(a, &to).unwrap();
+    worker.send(open_of(&to, Edit::default(), 3));
+    drop(go);
+    let all = next_said(&said, 4);
+    assert!(
+        matches!(
+            all[..],
+            [
+                Said::Opened(1),
+                Said::Developed(1, ..),
+                Said::Opened(3),
+                Said::Developed(3, ..)
+            ]
+        ),
+        "{all:?}"
+    );
+    worker.send(develop_of(&to, Edit::default(), 4));
+    assert!(matches!(next_said(&said, 1)[..], [Said::Developed(4, ..)]));
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// An open running when its file moves finishes on what it read and
+/// says so at its own generation, which the window, waiting on the open
+/// again, refuses; that open then sets the new path, and the frame
+/// develops under it.
+#[test]
+fn an_open_running_when_its_file_moves_is_followed_by_the_open_again() {
+    let (dir, paths) = dngs("moved-running", &["mr-A.dng"], 64, 48);
+    let (a, to) = (&paths[0], dir.join("mr-A-moved.dng"));
+    let (worker, said) = saying();
+    let go = open_held(&worker, a, 1);
+    std::fs::rename(a, &to).unwrap();
+    worker.send(open_of(&to, Edit::default(), 2));
+    drop(go);
+    let all = next_said(&said, 4);
+    assert!(
+        matches!(
+            all[..],
+            [
+                Said::Opened(1),
+                Said::Developed(1, ..),
+                Said::Opened(2),
+                Said::Developed(2, ..)
+            ]
+        ),
+        "{all:?}"
+    );
+    worker.send(develop_of(&to, Edit::default(), 3));
+    assert!(matches!(next_said(&said, 1)[..], [Said::Developed(3, ..)]));
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}

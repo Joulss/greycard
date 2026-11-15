@@ -149,13 +149,16 @@ pub(crate) fn found(
     file: Option<PathBuf>,
     offers: Result<(Vec<Offer>, &'static str, f64), String>,
 ) {
+    // Another picture's: the press waiting is left for its own answer.
+    if let Some(f) = &file
+        && !crate::panel::browser::is_open_file(st, f)
+    {
+        return;
+    }
     let Some(pending) = st.develop.landscape_pending.take() else {
         return;
     };
     let open = st.current.and_then(|c| st.path_at(c)).cloned();
-    if file.is_some() && file != open {
-        return;
-    }
     let (offers, provider, seconds) = match offers {
         Ok(o) => o,
         Err(e) => {
@@ -538,5 +541,40 @@ mod tests {
             app.get_status(),
             "the Sky model could not be fetched this session"
         );
+    }
+
+    /// A Landscape press before its frame's file moved twice: what was
+    /// found on an earlier path is the frame's and is offered; another
+    /// file's answer leaves the press waiting.
+    #[test]
+    fn a_landscape_press_before_two_moves_is_offered() {
+        let (app, state, worker) = masks();
+        let mut st = state.borrow_mut();
+        st.develop.landscape_pending = Some(Pending {
+            id: 1,
+            mode: Mode::Add,
+        });
+        let paths = crate::testing::open_and_follow(
+            &mut st,
+            &app,
+            &worker,
+            &["/nowhere/B.CR3", "/nowhere/C.CR3"],
+        );
+        found(
+            &mut st,
+            &app,
+            Some(std::path::PathBuf::from("/nowhere/other.CR3")),
+            Ok((coast(), "CPU", 0.1)),
+        );
+        assert!(st.develop.landscape_pending.is_some(), "still waiting");
+        assert!(!app.get_landscape_menu_shown());
+        found(
+            &mut st,
+            &app,
+            Some(paths[0].clone()),
+            Ok((coast(), "CPU", 0.1)),
+        );
+        assert!(st.develop.landscape_pending.is_none());
+        assert!(app.get_landscape_menu_shown());
     }
 }

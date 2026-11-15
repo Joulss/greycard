@@ -657,6 +657,62 @@ impl Queue {
             _ => generation,
         }
     }
+
+    /// The open sent at `old` lands at `to` now, a develop of its frame
+    /// folded into it: its neighbors are retagged to `to`, and the
+    /// window, which knows them by the generation it sent the open at,
+    /// is answered as under `to` (`Worker::neighbors_again`).
+    fn open_folded(&mut self, old: u64, to: u64) {
+        let from = self
+            .folded
+            .filter(|&(_, at)| at == old)
+            .map_or(old, |(from, _)| from);
+        self.folded = Some((from, to));
+        if let Some(n) = self.neighbors.as_mut()
+            && n.generation == old
+        {
+            n.generation = to;
+        }
+    }
+
+    /// A develop of the frame `path`, `version` waiting in the slot,
+    /// taken out of it for the open of that frame the worker is in the
+    /// middle of: its edit, generation, and turn, the open landing at
+    /// that generation from `old` (`handle::into_slot`, for an open
+    /// still waiting). Anything else waiting stays.
+    fn take_develop_of(
+        &mut self,
+        path: &std::path::Path,
+        version: &Option<Arc<str>>,
+        old: u64,
+    ) -> Option<(Edit, u64, u8)> {
+        if !self
+            .develop
+            .as_ref()
+            .is_some_and(|job| handle::develops(job, path, version))
+        {
+            return None;
+        }
+        let taken = match self.develop.take() {
+            Some(
+                Job::Develop {
+                    edit,
+                    generation,
+                    turn,
+                    ..
+                }
+                | Job::DevelopAside {
+                    edit,
+                    generation,
+                    turn,
+                    ..
+                },
+            ) => (edit, generation, turn),
+            _ => unreachable!("a develop of the frame, just seen"),
+        };
+        self.open_folded(old, taken.1);
+        Some(taken)
+    }
 }
 
 #[derive(Default)]
@@ -767,6 +823,29 @@ struct Queue {
     /// frame's masks are read from and made with, as a test has them.
     #[cfg(test)]
     models_by_test: Option<greycard_ai::Store>,
+    /// The next open holds once its file is read, before what it read
+    /// is said: it tells the first, then waits on the second.
+    #[cfg(test)]
+    open_held_by_test: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
+    /// Where the next open panics, as a test has it.
+    #[cfg(test)]
+    open_panics_by_test: Option<OpenPanic>,
+}
+
+/// Where a test has an open panic: in the read of its file, or once it
+/// has read it and taken in any develop asked meanwhile, before the
+/// file is the worker's.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum OpenPanic {
+    Reading,
+    Landing,
+}
+
+/// The words a job that panicked fails with: the window's, for the
+/// open that panicked as for any other job.
+fn panicked(message: &str) -> String {
+    format!("the worker panicked: {message}")
 }
 
 pub type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;
@@ -1039,7 +1118,7 @@ impl Blame {
     }
 
     fn outcome(self, message: String) -> Option<Outcome> {
-        let message = format!("the worker panicked: {message}");
+        let message = panicked(&message);
         Some(match self {
             Blame::Develop(generation) => Outcome::Failed {
                 generation,

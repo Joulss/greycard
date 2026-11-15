@@ -108,6 +108,8 @@ impl State {
             return;
         };
         let was = std::mem::replace(at, to.clone());
+        // What the window keeps of the file by its path follows it.
+        crate::panel::browser::file_moved(self, file, &was, &to);
         // Its companions are taken to have gone with it, as every move
         // of ours takes them; the next read of the list says for sure.
         if let Some(with) = self.views.companions.remove(&was) {

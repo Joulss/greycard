@@ -154,7 +154,11 @@ pub(crate) fn merge(
         }
     }
     let was = st.current.and_then(|c| st.path_at(c)).cloned();
-    follow_current(st, seen);
+    // Followed while the worker held it: opened again under its new
+    // path (`browser::file_moved`).
+    if follow_current(st, seen) {
+        crate::panel::browser::reopen_moved(st, app, worker);
+    }
     // The frame on screen's file gone from where it was is not in the
     // list there, whatever the index still says of it: the last file
     // of a folder deleted leaves its row standing (§160's empty

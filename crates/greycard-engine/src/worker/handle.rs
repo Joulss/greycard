@@ -553,21 +553,9 @@ impl Worker {
                 };
                 let (job, folded) = into_slot(q.develop.take(), job);
                 match (&job, opening) {
-                    // The open lands at the develop's generation now:
-                    // its neighbors are retagged to it, and the window,
-                    // which knows them by the open's, is answered as
-                    // under the new one (`Worker::neighbors_again`).
+                    // The open lands at the develop's generation now.
                     (Job::Open { generation, .. }, Some(old)) if folded => {
-                        let from = q
-                            .folded
-                            .filter(|&(_, to)| to == old)
-                            .map_or(old, |(from, _)| from);
-                        q.folded = Some((from, *generation));
-                        if let Some(n) = q.neighbors.as_mut()
-                            && n.generation == old
-                        {
-                            n.generation = *generation;
-                        }
+                        q.open_folded(old, *generation);
                     }
                     (Job::Open { .. }, _) => q.folded = None,
                     _ => {}
@@ -594,6 +582,25 @@ impl Worker {
             }
         }
         cv.notify_one();
+    }
+
+    /// The open or develop waiting in the slot, for a window's test: its
+    /// kind, its generation, and the file it names.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn slot_by_test(&self) -> Option<(&'static str, u64, Option<std::path::PathBuf>)> {
+        let q = self.queue.0.lock().expect("worker queue");
+        q.develop.as_ref().map(|job| match job {
+            Job::Open {
+                generation, path, ..
+            } => ("open", *generation, Some(path.clone())),
+            Job::Develop { generation, of, .. } => {
+                ("develop", *generation, of.as_ref().map(|o| o.0.clone()))
+            }
+            Job::DevelopAside { generation, of, .. } => {
+                ("aside", *generation, of.as_ref().map(|o| o.0.clone()))
+            }
+            _ => ("other", 0, None),
+        })
     }
 
     /// The frames around the one just opened at `generation`, the
@@ -820,6 +827,29 @@ impl Worker {
         cv.notify_one();
     }
 
+    /// The next open held once its file is read, before what it read is
+    /// said: the first receiver hears it held, the open goes on once the
+    /// sender is used or dropped.
+    #[cfg(test)]
+    pub(super) fn hold_open_by_test(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (told, held) = std::sync::mpsc::channel();
+        let (go, wait) = std::sync::mpsc::channel();
+        self.queue.0.lock().expect("worker queue").open_held_by_test = Some((told, wait));
+        (held, go)
+    }
+
+    /// The next open panics where `at` says.
+    #[cfg(test)]
+    pub(super) fn open_panics_by_test(&self, at: super::OpenPanic) {
+        self.queue
+            .0
+            .lock()
+            .expect("worker queue")
+            .open_panics_by_test = Some(at);
+    }
+
     /// The patient waits slept by the end of each export frame so far.
     #[cfg(test)]
     pub(super) fn waits_by_test(&self) -> Vec<usize> {
@@ -920,17 +950,17 @@ impl Worker {
 /// dropped, the open's file would never be read (a frame chosen, or its
 /// file written again under the window), the develop would run on the
 /// base before it, and the open's `Opened` would never come. A develop
-/// for another frame, or for none (the worker's own), takes the slot as
-/// it is: the window moved on without an open (a pick still reading its
-/// sidecar, an offline frame), and the open is not the frame it shows.
+/// for none (the worker's own) takes the slot as it is; so does one for
+/// another frame, which the window does not send (it asks develops only
+/// of the frame of the last open it sent, `edit::develops_here`) and
+/// the worker would not make (`holds`).
 /// An aside's edit is the Original's, which the window's generation
-/// says the develop that lands is (`original::landing`).
+/// says the develop that lands is (`original::landing`). An open the
+/// worker has already taken folds a develop the same way once its file
+/// is read (`Queue::take_develop_of`).
 pub(super) fn into_slot(waiting: Option<Job>, job: Job) -> (Job, bool) {
-    let folds = match (&waiting, &job) {
-        (
-            Some(Job::Open { path, version, .. }),
-            Job::Develop { of: Some(of), .. } | Job::DevelopAside { of: Some(of), .. },
-        ) => of.0 == *path && of.1 == *version,
+    let folds = match &waiting {
+        Some(Job::Open { path, version, .. }) => develops(&job, path, version),
         _ => false,
     };
     if !folds {
@@ -972,6 +1002,53 @@ pub(super) fn into_slot(waiting: Option<Job>, job: Job) -> (Job, bool) {
             true,
         ),
         (_, job) => (job, false),
+    }
+}
+
+/// Whether `job` is a develop, the frame's own or the Original's aside,
+/// the window sent for the frame `path`, `version`.
+pub(super) fn develops(job: &Job, path: &std::path::Path, version: &Option<Arc<str>>) -> bool {
+    match job {
+        Job::Develop { of: Some(of), .. } | Job::DevelopAside { of: Some(of), .. } => {
+            of.0 == path && of.1 == *version
+        }
+        _ => false,
+    }
+}
+
+/// What a develop for `of` is to the worker holding the file
+/// `opened`, whose open of `failed` failed last.
+#[derive(Debug, PartialEq)]
+pub(super) enum Holds<'a> {
+    /// The file in hand, or no frame named (the worker's own): made.
+    Frame,
+    /// Another file, whose open failed last: answered with that
+    /// failure.
+    Failed(&'a str),
+    /// Another file, never opened here: nothing is made, since a
+    /// picture of the file in hand would be shown as this one's. The
+    /// window sends none: it asks develops only of the file of the last
+    /// open it sent (`edit::develops_here`), which the worker holds,
+    /// is opening, or failed to open.
+    Other,
+}
+
+/// Whether a develop sent for `of` is of the file the worker holds
+/// (`opened`), and what it is answered with if not.
+pub(super) fn holds<'a>(
+    failed: Option<&'a (std::path::PathBuf, String)>,
+    opened: Option<&std::path::Path>,
+    of: Option<&DevelopOf>,
+) -> Holds<'a> {
+    let Some((wanted, _)) = of else {
+        return Holds::Frame;
+    };
+    if opened == Some(wanted.as_path()) {
+        return Holds::Frame;
+    }
+    match failed {
+        Some((path, message)) if path == wanted => Holds::Failed(message),
+        _ => Holds::Other,
     }
 }
 

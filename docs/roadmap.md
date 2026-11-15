@@ -11,14 +11,6 @@ the reasoning lives in `docs/notes.md`.
       `remember_last_file` runs only where a develop lands
       (panel/deliver.rs), and Cull shows the camera's JPEG without
       one, so the editor comes back to the last frame developed
-- [ ] A frame's open is dropped when a develop is asked while it
-      decodes: the worker folds a develop into an open only while the
-      open still waits, so a slider nudged (or Original, or undo)
-      after the decode has started moves the generation on and the
-      window refuses `Opened`. For that visit the frame's kind, lens
-      report, profile list, As shot white, and mosaic menu stay the
-      previous frame's, and As shot and the resets do nothing. Step
-      to a frame and nudge a slider at once to see it
 - [ ] The capture sharpen's early stop sits on a knife edge: the
       device and the CPU can stop a 32x32 block an iteration apart,
       and the block moves by up to 3% (§668). A margin past an

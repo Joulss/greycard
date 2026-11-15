@@ -7484,4 +7484,30 @@ mod tests {
         assert_eq!(app.get_retouch_mode(), "");
         assert_eq!(app.get_status(), "");
     }
+
+    /// Move back of the frame on screen: its file moves out of the list
+    /// (and back again in the bookkeeping), and the frame chosen after
+    /// it starts a visit of its own, with no earlier path, no open again
+    /// due, and no open but its own.
+    #[test]
+    fn move_back_of_the_frame_on_screen_leaves_no_move_behind() {
+        let (dir, _shoot, files) = shoot_with_rejects("on-screen");
+        let app = window(files.len());
+        let (state, worker) = opened_with_sidecars(&app, &files);
+        app.invoke_select(1);
+        app.invoke_move_back_asked();
+        {
+            let st = state.borrow();
+            assert!(!st.files.contains(&files[1]));
+            assert!(st.develop.moved_from.is_none());
+            assert!(!st.develop.reopen_due);
+            let on_screen = st.current.and_then(|c| st.path_at(c)).cloned();
+            if let Some((_, (sent, _))) = &st.develop.open_sent {
+                assert_eq!(Some(sent), on_screen.as_ref());
+            }
+        }
+        drop(state);
+        drop(worker);
+        crate::testing::remove_dir_retry(&dir);
+    }
 }

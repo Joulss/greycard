@@ -273,6 +273,12 @@ design note behind it.
   covered any color outside the output space at any brightness, a
   third of one frame in dim warm light
   ([§618](https://github.com/jessolmstead/greycard/blob/master/docs/notes/618-the-shadows-paint-is-for-black.md)).
+- A slider nudged, the Original key, an undo, or a turn right after
+  stepping to a frame no longer leaves the panel on the last frame's
+  camera, lens, profiles, and As shot white, and a frame that fails
+  to open no longer shows the last frame's picture. A frame whose
+  file moves while it is open is read again under its new path
+  ([§674](https://github.com/jessolmstead/greycard/blob/master/docs/notes/674-an-open-dropped-by-a-develop-asked-while-it-decodes.md)).
 
 ## 0.11.0, 2026-11-09
 

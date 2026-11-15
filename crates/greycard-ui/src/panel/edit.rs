@@ -167,6 +167,30 @@ pub(crate) fn develop_of(st: &State) -> Option<crate::worker::DevelopOf> {
     Some((st.path_at(c)?.clone(), st.cells.get(c)?.version.clone()))
 }
 
+/// Whether a develop may be asked for the frame chosen: the frame of the
+/// last open sent to the worker in this visit, under the path it was
+/// sent by (`open_sent`), which the worker holds, is opening, or failed
+/// to open and answers so (`worker::handle::holds`). So the worker is
+/// never asked a develop it declines, which nothing would answer. Not a
+/// frame whose panel stands in from its row (a pick still reading its
+/// sidecar, a frame under an offline root, one whose read was given up
+/// on), whose file the worker was never sent: its develop would be made
+/// from the file in hand, another frame's. Nor a frame whose file moved
+/// since its open, until it is opened again under its new path
+/// (`browser::reopen_moved`). Nor with no frame chosen.
+pub(crate) fn develops_here(st: &State) -> bool {
+    st.current.is_some_and(|c| {
+        let path = st.path_at(c);
+        crate::rows::is_loaded(st, c)
+            && st.views.panel_stand_in.as_ref() != path
+            && st
+                .develop
+                .open_sent
+                .as_ref()
+                .is_some_and(|(_, (sent, _))| Some(sent) == path)
+    })
+}
+
 /// The open frame's quarter turns, for a job the worker develops:
 /// the turn is beside the edit on the sidecar, not in it, so every
 /// develop has to carry it.
@@ -264,6 +288,9 @@ fn time_move(st: &mut State, app: &App, which: Timed) {
 /// A timed run's next move of `which`, to its `low` value or its high,
 /// sent straight to the worker and its moment noted.
 fn send_move(st: &mut State, app: &App, which: Timed, low: bool) {
+    if !develops_here(st) {
+        return;
+    }
     let timing = match which {
         Timed::Sharpen => &mut st.launch.time_sharpen,
         Timed::Clarity => &mut st.launch.time_clarity,
@@ -556,6 +583,9 @@ pub(crate) fn develop_soon(
                 return;
             };
             let mut st = state.borrow_mut();
+            if !develops_here(&st) {
+                return;
+            }
             st.develop.generation += 1;
             app.set_status(tr!("developing...").into());
             app.set_busy(true);
@@ -1294,6 +1324,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         return;
                     };
                     let mut st = state.borrow_mut();
+                    if !develops_here(&st) {
+                        return;
+                    }
                     st.develop.generation += 1;
                     app.set_status(tr!("developing...").into());
                     app.set_busy(true);

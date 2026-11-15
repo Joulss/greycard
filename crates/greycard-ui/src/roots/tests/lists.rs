@@ -111,7 +111,19 @@ fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
         st.sidecars[1].meta.rating = 5;
         st.current = Some(1);
         rebuild_browser(&mut st, &app);
+        // Open: the worker was sent it under its path.
+        st.develop.open_sent = Some((st.develop.generation, (files[1].clone(), None)));
     }
+    // Opened again under each new path, so the worker holds the file
+    // by the path the frame's develops name.
+    let sent = |state: &Rc<Shared>| {
+        let st = state.borrow();
+        st.develop
+            .open_sent
+            .as_ref()
+            .map(|(g, (p, _))| (*g, p.clone()))
+    };
+    let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
     // Renamed within the folder.
     let renamed = shoot.join("bb.tif");
     greycard_core::testing::rename_retry(&files[1], &renamed);
@@ -124,6 +136,7 @@ fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
         assert_eq!(st.files[c], renamed);
         assert_eq!(st.sidecars[c].meta.rating, 5);
     }
+    assert_eq!(sent(&state), Some((generation(&state), renamed.clone())));
     // Moved to the other folder: followed, and kept in the list.
     let moved = other.join("bb.tif");
     greycard_core::testing::rename_retry(&renamed, &moved);
@@ -138,6 +151,7 @@ fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
         assert_eq!(st.files.len(), 3);
         assert_eq!(st.sidecars[c].meta.rating, 5);
     }
+    assert_eq!(sent(&state), Some((generation(&state), moved.clone())));
     // The window's thread keeps the state, and with it the
     // reader: closed by hand, since Windows will not remove a
     // folder with a database open in it.

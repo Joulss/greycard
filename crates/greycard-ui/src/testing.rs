@@ -207,6 +207,28 @@ pub(crate) fn land_develop(
     app.get_status().to_string()
 }
 
+/// Frame 0 on screen with its open sent, then its file followed to each
+/// path of `to` in turn and opened again under each, as the follows do
+/// (`browser::reopen_moved`). Every path it had, the first first.
+pub(crate) fn open_and_follow(
+    st: &mut State,
+    app: &App,
+    worker: &Worker,
+    to: &[&str],
+) -> Vec<std::path::PathBuf> {
+    st.current = Some(0);
+    let first = st.path_of(0).clone();
+    st.develop.open_sent = Some((st.develop.generation, (first.clone(), None)));
+    let mut paths = vec![first];
+    for to in to {
+        let to = std::path::PathBuf::from(to);
+        st.move_file(0, to.clone());
+        assert!(crate::panel::browser::reopen_moved(st, app, worker));
+        paths.push(to);
+    }
+    paths
+}
+
 /// A file-less state and a no-op worker: enough to drive the retouch
 /// callbacks without a picture open.
 pub(crate) fn retouch_state(app: &App) -> (Rc<Shared>, Rc<Worker>) {

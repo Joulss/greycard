@@ -448,9 +448,14 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             blend,
         } => {
             let mut st = state.borrow_mut();
-            if generation != st.develop.generation {
+            // What the open says of the frame is taken while the frame
+            // is the one chosen, though a develop asked as it decoded
+            // (a slider's, the Original's, an undo) moved the
+            // generation on: that develop's picture lands at its own.
+            if !crate::panel::browser::opened_is_current(&st, generation) {
                 return;
             }
+            let behind = generation != st.develop.generation;
             // The last file's fills to come are not this one's.
             st.develop.fills_pending.clear();
             app.set_fill_fraction(-1.0);
@@ -476,6 +481,14 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
                 st.develop.edit.noise.learned_strength = b;
                 app.set_denoise_learned_strength(b);
+                // The develop asked since was sent before the blend was
+                // known: the edit is developed again with it, unless the
+                // Original is on show, whose develop is not the edit's,
+                // or with the learned denoiser off, which leaves the
+                // blend unused.
+                if behind && !st.develop.original.on && st.develop.edit.noise.tier().is_some() {
+                    develop_again(&mut st, app);
+                }
             }
             // The size its develop lands at, for the edit's picture
             // standing in for that develop, which goes up now if it
@@ -639,8 +652,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 app.set_temperature(t);
             }
             // A file read again under the Original on show: its
-            // Original of the new bytes in place of the edit's develop.
-            crate::panel::original::reread_opened(&mut st, app, generation);
+            // Original of the new bytes in place of the edit's develop,
+            // unless a develop asked since, which the Original gives
+            // way to, is the one waited on.
+            if !behind {
+                crate::panel::original::reread_opened(&mut st, app, generation);
+            }
         }
         Outcome::Developed {
             generation,
@@ -907,14 +924,20 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         // open's develop has moved the generation on.
         Outcome::MergeAgain { path, can } => {
             let st = state.borrow();
-            if st.current.and_then(|c| st.path_at(c)) == Some(&path) {
+            if crate::panel::browser::is_open_file(&st, &path) {
                 crate::panel::merge::opened(&st, app, can);
             }
         }
         Outcome::Mosaic { path, mosaic } => {
             use crate::panel::browser::OpenMosaic;
             let known = mosaic.map_or(OpenMosaic::NotMosaic, OpenMosaic::Known);
-            crate::panel::browser::learn_mosaic(&mut state.borrow_mut(), app, &path, known);
+            let mut st = state.borrow_mut();
+            // Read before a move of the file: known by its new path.
+            let path = match &st.develop.moved_from {
+                Some((at, earlier)) if earlier.contains(&path) => at.clone(),
+                _ => path,
+            };
+            crate::panel::browser::learn_mosaic(&mut st, app, &path, known);
         }
         Outcome::Filling {
             generation,
@@ -1009,7 +1032,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // Made on a frame opened before this one: that frame's. The
             // key and the shape may well be this frame's too (a mask
             // pasted across), and its own is asked for already.
-            if file.is_some() && st.develop.learned_of.is_some() && file != st.develop.learned_of {
+            if !masks_file(&st, file.as_deref()) {
                 tracing::debug!(
                     "mask: a {} raster of {} is not the open frame's",
                     shape.name(),
@@ -1026,12 +1049,15 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // A Part asking which person it is of here: the picking,
             // with the people outlined; settled, it asks no more. An
             // ask made on a picture no longer open is that picture's.
-            let open = st.current.and_then(|c| st.path_at(c)).cloned();
             // A part made, though with a word on the status line (a
             // Whole person that kept SAM's edge): shown as any other.
             let settled = matches!(shape, Shape::Part { .. }) && part.is_none();
             match part {
-                Some(crate::ai::Unresolved::Ask(ask)) if file.is_none() || file == open => {
+                Some(crate::ai::Unresolved::Ask(ask))
+                    if file
+                        .as_deref()
+                        .is_none_or(|f| crate::panel::browser::is_open_file(&st, f)) =>
+                {
                     crate::panel::parts::asked(&mut st, app, key, ask)
                 }
                 Some(crate::ai::Unresolved::Ask(_)) => {}
@@ -1127,7 +1153,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         Outcome::MaskOnCpu { key, file, status } => {
             let st = state.borrow();
             // Of a frame opened before this one: not this one's to say.
-            if file.is_some() && st.develop.learned_of.is_some() && file != st.develop.learned_of {
+            if !masks_file(&st, file.as_deref()) {
                 return;
             }
             let asked = key.is_none_or(|key| {
@@ -1466,7 +1492,7 @@ fn develop_for(st: &mut State, app: &App, arrived: impl Fn(&greycard_ai::Model) 
             .patches
             .iter()
             .any(|p| p.method == RetouchMethod::Fill);
-    if (denoiser || fill) && st.culling.cull.is_none() {
+    if (denoiser || fill) && st.culling.cull.is_none() && crate::panel::edit::develops_here(st) {
         st.develop.generation += 1;
         app.set_status(tr!("developing...").into());
         app.set_busy(true);
@@ -1482,6 +1508,39 @@ fn develop_for(st: &mut State, app: &App, arrived: impl Fn(&greycard_ai::Model) 
             }
         });
     }
+}
+
+/// Whether a mask the worker made on `file` is of the file the learned
+/// masks are of: that file, or the path it was followed from in this
+/// visit, which a mask the worker was making when it moved says. One
+/// made on no file, or with none open, is taken as ever.
+fn masks_file(st: &State, file: Option<&Path>) -> bool {
+    let (Some(file), Some(of)) = (file, st.develop.learned_of.as_deref()) else {
+        return true;
+    };
+    file == of || crate::panel::browser::was_at(st, of, file)
+}
+
+/// The open frame's edit as the panel has it developed again, at a new
+/// generation: what a develop in flight was asked under has changed.
+fn develop_again(st: &mut State, app: &App) {
+    if !crate::panel::edit::develops_here(st) {
+        return;
+    }
+    st.develop.generation += 1;
+    app.set_status(tr!("developing...").into());
+    app.set_busy(true);
+    let job = Job::Develop {
+        edit: crate::panel::edit::edit_to_develop(app, &st.develop.edit),
+        generation: st.develop.generation,
+        turn: current_turn(st),
+        of: crate::panel::edit::develop_of(st),
+    };
+    WORKER.with(|w| {
+        if let Some(w) = &*w.borrow() {
+            w.send(job);
+        }
+    });
 }
 
 /// Microsoft's CPU-only runtime has arrived and loaded: what its offer
@@ -4402,5 +4461,651 @@ mod tests {
         press(&app, Key::Return);
         assert!(app.get_export_open(), "the open list's Enter");
         assert_eq!(*exports.borrow(), 0);
+    }
+
+    /// What an open of a raw says of it, as the worker says it: a frame
+    /// of `model`, `width` wide, shot under `as_shot` through a lens and
+    /// with a shot line named for the model.
+    fn opened_raw(generation: u64, model: &str, width: usize, as_shot: (f64, f64)) -> Outcome {
+        Outcome::Opened {
+            generation,
+            as_shot,
+            frame: Some(Arc::new(greycard_core::raw::RawFrame {
+                model: model.into(),
+                width,
+                ..crate::panel::viewport::tests::daylight_frame()
+            })),
+            profile: Some(Box::new(
+                greycard_core::color::profile_from_frame(
+                    &crate::panel::viewport::tests::daylight_frame(),
+                )
+                .expect("the frame's profile"),
+            )),
+            lens: LensReport::Found {
+                lens: format!("{model} lens"),
+                camera: true,
+                smaller_sensor: false,
+            },
+            lens_options: Vec::new(),
+            kind: SourceKind::Raw,
+            shot: greycard_core::raw::ShotSummary {
+                camera: format!("Test {model}"),
+                exposure: "50 mm".into(),
+            },
+            taken: None,
+            blend: None,
+        }
+    }
+
+    /// A develop of `generation` as the worker delivers one: a picture
+    /// of `size`.
+    fn developed(generation: u64, size: (u32, u32)) -> Outcome {
+        Outcome::Developed {
+            generation,
+            turn: 0,
+            kind: crate::finish::Source::SCENE,
+            image: crate::worker::Developed::Halves(Arc::new(crate::worker::Halves {
+                width: size.0,
+                height: size.1,
+                pixels: Vec::new(),
+            })),
+            guide: Arc::new(crate::finish::Guide::NONE),
+            planes: None,
+            white: crate::worker::WhiteBase::IDENTITY,
+            seconds: 0.1,
+            sharpen: None,
+            sources: Vec::new(),
+            learned: crate::worker::LearnedReport::Off,
+            fills: crate::worker::FillReport::default(),
+        }
+    }
+
+    /// A slider moved and its develop asked, the debounce run out.
+    fn nudge(app: &App, exposure: f32) {
+        app.set_exposure(exposure);
+        app.invoke_develop_changed();
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+            crate::panel::edit::DEBOUNCE_MS + 50,
+        ));
+    }
+
+    /// What the window took of the open frame: its camera, its white,
+    /// its lens, and its shot.
+    fn taken(app: &App, state: &Rc<Shared>) -> Option<(String, (f32, f32), String, String)> {
+        let st = state.borrow();
+        let (frame, _) = st.develop.frame.as_ref()?;
+        Some((
+            frame.model.clone(),
+            st.develop.as_shot_white?,
+            app.get_lens_profile().to_string(),
+            app.get_shot_camera().to_string(),
+        ))
+    }
+
+    /// A frame stepped to and a slider nudged at once: the develop is
+    /// asked while the frame decodes, and the generation moves on from
+    /// the open's. What the open says of the frame (its camera and
+    /// mosaic, its As shot white, its lens, its shot) is taken all the
+    /// same, so As shot, the resets, Auto, and the dropper read this
+    /// frame and not the last; the open's own develop, of the edit
+    /// before the nudge, is not shown, and the nudge's is.
+    #[test]
+    fn an_open_says_its_frame_though_a_develop_was_asked_as_it_decoded() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
+        app.invoke_select(0);
+        deliver(
+            &app,
+            opened_raw(generation(&state), "Zero", 2, (5000.0, 0.0)),
+        );
+        deliver(&app, developed(generation(&state), (60, 40)));
+        assert_eq!(
+            taken(&app, &state),
+            Some((
+                "Zero".into(),
+                (5000.0, 0.0),
+                "Zero lens".into(),
+                "Test Zero".into()
+            ))
+        );
+
+        app.invoke_select(1);
+        let open = generation(&state);
+        assert_eq!(state.borrow().develop.as_shot_white, None, "not known yet");
+        nudge(&app, 0.7);
+        let develop = generation(&state);
+        assert!(develop > open, "the nudge's develop is asked");
+        // The worker's order: the open, its develop, the nudge's.
+        deliver(&app, opened_raw(open, "One", 4, (3200.0, 0.004)));
+        assert_eq!(
+            taken(&app, &state),
+            Some((
+                "One".into(),
+                (3200.0, 0.004),
+                "One lens".into(),
+                "Test One".into()
+            ))
+        );
+        assert!(app.get_raw_input());
+        assert_eq!(generation(&state), develop, "no develop asked again");
+        deliver(&app, developed(open, (60, 40)));
+        assert_ne!(
+            state
+                .borrow()
+                .develop
+                .pending
+                .as_ref()
+                .map(|l| l.generation),
+            Some(open),
+            "the open's own develop is not the edit on the panel"
+        );
+        deliver(&app, developed(develop, (80, 50)));
+        let st = state.borrow();
+        assert_eq!(
+            st.develop.pending.as_ref().map(|l| l.generation),
+            Some(develop)
+        );
+        assert_eq!(st.develop.shown_size, (80, 50));
+        assert_eq!(st.develop.edit.light.exposure, 0.7);
+    }
+
+    /// Two steps in quick succession: the first frame's open, landing
+    /// after the second was chosen, says nothing of the second, a
+    /// develop asked or not; the second's open says it. Nor does the
+    /// first open of a frame chosen again since, whose open went out
+    /// again: the frame is the same, the visit is not.
+    #[test]
+    fn an_open_of_a_frame_left_says_nothing() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
+        app.invoke_select(0);
+        let first = generation(&state);
+        app.invoke_select(1);
+        let second = generation(&state);
+        deliver(&app, opened_raw(first, "Zero", 2, (5000.0, 0.0)));
+        assert_eq!(taken(&app, &state), None, "frame 0's open, frame 1 chosen");
+        nudge(&app, 0.3);
+        deliver(&app, opened_raw(first, "Zero", 2, (5000.0, 0.0)));
+        assert_eq!(taken(&app, &state), None, "nor with a develop asked since");
+        deliver(&app, opened_raw(second, "One", 4, (3200.0, 0.0)));
+        assert_eq!(
+            taken(&app, &state).map(|t| t.0),
+            Some("One".into()),
+            "frame 1's own, behind the develop"
+        );
+
+        // Back to frame 0, and on, and back again before either lands.
+        app.invoke_select(0);
+        let again = generation(&state);
+        app.invoke_select(1);
+        app.invoke_select(0);
+        let last = generation(&state);
+        nudge(&app, 0.5);
+        for stale in [again, again + 1] {
+            deliver(&app, opened_raw(stale, "Zero", 2, (4100.0, 0.0)));
+            assert_eq!(state.borrow().develop.as_shot_white, None, "{stale}");
+        }
+        deliver(&app, opened_raw(last, "Zero", 2, (4500.0, 0.0)));
+        assert_eq!(state.borrow().develop.as_shot_white, Some((4500.0, 0.0)));
+    }
+
+    /// Another version of the open file is another frame: an open of
+    /// the file's own line says nothing of a virtual copy chosen since.
+    #[test]
+    fn an_open_of_another_version_of_the_file_is_not_the_frame_s() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(0);
+        nudge(&app, 0.4);
+        let mut st = state.borrow_mut();
+        let (sent, (path, version)) = st.develop.open_sent.clone().expect("the open sent");
+        assert_eq!((&path, &version), (st.path_of(0), &None));
+        assert!(crate::panel::browser::opened_is_current(&st, sent));
+        st.develop.open_sent = Some((sent, (path, Some("v1".into()))));
+        assert!(!crate::panel::browser::opened_is_current(&st, sent));
+        // At the generation waited on it is the frame's, as ever.
+        let now = st.develop.generation;
+        assert!(crate::panel::browser::opened_is_current(&st, now));
+    }
+
+    /// A fresh raw, frame 0, chosen, and the learned denoiser's tier set
+    /// to `learned` on the panel as it decodes (with an exposure, one
+    /// develop); then its open, behind that develop, says the blend it
+    /// seeded. The generations of the open and the develop.
+    fn open_seeded_behind(
+        app: &App,
+        state: &Rc<Shared>,
+        learned: greycard_edit::Learned,
+    ) -> (u64, u64) {
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
+        app.invoke_select(0);
+        let open = generation(state);
+        app.set_denoise_learned(learned.name().into());
+        nudge(app, 0.2);
+        let develop = generation(state);
+        let mut outcome = opened_raw(open, "Zero", 2, (5000.0, 0.0));
+        if let Outcome::Opened { blend, .. } = &mut outcome {
+            *blend = Some(0.35);
+        }
+        app.set_status("".into());
+        deliver(app, outcome);
+        (open, develop)
+    }
+
+    /// A raw opened fresh has its learned blend seeded from its ISO by
+    /// the open. A develop asked while it decoded went without it: the
+    /// edit, seeded, is developed again, said as any develop is, and
+    /// that develop is the one shown.
+    #[test]
+    fn a_blend_seeded_behind_a_develop_is_developed_again() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
+        let (_, develop) = open_seeded_behind(&app, &state, greycard_edit::Learned::Fast);
+        let again = generation(&state);
+        assert!(again > develop, "developed again");
+        assert_eq!(app.get_status(), "developing...");
+        assert_eq!(state.borrow().develop.edit.noise.learned_strength, 0.35);
+        assert_eq!(
+            state
+                .borrow()
+                .line(0)
+                .map(|l| l.current.noise.learned_strength),
+            Some(0.35)
+        );
+        deliver(&app, developed(develop, (60, 40)));
+        assert_ne!(
+            state
+                .borrow()
+                .develop
+                .pending
+                .as_ref()
+                .map(|l| l.generation),
+            Some(develop),
+            "the unseeded develop"
+        );
+        deliver(&app, developed(again, (60, 40)));
+        assert_eq!(
+            state
+                .borrow()
+                .develop
+                .pending
+                .as_ref()
+                .map(|l| l.generation),
+            Some(again)
+        );
+    }
+
+    /// With the learned denoiser off the seeded blend is not used: the
+    /// develop in flight is the edit's as it is, and none is asked again.
+    #[test]
+    fn a_blend_seeded_behind_a_develop_with_the_denoiser_off_develops_nothing_more() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        let (_, develop) = open_seeded_behind(&app, &state, greycard_edit::Learned::Off);
+        assert_eq!(state.borrow().develop.generation, develop);
+        assert_eq!(state.borrow().develop.edit.noise.learned_strength, 0.35);
+    }
+
+    /// The frame left and come back to with no open of it between (a
+    /// pick still reading its sidecar, there and back): the last open's
+    /// visit is over, and its late word is not taken for this one,
+    /// which waits on an open of its own.
+    #[test]
+    fn a_return_without_an_open_takes_no_word_of_the_last_visit() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(0);
+        let open = state.borrow().develop.generation;
+        {
+            // What a pick standing in does to the frame chosen and the
+            // generation, there and back.
+            let mut st = state.borrow_mut();
+            for c in [1, 0] {
+                st.current = Some(c);
+                crate::panel::browser::current_moved(&mut st);
+                st.develop.generation += 1;
+            }
+            assert_eq!(st.develop.open_sent, None, "the visit is over");
+        }
+        deliver(&app, opened_raw(open, "Zero", 2, (5000.0, 0.0)));
+        assert_eq!(taken(&app, &state), None);
+        // The list renumbered under the same frame keeps the visit.
+        app.invoke_select(1);
+        let open = state.borrow().develop.generation;
+        nudge(&app, 0.3);
+        {
+            let mut st = state.borrow_mut();
+            crate::panel::browser::current_moved(&mut st);
+            assert!(st.develop.open_sent.is_some(), "the same frame");
+        }
+        deliver(&app, opened_raw(open, "One", 4, (3200.0, 0.0)));
+        assert_eq!(taken(&app, &state).map(|t| t.0), Some("One".into()));
+    }
+
+    /// Culling entered while the frame decodes takes no word of its
+    /// open (and so no offer of the models, which the open's landing
+    /// makes): as before, culling waits on the open its leaving sends.
+    #[test]
+    fn culling_entered_as_a_frame_decodes_takes_no_word_of_its_open() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(0);
+        let open = state.borrow().develop.generation;
+        crate::panel::cull::enter_cull(&mut state.borrow_mut(), &app, 0);
+        assert!(state.borrow().develop.generation > open);
+        assert!(!crate::panel::browser::opened_is_current(
+            &state.borrow(),
+            open
+        ));
+        deliver(&app, opened_raw(open, "Zero", 2, (5000.0, 0.0)));
+        assert_eq!(taken(&app, &state), None);
+    }
+
+    /// A file followed to another path under the window (found moved,
+    /// an archive's copy) while the worker holds it under the old one:
+    /// no develop is asked under a path the worker does not hold (it
+    /// would make nothing, and the window would wait on it), the frame
+    /// is opened again under the new path, every path the worker keeps
+    /// of it set by that one open, and from then on it develops. The
+    /// old open's late word is not taken; what a job then running says
+    /// under the old path is the frame's.
+    #[test]
+    fn a_frame_whose_file_moved_is_opened_again_under_its_new_path() {
+        let app = crate::testing::window(2);
+        let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        assert!(worker.stop(), "what is sent stays in the slot");
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
+        app.invoke_select(0);
+        let (was, open) = (state.borrow().path_of(0).clone(), generation(&state));
+        let to = std::path::PathBuf::from("/nowhere/moved/IMG_0000.CR3");
+        state.borrow_mut().move_file(0, to.clone());
+        {
+            let st = state.borrow();
+            assert_eq!(st.develop.open_sent, None, "the open was of the old path");
+            assert!(st.develop.reopen_due);
+            assert!(!crate::panel::edit::develops_here(&st));
+            assert!(crate::panel::browser::is_open_file(&st, &was));
+            assert!(crate::panel::browser::is_open_file(&st, &to));
+        }
+        nudge(&app, 0.4);
+        assert_eq!(
+            generation(&state),
+            open,
+            "no develop under the new path yet"
+        );
+        assert_eq!(
+            worker.slot_by_test(),
+            Some(("open", open, Some(was.clone())))
+        );
+        assert!(crate::panel::browser::reopen_moved(
+            &mut state.borrow_mut(),
+            &app,
+            &worker
+        ));
+        let again = generation(&state);
+        assert_eq!(
+            worker.slot_by_test(),
+            Some(("open", again, Some(to.clone())))
+        );
+        assert!(crate::panel::edit::develops_here(&state.borrow()));
+        // The old open's word, behind the open again: not taken.
+        deliver(&app, opened_raw(open, "Zero", 2, (5000.0, 0.0)));
+        assert_eq!(taken(&app, &state), None);
+        deliver(&app, opened_raw(again, "Zero", 2, (5000.0, 0.0)));
+        assert_eq!(taken(&app, &state).map(|t| t.0), Some("Zero".into()));
+        nudge(&app, 0.6);
+        let develop = generation(&state);
+        assert!(develop > again);
+        assert_eq!(
+            worker.slot_by_test(),
+            Some(("open", develop, Some(to.clone())))
+        );
+        // Another frame: the move is not its.
+        app.invoke_select(1);
+        assert!(!crate::panel::browser::is_open_file(&state.borrow(), &was));
+    }
+
+    /// The learned masks follow their frame's file: a mask asked before
+    /// the move and made on the old path, landing after it, is taken;
+    /// so is one made under the new path (the review's probe); one of
+    /// another file is not.
+    #[test]
+    fn a_learned_mask_follows_its_frame_s_file() {
+        use greycard_edit::brush::Raster;
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Subject".into(), "Add".into());
+        let id = state.borrow().develop.edit.adjustments[0].id;
+        let was = state.borrow().path_of(0).clone();
+        state
+            .borrow_mut()
+            .develop
+            .asked
+            .insert((id, 0), Shape::Subject {});
+        let to = std::path::PathBuf::from("/nowhere/moved/IMG_0000.CR3");
+        state.borrow_mut().move_file(0, to.clone());
+        assert_eq!(state.borrow().develop.learned_of.as_ref(), Some(&to));
+        let made = |file: &std::path::Path, v: u8| Outcome::Mask {
+            key: (id, 0),
+            shape: Shape::Subject {},
+            file: Some(file.to_path_buf()),
+            raster: Arc::new(Raster::from_data(1.5, 16, vec![v; 16 * 11])),
+            provider: Some("CPU"),
+            seconds: 0.1,
+            note: None,
+            part: None,
+        };
+        let held = |state: &Rc<Shared>| {
+            state
+                .borrow()
+                .develop
+                .learned
+                .get(&(id, 0))
+                .map(|(_, r)| r.data()[0])
+        };
+        deliver(&app, made(&was, 7));
+        assert_eq!(held(&state), Some(7), "asked before, made on the old path");
+        assert!(state.borrow().develop.asked.is_empty());
+        deliver(&app, made(&to, 8));
+        assert_eq!(held(&state), Some(8), "made under the new path");
+        deliver(&app, made(std::path::Path::new("/nowhere/other.CR3"), 9));
+        assert_eq!(held(&state), Some(8), "another file's");
+    }
+
+    /// A frame whose open failed, its file then written again under the
+    /// window: the re-read sends an open of it, which the worker takes
+    /// as the frame's (`worker::tests::a_failed_open_read_again_develops`).
+    #[test]
+    fn a_frame_whose_open_failed_is_read_again() {
+        let app = crate::testing::window(2);
+        let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        assert!(worker.stop());
+        app.invoke_select(0);
+        let open = state.borrow().develop.generation;
+        deliver(
+            &app,
+            Outcome::Failed {
+                generation: open,
+                message: "junk".into(),
+            },
+        );
+        let path = state.borrow().path_of(0).clone();
+        assert!(crate::panel::browser::reread_open(
+            &mut state.borrow_mut(),
+            &app,
+            &worker
+        ));
+        let again = state.borrow().develop.generation;
+        assert_eq!(worker.slot_by_test(), Some(("open", again, Some(path))));
+    }
+
+    /// Two moves in a row (A to B to C, then back to A), each followed
+    /// and opened again: every earlier path is the frame's for the
+    /// visit. A mask made on A or on B is taken; a mosaic read on A is
+    /// known by the frame's path now; a merge's answer on A shows its
+    /// row. Another frame chosen, none of them is.
+    #[test]
+    fn every_earlier_path_of_the_frame_is_its_for_the_visit() {
+        use greycard_edit::brush::Raster;
+        let app = crate::testing::window(2);
+        let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        assert!(worker.stop());
+        state.borrow_mut().window.write_sidecars = true;
+        app.invoke_select(0);
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Subject".into(), "Add".into());
+        let id = state.borrow().develop.edit.adjustments[0].id;
+        let paths = crate::testing::open_and_follow(
+            &mut state.borrow_mut(),
+            &app,
+            &worker,
+            &["/nowhere/B.CR3", "/nowhere/C.CR3"],
+        );
+        let made = |file: &std::path::Path, v: u8| Outcome::Mask {
+            key: (id, 0),
+            shape: Shape::Subject {},
+            file: Some(file.to_path_buf()),
+            raster: Arc::new(Raster::from_data(1.5, 16, vec![v; 16 * 11])),
+            provider: Some("CPU"),
+            seconds: 0.1,
+            note: None,
+            part: None,
+        };
+        let held = |state: &Rc<Shared>| {
+            state
+                .borrow()
+                .develop
+                .learned
+                .get(&(id, 0))
+                .map(|(_, r)| r.data()[0])
+        };
+        deliver(&app, made(&paths[0], 1));
+        assert_eq!(held(&state), Some(1), "made on A");
+        deliver(&app, made(&paths[1], 2));
+        assert_eq!(held(&state), Some(2), "made on B");
+        let mosaic = greycard_core::raw::CfaPattern::rggb().mosaic();
+        deliver(
+            &app,
+            Outcome::Mosaic {
+                path: paths[0].clone(),
+                mosaic: Some(mosaic),
+            },
+        );
+        assert!(state.borrow().develop.mosaics.contains_key(&paths[2]));
+        app.set_merge_again_shown(false);
+        deliver(
+            &app,
+            Outcome::MergeAgain {
+                path: paths[0].clone(),
+                can: true,
+            },
+        );
+        assert!(app.get_merge_again_shown());
+        // Back to A: B is still the frame's.
+        {
+            let mut st = state.borrow_mut();
+            st.move_file(0, paths[0].clone());
+            assert!(crate::panel::browser::reopen_moved(&mut st, &app, &worker));
+            for p in &paths {
+                assert!(crate::panel::browser::is_open_file(&st, p), "{p:?}");
+            }
+        }
+        deliver(&app, made(&paths[1], 3));
+        assert_eq!(held(&state), Some(3), "made on B, back at A");
+        app.invoke_select(1);
+        let st = state.borrow();
+        for p in &paths[1..] {
+            assert!(!crate::panel::browser::is_open_file(&st, p), "{p:?}");
+        }
+        assert!(st.develop.moved_from.is_none());
+    }
+
+    /// The frame's file followed while culling: the open again is
+    /// refused there (culling develops nothing) and no develop is asked;
+    /// leaving culling sends the open, under the new path.
+    #[test]
+    fn a_move_in_culling_is_opened_by_leaving_culling() {
+        let app = crate::testing::window(2);
+        let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        assert!(worker.stop());
+        app.invoke_select(0);
+        let to = std::path::PathBuf::from("/nowhere/moved/IMG_0000.CR3");
+        {
+            let mut st = state.borrow_mut();
+            crate::panel::cull::enter_cull(&mut st, &app, 0);
+            st.move_file(0, to.clone());
+            assert!(!crate::panel::browser::reopen_moved(&mut st, &app, &worker));
+            assert_eq!(st.develop.open_sent, None);
+            crate::panel::cull::leave_cull(&mut st, &app, &worker, None);
+        }
+        let st = state.borrow();
+        let generation = st.develop.generation;
+        assert_eq!(
+            worker.slot_by_test(),
+            Some(("open", generation, Some(to.clone())))
+        );
+        assert_eq!(
+            st.develop
+                .open_sent
+                .as_ref()
+                .map(|(g, (p, _))| (*g, p.clone())),
+            Some((generation, to))
+        );
+    }
+
+    /// As shot switched on before the frame's file moved gives the
+    /// custom white back when switched off after it.
+    #[test]
+    fn as_shot_off_after_a_move_gives_the_white_back() {
+        let app = crate::testing::window(2);
+        let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(0);
+        let open = state.borrow().develop.generation;
+        deliver(&app, opened_raw(open, "Zero", 2, (5000.0, 0.0)));
+        app.set_as_shot(false);
+        app.set_temperature(3000.0);
+        app.set_tint(0.01);
+        app.set_as_shot(true);
+        app.invoke_as_shot_toggled();
+        assert_eq!(app.get_temperature(), 5000.0);
+        {
+            let mut st = state.borrow_mut();
+            st.move_file(0, "/nowhere/moved/IMG_0000.CR3".into());
+            assert!(crate::panel::browser::reopen_moved(&mut st, &app, &worker));
+        }
+        app.set_as_shot(false);
+        app.invoke_as_shot_toggled();
+        assert_eq!((app.get_temperature(), app.get_tint()), (3000.0, 0.01));
+    }
+
+    /// A middle click's way back from 200% follows the frame's file: it
+    /// is still this frame's after a move.
+    #[test]
+    fn the_way_back_from_200_percent_follows_a_move() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(0);
+        let to = std::path::PathBuf::from("/nowhere/moved/IMG_0000.CR3");
+        let mut st = state.borrow_mut();
+        let key = st.key_of(0).expect("frame 0");
+        st.develop.zoom_back = Some(crate::owners::ZoomBack {
+            frame: Some((key, (60, 40))),
+            zoom: 0.5,
+            center: (0.5, 0.5),
+        });
+        st.move_file(0, to.clone());
+        let now = st.key_of(0).map(|k| (k, (60, 40)));
+        assert_eq!(
+            st.develop.zoom_back.as_ref().and_then(|b| b.frame.clone()),
+            now
+        );
+        assert_eq!(now.map(|(k, _)| k.path), Some(to));
     }
 }

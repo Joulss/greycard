@@ -1845,7 +1845,7 @@ fn follow_landed(
     };
     match found {
         Followable::Ready | Followable::Written => {
-            follow(&mut state.borrow_mut(), app, frame, target)
+            follow(&mut state.borrow_mut(), app, worker, frame, target)
         }
         Followable::Take(theirs) => {
             settle(
@@ -1865,7 +1865,7 @@ fn follow_landed(
 }
 
 /// The frame on screen becomes the archive's copy.
-fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
+fn follow(st: &mut State, app: &App, worker: &Worker, frame: &Path, target: &Copy) {
     let Some(c) = st.current else {
         return;
     };
@@ -1922,6 +1922,9 @@ fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
         )
         .into(),
     );
+    // Held by the worker under its local path: opened again from the
+    // copy (`browser::file_moved`).
+    crate::panel::browser::reopen_moved(st, app, worker);
 }
 
 /// The window's callbacks.
@@ -2807,6 +2810,9 @@ pub(crate) mod tests {
         greycard_core::testing::rename_retry(&local, &away);
         {
             let mut st = state.borrow_mut();
+            // Open before its root went: the worker holds it by the
+            // local path.
+            st.develop.open_sent = Some((st.develop.generation, (files[0].clone(), None)));
             st.views.library.offline.insert(local.clone());
             follow_offline(&mut st, &app);
             assert!(st.work.sync.checking.contains(&files[0]));
@@ -2823,6 +2829,16 @@ pub(crate) mod tests {
             exposures_of(&there)
         );
         assert_eq!(state.borrow().files[0], copy, "followed after settling");
+        assert_eq!(
+            state
+                .borrow()
+                .develop
+                .open_sent
+                .as_ref()
+                .map(|(g, (p, _))| (*g, p.clone())),
+            Some((state.borrow().develop.generation, copy.clone())),
+            "opened again from the copy"
+        );
         let status = app.get_status().to_string();
         assert!(
             status.contains("is offline") && status.contains("Archive"),
