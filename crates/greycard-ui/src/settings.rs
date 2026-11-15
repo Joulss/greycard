@@ -71,6 +71,8 @@ pub struct Settings {
     /// The panel's sections folded away, by the names the panel
     /// keeps them under.
     pub collapsed: Vec<String>,
+    /// Section order per panel view, by stable section name.
+    pub section_orders: std::collections::BTreeMap<String, Vec<String>>,
     /// The left pane's lists' weights in sharing its height, by
     /// section name, as the gaps between them were last dragged; a
     /// list not named weighs one. Read leniently: a weight that is no
@@ -744,6 +746,7 @@ impl Default for Settings {
             canvas_color: crate::render::CANVAS_NAMES[0].into(),
             mat: false,
             collapsed: Vec::new(),
+            section_orders: Default::default(),
             shares: Default::default(),
             one_section: false,
             grid_cell: crate::grid::CELL,
@@ -1169,6 +1172,7 @@ mod tests {
             canvas_color: "Mid grey".into(),
             mat: true,
             collapsed: vec!["grain".into(), "demosaic".into()],
+            section_orders: Default::default(),
             shares: [("presets".to_string(), 1.5), ("history".to_string(), 0.5)].into(),
             one_section: true,
             grid_cell: 256.0,

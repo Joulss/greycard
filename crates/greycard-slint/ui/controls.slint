@@ -306,6 +306,41 @@ export component Section inherits VerticalLayout {
     // for when it acts again.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
+    // The stack owns the destination; the section only reports a header drag.
+    in property <bool> reorderable: false;
+    callback reorder-started();
+    callback reorder-moved(length, length);
+    callback reorder-ended(bool);
+    property <bool> reorder-armed: false;
+    property <bool> reorder-dragging: false;
+    property <bool> reorder-click-suppressed: false;
+    property <length> reorder-down-x;
+    property <length> reorder-down-y;
+    function reorder-press(e: PointerEvent, x: length, y: length) {
+        if (!root.reorderable) { return; }
+        if (e.kind == PointerEventKind.down) {
+            root.reorder-armed = e.button == PointerEventButton.left;
+            root.reorder-down-x = x;
+            root.reorder-down-y = y;
+            root.reorder-dragging = false;
+            root.reorder-click-suppressed = false;
+        } else if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) {
+            if (root.reorder-dragging) {
+                root.reorder-click-suppressed = e.kind == PointerEventKind.up;
+                root.reorder-ended(e.kind == PointerEventKind.up);
+            }
+            root.reorder-armed = false;
+            root.reorder-dragging = false;
+        }
+    }
+    function reorder-motion(x: length, y: length, down: bool) {
+        if (!root.reorderable || !root.reorder-armed || !down) { return; }
+        if (!root.reorder-dragging && abs(x - root.reorder-down-x) + abs(y - root.reorder-down-y) > 6px) {
+            root.reorder-dragging = true;
+            root.reorder-started();
+        }
+        if (root.reorder-dragging) { root.reorder-moved(x, y); }
+    }
     // Whether a fold moves or lands at once: a click on the header
     // moves it, and a fold the view brings, set false around it,
     // lands as the sections around it appear.
@@ -414,7 +449,14 @@ export component Section inherits VerticalLayout {
         row := TouchArea {
             enabled: root.boxed;
             mouse-cursor: MouseCursor.pointer;
-            clicked => { root.fold-clicked(); }
+            pointer-event(e) => { root.reorder-press(e,
+                self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+            moved => { root.reorder-motion(self.absolute-position.x + self.mouse-x,
+                self.absolute-position.y + self.mouse-y, self.pressed); }
+            clicked => {
+                if (root.reorder-click-suppressed) { root.reorder-click-suppressed = false; return; }
+                root.fold-clicked();
+            }
         }
         HorizontalLayout {
             spacing: root.boxed ? Theme.space-3 : Theme.space-2;
@@ -487,7 +529,14 @@ export component Section inherits VerticalLayout {
                 head := TouchArea {
                     enabled: !root.boxed;
                     mouse-cursor: MouseCursor.pointer;
-                    clicked => { root.fold-clicked(); }
+                    pointer-event(e) => { root.reorder-press(e,
+                        self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                    moved => { root.reorder-motion(self.absolute-position.x + self.mouse-x,
+                        self.absolute-position.y + self.mouse-y, self.pressed); }
+                    clicked => {
+                        if (root.reorder-click-suppressed) { root.reorder-click-suppressed = false; return; }
+                        root.fold-clicked();
+                    }
                 }
             }
             if root.action != "": Rectangle {
@@ -599,6 +648,171 @@ export component Section inherits VerticalLayout {
             animate opacity { duration: Theme.quick; }
             @children
         }
+    }
+}
+
+// A gap that is dragged to move room from one side of it to the
+// other: the gap between two of the left pane's lists, and the panes'
+// edges. Nothing is drawn; the pointer over it, when `live`, turns to
+// the resizing hand. `hovering` is raised at each move over it with no
+// button held, and at a release, so the owner can work `live` out
+// afresh for the next move; the hand shows the answer a move behind.
+// `dragged` carries the pointer's travel since the press, in the
+// window, along y or, with `along-y` false, along x, so the gap moving
+// under the pointer as the room moves does not count. A double-click
+// is `evened`, which its press and release precede.
+// `live` false, nothing could move there as last asked: the pointer keeps the
+// arrow; a press still raises `started`, and the owner finds nothing
+// to move.
+export component DragEdge inherits Rectangle {
+    in property <bool> along-y: true;
+    in property <bool> live: true;
+    callback hovering();
+    callback started();
+    callback dragged(length);
+    callback ended();
+    callback evened();
+    property <length> from;
+    pure function at() -> length {
+        return root.along-y ? root.absolute-position.y + area.mouse-y
+            : root.absolute-position.x + area.mouse-x;
+    }
+    area := TouchArea {
+        mouse-cursor: !root.live ? MouseCursor.default
+            : root.along-y ? MouseCursor.ns-resize : MouseCursor.ew-resize;
+        pointer-event(e) => {
+            // The TouchArea's `moved` comes only with a button held.
+            if (e.kind == PointerEventKind.move && !self.pressed) { root.hovering(); }
+            if (e.button != PointerEventButton.left) { return; }
+            if (e.kind == PointerEventKind.down) {
+                root.from = root.at();
+                root.started();
+            }
+            // The release asks too: the drag moved room, so where the
+            // pointer now rests may have turned.
+            if (e.kind == PointerEventKind.up) { root.ended(); root.hovering(); }
+        }
+        moved => {
+            if (self.pressed) { root.dragged(root.at() - root.from); }
+        }
+        double-clicked => { root.evened(); }
+    }
+}
+
+// A stack's drag state is shared by every SectionSlot in that stack. The
+// sections stay in their layout until release; only the destination paints.
+export component SectionStack inherits VerticalLayout {
+    in property <[string]> order: [];
+    in property <int> count;
+    in property <int> movable-count: root.count;
+    in property <length> viewport-x;
+    in property <length> viewport-y;
+    in property <length> viewport-width;
+    in property <length> viewport-height;
+    out property <int> drag-index: -1;
+    out property <int> drop-slot: -1;
+    out property <length> drag-y;
+    out property <int> drag-revision;
+    callback moved-section(int, int);
+    callback scroll-by(length);
+    public function start(i: int) {
+        if (root.movable-count < 2) { return; }
+        root.drag-index = i;
+        root.drop-slot = -1;
+    }
+    public function move(x: length, y: length) {
+        if (root.drag-index < 0) { return; }
+        root.drag-y = y;
+        if (x < root.viewport-x || x > root.viewport-x + root.viewport-width
+            || y < root.viewport-y - 30px || y > root.viewport-y + root.viewport-height + 30px) {
+            root.drop-slot = -1;
+            return;
+        }
+        root.drop-slot = root.count;
+        root.drag-revision += 1;
+    }
+    public function consider(i: int, middle: length) {
+        if (root.drag-index >= 0 && root.drag-y < middle && i < root.drop-slot) {
+            root.drop-slot = i;
+        }
+    }
+    public function end(commit: bool) {
+        if (commit && root.drag-index >= 0 && root.drop-slot >= 0
+            && root.drag-index != root.drop-slot && root.drag-index + 1 != root.drop-slot) {
+            root.moved-section(root.drag-index, root.drop-slot);
+        }
+        root.drag-index = -1;
+        root.drop-slot = -1;
+    }
+    Timer {
+        interval: 40ms;
+        running: root.drag-index >= 0 && root.drop-slot >= 0;
+        triggered => {
+            if (root.drag-y < root.viewport-y + 30px) {
+                root.scroll-by(12px);
+            } else if (root.drag-y > root.viewport-y + root.viewport-height - 30px) {
+                root.scroll-by(-12px);
+            } else { return; }
+            root.drop-slot = root.count;
+            root.drag-revision += 1;
+        }
+    }
+    @children
+}
+
+// The 1 px line is painted over the existing gap or hairline. It never
+// contributes to the stack's size, including at slot zero.
+export component SectionSlot inherits Rectangle {
+    in property <int> index;
+    in property <int> count;
+    in property <int> drag-index;
+    in property <int> drop-slot;
+    in property <length> drag-y;
+    in property <int> drag-revision;
+    in property <length> gap: Theme.space-2;
+    in property <bool> boxed: true;
+    in property <bool> last-visible: root.index == root.count - 1;
+    in property <float> stretch: 0;
+    in property <int> resize-a: -1;
+    in property <int> resize-b: -1;
+    in property <bool> resize-live: false;
+    callback resize-hovered();
+    callback resize-started();
+    callback resize-dragged(length);
+    callback resize-evened();
+    callback consider(int, length);
+    min-height: content.min-height;
+    preferred-height: content.preferred-height;
+    max-height: content.max-height;
+    vertical-stretch: root.stretch;
+    property <int> revision: root.drag-revision;
+    changed revision => {
+        if (root.visible) { root.consider(root.index, root.absolute-position.y + root.height / 2); }
+    }
+    content := VerticalLayout {
+        width: 100%;
+        height: 100%;
+        alignment: root.boxed ? LayoutAlignment.start : LayoutAlignment.stretch;
+        @children
+    }
+    if root.drag-index < 0 && root.resize-a >= 0 && root.resize-b >= 0: DragEdge {
+        y: -root.gap;
+        width: 100%;
+        height: root.gap;
+        live: root.resize-live;
+        hovering => { root.resize-hovered(); }
+        started => { root.resize-started(); }
+        dragged(d) => { root.resize-dragged(d); }
+        evened => { root.resize-evened(); }
+    }
+    if root.drag-index >= 0 && (root.drop-slot == root.index
+        || (root.last-visible && root.drop-slot == root.count)): Rectangle {
+        y: root.drop-slot == root.index
+            ? (root.index == 0 ? (root.boxed ? 1px : 0px) : root.boxed ? -1px : 0px)
+            : root.boxed ? parent.height - 1px : parent.height + root.gap / 2;
+        height: 1px;
+        width: 100%;
+        background: Theme.accent;
     }
 }
 
@@ -2517,54 +2731,6 @@ export component ScrollBand inherits TouchArea {
 // The thumb stays drawn at rest here: a view whose bar faded would
 // hide that it holds more below. The thumb's arithmetic is the
 // grid's: 4 px from the ends, no shorter than 24 px.
-// A gap that is dragged to move room from one side of it to the
-// other: the gap between two of the left pane's lists, and the panes'
-// edges. Nothing is drawn; the pointer over it, when `live`, turns to
-// the resizing hand. `hovering` is raised at each move over it with no
-// button held, and at a release, so the owner can work `live` out
-// afresh for the next move; the hand shows the answer a move behind.
-// `dragged` carries the pointer's travel since the press, in the
-// window, along y or, with `along-y` false, along x, so the gap moving
-// under the pointer as the room moves does not count. A double-click
-// is `evened`, which its press and release precede.
-// `live` false, nothing could move there as last asked: the pointer keeps the
-// arrow; a press still raises `started`, and the owner finds nothing
-// to move.
-export component DragEdge inherits Rectangle {
-    in property <bool> along-y: true;
-    in property <bool> live: true;
-    callback hovering();
-    callback started();
-    callback dragged(length);
-    callback ended();
-    callback evened();
-    property <length> from;
-    pure function at() -> length {
-        return root.along-y ? root.absolute-position.y + area.mouse-y
-            : root.absolute-position.x + area.mouse-x;
-    }
-    area := TouchArea {
-        mouse-cursor: !root.live ? MouseCursor.default
-            : root.along-y ? MouseCursor.ns-resize : MouseCursor.ew-resize;
-        pointer-event(e) => {
-            // The TouchArea's `moved` comes only with a button held.
-            if (e.kind == PointerEventKind.move && !self.pressed) { root.hovering(); }
-            if (e.button != PointerEventButton.left) { return; }
-            if (e.kind == PointerEventKind.down) {
-                root.from = root.at();
-                root.started();
-            }
-            // The release asks too: the drag moved room, so where the
-            // pointer now rests may have turned.
-            if (e.kind == PointerEventKind.up) { root.ended(); root.hovering(); }
-        }
-        moved => {
-            if (self.pressed) { root.dragged(root.at() - root.from); }
-        }
-        double-clicked => { root.evened(); }
-    }
-}
-
 export component ScrollPane {
     out property <length> visible-width <=> flick.width;
     out property <length> visible-height <=> flick.height;
