@@ -1145,7 +1145,9 @@ struct Ahead {
     hash: Option<std::result::Result<String, String>>,
     /// The EXIF and the probe's lines for the report.
     exif: Option<(Exif, Vec<(PathBuf, String)>)>,
-    style: Option<StyleTags>,
+    /// The maker's tags read ahead, when they were: `Some(None)` for a
+    /// read that failed, which the pass does not make again.
+    style: Option<Option<StyleTags>>,
     mosaic: Option<Option<FileMosaic>>,
     sidecar: Option<SidecarNow>,
     summary: Summary,
@@ -1314,9 +1316,11 @@ fn index_paths(
         let mut carried = false;
         let plan = match existing.remove(&key) {
             Some(row) if row.size == size && row.mtime == mtime => {
+                // A read ahead that failed is not made again here: on
+                // a share that would be a second read for nothing.
                 let style = match early.as_mut().and_then(|a| a.style.take()) {
-                    Some(style) => Some(style),
-                    None => (!row.style_read).then(|| read_style(path)),
+                    Some(read) => read,
+                    None => (!row.style_read).then(|| read_style(path)).flatten(),
                 };
                 let mosaic = match early.as_mut().and_then(|a| a.mosaic.take()) {
                     Some(mosaic) => Some(mosaic),
@@ -1579,21 +1583,28 @@ fn write_looked(
             Plan::Same(row, style, mosaic) => {
                 let snapshot = row.clone();
                 let row = current(tx, &key, row)?;
+                let mut reframed = false;
                 if let Some(style) = style.filter(|_| !row.style_read) {
-                    write_style(tx, row.id, &style)?;
+                    reframed = write_style(tx, row.id, &style)?;
                     report.styled += 1;
                 }
                 if let Some(mosaic) = mosaic.filter(|_| !row.mosaic_read) {
                     tx.prepare_cached("UPDATE files SET mosaic = ? WHERE id = ?")?
                         .execute(params![FileMosaic::text(mosaic), row.id])?;
                 }
+                // A camera's frame read anew changes the key of an edit
+                // with no crop: the row's keys are written again.
+                if reframed && seen.sidecar.is_some() && !wrote_since(&snapshot, &row) {
+                    write_meta(tx, row.id, seen)?;
+                }
                 settle_same(tx, &snapshot, row, seen, report)?;
             }
             Plan::Changed { row, hash, exif } => {
                 let snapshot = row.clone();
                 let row = current(tx, &key, row)?;
+                let reframed = camera_frame_now(tx, row.id)? != exif.style.camera_frame_text();
                 update_file(tx, row.id, size, mtime, &hash, &exif)?;
-                if !wrote_since(&snapshot, &row) && !row.same_sidecar(seen.sidecar) {
+                if !wrote_since(&snapshot, &row) && (reframed || !row.same_sidecar(seen.sidecar)) {
                     write_meta(tx, row.id, seen)?;
                 }
                 rehashed(report, path, &row.hash, &hash);
@@ -1655,8 +1666,9 @@ fn write_looked(
                     tx.prepare_cached(
                         "INSERT INTO files (path, folder, folder_text, name, size, mtime, hash, \
                          make, model, camera, lens, iso, focal, aperture, shutter, taken, \
-                         maker, style, style_fixed, peripheral, style_read, mosaic) \
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                         maker, style, style_fixed, peripheral, style_read, mosaic, \
+                         camera_frame) \
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
                     )?
                     .execute(params![
                         key,
@@ -1680,6 +1692,7 @@ fn write_looked(
                         exif.style.fixed,
                         exif.style.peripheral,
                         FileMosaic::text(exif.mosaic),
+                        exif.style.camera_frame_text(),
                     ])?;
                     let id = tx.last_insert_rowid();
                     write_meta(tx, id, seen)?;
@@ -1767,7 +1780,8 @@ fn update_file(
         "UPDATE files SET size = ?, mtime = ?, hash = ?, make = ?, model = ?, \
          camera = ?, lens = ?, iso = ?, focal = ?, aperture = ?, shutter = ?, \
          taken = ?, maker = ?, style = ?, style_fixed = ?, peripheral = ?, style_read = 1, \
-         mosaic = ?, focus = NULL, missing_since = NULL, whole_hash = NULL WHERE id = ?",
+         camera_frame = ?, mosaic = ?, focus = NULL, missing_since = NULL, whole_hash = NULL \
+         WHERE id = ?",
     )?
     .execute(params![
         size as i64,
@@ -1786,26 +1800,37 @@ fn update_file(
         exif.style.style,
         exif.style.fixed,
         exif.style.peripheral,
+        exif.style.camera_frame_text(),
         FileMosaic::text(exif.mosaic),
         id
     ])?;
     Ok(())
 }
 
-/// The maker's tags into a row that had not had them read.
-fn write_style(tx: &Transaction<'_>, id: i64, style: &StyleTags) -> Result<()> {
+/// The row's camera frame as its column holds it.
+fn camera_frame_now(tx: &Transaction<'_>, id: i64) -> Result<Option<String>> {
+    Ok(tx
+        .prepare_cached("SELECT camera_frame FROM files WHERE id = ?")?
+        .query_row(params![id], |r| r.get(0))?)
+}
+
+/// The maker's tags into a row that had not had them read; whether the
+/// camera's frame is another than the row held.
+fn write_style(tx: &Transaction<'_>, id: i64, style: &StyleTags) -> Result<bool> {
+    let reframed = camera_frame_now(tx, id)? != style.camera_frame_text();
     tx.prepare_cached(
         "UPDATE files SET maker = ?, style = ?, style_fixed = ?, peripheral = ?, \
-         style_read = 1 WHERE id = ?",
+         camera_frame = ?, style_read = 1 WHERE id = ?",
     )?
     .execute(params![
         style.maker,
         style.style,
         style.fixed,
         style.peripheral,
+        style.camera_frame_text(),
         id
     ])?;
-    Ok(())
+    Ok(reframed)
 }
 
 /// What one pass knows about the disk, so that a question is asked
@@ -2218,14 +2243,20 @@ fn probe_now(path: &Path, report: &mut Report) -> Exif {
             // maker's tags that will not read the style alone; the
             // EXIF stands. All three from the pieces of the file they
             // are in.
-            greycard_core::decode::index_read_path(path).map(|(p, m, style)| {
+            greycard_core::decode::index_read_path(path).map(|(p, m, style, frame)| {
                 use greycard_core::decode::MosaicRead;
                 let mosaic = match m {
                     MosaicRead::Mosaic(m) => Some(FileMosaic::Mosaic(m)),
                     MosaicRead::NotMosaic => Some(FileMosaic::NotMosaic),
                     MosaicRead::Unknown => None,
                 };
-                (p, mosaic, style_tags(path, style))
+                // A new row with tags that will not read has none, and
+                // the frame if that read.
+                let style = style_tags(path, style, frame).unwrap_or(StyleTags {
+                    camera_frame: frame,
+                    ..StyleTags::default()
+                });
+                (p, mosaic, style)
             })
         }
     });
@@ -2252,31 +2283,62 @@ fn probe_now(path: &Path, report: &mut Report) -> Exif {
     Exif::default()
 }
 
-/// A raw's maker tags, as the index keeps them; nothing for a picture,
-/// which has no camera JPEG to be fitted against, and nothing for a
-/// file the reader cannot read, with a line in the log. Not an error
-/// in the report: a file whose tags will not read still indexes, and
-/// is not read again until it changes.
-fn read_style(path: &Path) -> StyleTags {
+/// A raw's maker tags, as the index keeps them, for a row whose tags
+/// are not read; the default for a picture, which has no camera JPEG to
+/// be fitted against. `None` for a file the reader cannot read: not an
+/// error in the report, and nothing written, so the row keeps what it
+/// held and stays unread, and the next pass over its folder reads its
+/// head again. The log says so once a session for each file
+/// ([`tags_unread`]), and at debug after.
+fn read_style(path: &Path) -> Option<StyleTags> {
     disk_call();
     if !greycard_core::decode::is_raw_path(path) {
-        return StyleTags::default();
+        return Some(StyleTags::default());
     }
-    style_tags(path, greycard_core::decode::CameraStyle::read(path))
+    let frame = match greycard_core::decode::camera_frame_path(path) {
+        Ok(frame) => frame,
+        Err(e) => {
+            tags_unread(path, &format!("the camera's frame: {e}"));
+            return None;
+        }
+    };
+    style_tags(path, greycard_core::decode::CameraStyle::read(path), frame)
 }
 
-/// A raw's maker's tags as the index keeps them; a reader's failure is
-/// a line in the log and no tags.
+/// A file's maker's tags would not read: a warning the first time this
+/// session, and at debug after, since a row left unread is read again
+/// at every pass over its folder.
+fn tags_unread(path: &Path, why: &str) {
+    static SAID: std::sync::LazyLock<std::sync::Mutex<HashSet<PathBuf>>> =
+        std::sync::LazyLock::new(Default::default);
+    let first = SAID
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(path.to_path_buf());
+    if first {
+        log::warn!("{}: {why}; read again at the next pass", path.display());
+    } else {
+        log::debug!("{}: {why}", path.display());
+    }
+}
+
+/// A raw's maker's tags as the index keeps them, the camera's frame
+/// with them; `None` for a reader's failure, a line in the log: a row
+/// read again keeps what it held, unread.
 fn style_tags(
     path: &Path,
     read: greycard_core::Result<Option<greycard_core::decode::CameraStyle>>,
-) -> StyleTags {
+    frame: Option<greycard_core::raw::CameraFrame>,
+) -> Option<StyleTags> {
     match read {
-        Ok(Some(style)) => StyleTags::from_style(&style),
-        Ok(None) => StyleTags::default(),
+        Ok(Some(style)) => Some(StyleTags::from_style(&style, frame)),
+        Ok(None) => Some(StyleTags {
+            camera_frame: frame,
+            ..StyleTags::default()
+        }),
         Err(e) => {
-            log::warn!("{}: the maker's tags: {e}", path.display());
-            StyleTags::default()
+            tags_unread(path, &format!("the maker's tags: {e}"));
+            None
         }
     }
 }
@@ -2340,6 +2402,13 @@ pub(crate) struct Summary {
     /// ([`crate::lens_database`]); 0 for a develop whose edit could
     /// not be read, so the row is not read again for it every pass.
     pub(crate) develop_key: Option<u64>,
+    /// The edit stores no crop, so the camera's frame, where the row
+    /// has one, frames it and is taken into the key at the write
+    /// (`greycard_edit::key::framed_key`).
+    pub(crate) uncropped: bool,
+    /// The edit's aspect is a ratio: over no crop and a centered camera
+    /// frame it frames as with none, and its key stays the edit's own.
+    pub(crate) by_ratio: bool,
     /// The sidecar's versions beside the file's own, in its order: what
     /// the `versions` table mirrors of each.
     pub(crate) versions: Vec<VersionSummary>,
@@ -2358,6 +2427,10 @@ pub(crate) struct VersionSummary {
     /// The version's learned blend, judged at the write as version 0's.
     pub(crate) blend: Option<f32>,
     pub(crate) develop_key: Option<u64>,
+    /// As [`Summary::uncropped`], of the version's edit.
+    pub(crate) uncropped: bool,
+    /// As [`Summary::by_ratio`], of the version's edit.
+    pub(crate) by_ratio: bool,
 }
 
 /// The `.gcd`'s JSON read for what the row mirrors of it, before the
@@ -2616,6 +2689,16 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
                     None => edited.then_some(0),
                 },
                 blend: v.current.as_ref().map(|c| c.noise.learned_strength),
+                uncropped: v
+                    .current
+                    .as_ref()
+                    .is_some_and(|c| c.geometry.crop.is_none()),
+                by_ratio: v.current.as_ref().is_some_and(|c| {
+                    matches!(
+                        c.geometry.aspect,
+                        greycard_edit::geometry::Aspect::Ratio { .. }
+                    )
+                }),
                 id: v.id,
                 name: v.name,
                 made: v.made,
@@ -2624,6 +2707,12 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
             }
         })
         .collect();
+    // Said of an edit read; the mark of one unread takes no frame.
+    let uncropped = p.current.is_some() && sidecar.current.geometry.crop.is_none();
+    let by_ratio = matches!(
+        sidecar.current.geometry.aspect,
+        greycard_edit::geometry::Aspect::Ratio { .. }
+    );
     Summary {
         meta: sidecar.meta,
         edited,
@@ -2631,6 +2720,8 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
         blend: p.current.as_ref().map(|c| c.noise.learned_strength),
         turns: crate::pack_turns(sidecar.line.current.geometry.shown_turns(sidecar.turn)),
         develop_key,
+        uncropped,
+        by_ratio,
         versions,
     }
 }
@@ -2657,11 +2748,16 @@ pub(crate) fn summary_from_json(json: &[u8], sidecar: &Path, raw: Option<&Path>)
 fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
     let (sidecar, summary) = (seen.sidecar, seen.summary);
     let meta = &summary.meta;
-    let iso: Option<u32> = tx
-        .query_row("SELECT iso FROM files WHERE id = ?", params![id], |r| {
-            r.get::<_, Option<i64>>(0)
-        })?
-        .map(|v| v as u32);
+    let (iso, camera): (Option<u32>, _) = tx.query_row(
+        "SELECT iso, camera_frame FROM files WHERE id = ?",
+        params![id],
+        |r| {
+            Ok((
+                r.get::<_, Option<i64>>(0)?.map(|v| v as u32),
+                crate::camera_frame_of_column(r.get(1)?),
+            ))
+        },
+    )?;
     let edited = summary.edited
         || summary
             .blend
@@ -2670,6 +2766,7 @@ fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
     // the edit's, or the mark for an edit that could not be read.
     let develop_key = summary
         .develop_key
+        .map(|k| framed(k, summary.uncropped, summary.by_ratio, camera.as_ref()))
         .or(edited.then_some(0))
         .map(|k| k as i64);
     tx.prepare_cached(
@@ -2699,7 +2796,22 @@ fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
     for word in &meta.keywords {
         insert.execute(params![id, word])?;
     }
-    write_versions(tx, id, &summary.versions, iso)
+    write_versions(tx, id, &summary.versions, iso, camera.as_ref())
+}
+
+/// A key as the row stores it: the edit's own, with the row's camera
+/// frame taken in where it frames the edit; the mark of an edit that
+/// could not be read (0) as it is.
+fn framed(
+    key: u64,
+    uncropped: bool,
+    by_ratio: bool,
+    camera: Option<&greycard_core::raw::CameraFrame>,
+) -> u64 {
+    if key == 0 {
+        return 0;
+    }
+    greycard_edit::key::framed_key(key, uncropped, by_ratio, camera)
 }
 
 /// The row's versions as the sidecar holds them, in its order: the
@@ -2710,6 +2822,7 @@ fn write_versions(
     id: i64,
     versions: &[VersionSummary],
     iso: Option<u32>,
+    camera: Option<&greycard_core::raw::CameraFrame>,
 ) -> Result<()> {
     tx.prepare_cached("DELETE FROM versions WHERE file = ?")?
         .execute(params![id])?;
@@ -2727,7 +2840,8 @@ fn write_versions(
             position as i64,
             i64::from(edited),
             i64::from(v.exported),
-            v.develop_key.map(|k| k as i64),
+            v.develop_key
+                .map(|k| framed(k, v.uncropped, v.by_ratio, camera) as i64),
         ])?;
     }
     Ok(())
@@ -4238,8 +4352,9 @@ pub(crate) mod tests {
     /// An ORF a schema 15 build read before it knew Gradation Auto is
     /// held as no style; a schema 15 library marks every Olympus and
     /// OM System row with no style unread, so the next pass reads its
-    /// tags again, and leaves one with a style and every other row
-    /// alone.
+    /// tags again, and leaves every other maker's row alone. The step
+    /// from 16 after it marks the one with a style too, for its camera
+    /// frame.
     #[test]
     fn a_schema_15_library_marks_its_olympus_rows_unread() {
         let dir = scratch("migrate-15");
@@ -4286,7 +4401,7 @@ pub(crate) mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(version, crate::SCHEMA_VERSION);
-        assert_eq!(lib.styles_unread(None).unwrap(), 1);
+        assert_eq!(lib.styles_unread(None).unwrap(), 2);
         let unread: Vec<String> = lib
             .conn
             .prepare("SELECT name FROM files WHERE style_read = 0 ORDER BY name")
@@ -4295,8 +4410,170 @@ pub(crate) mod tests {
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
-        assert_eq!(unread, ["a.ORF"]);
+        assert_eq!(unread, ["a.ORF", "b.ORF"]);
         drop(lib);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A row marked unread whose maker's tags will not read now keeps
+    /// what it held: its style, its frame, and the mark, to be read at
+    /// a later pass. Nothing it held is written over with nothing.
+    #[test]
+    fn a_row_whose_tags_will_not_read_again_keeps_its_style() {
+        let dir = scratch("style-kept");
+        let db = dir.join("library.sqlite");
+        let shoot_dir = dir.join("shoot");
+        std::fs::create_dir_all(&shoot_dir).unwrap();
+        // A TIFF header whose first directory is past the end: the tags
+        // will not read.
+        let broken = shoot_dir.join("P.ORF");
+        let mut bytes = b"II*\0\x00\x00\x00\x7f".to_vec();
+        bytes.resize(4096, 0);
+        std::fs::write(&broken, &bytes).unwrap();
+        assert!(read_style(&broken).is_none(), "the read fails");
+        // Read ahead (a share's pass), the failure is carried as a read
+        // made, so the pass does not read the share a second time.
+        let m = std::fs::metadata(&broken).unwrap();
+        let hint = Hint {
+            size: m.len(),
+            mtime: mtime_of(&m),
+            style_read: false,
+            mosaic_read: true,
+        };
+        assert!(matches!(
+            read_ahead(&broken, Some(hint), false).style,
+            Some(None)
+        ));
+        let held = "8 8 5184 3888 8 224 5184 3456 1";
+        let mut lib = Library::open(&db).unwrap();
+        lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+        lib.conn
+            .execute(
+                "UPDATE files SET maker = 'Olympus', style = 'Olympus Vivid', style_read = 0, \
+                 camera_frame = ? WHERE path = ?",
+                params![held, path_bytes(&broken)],
+            )
+            .unwrap();
+        lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+        let row: (Option<String>, Option<String>, Option<String>, i64) = lib
+            .conn
+            .query_row(
+                "SELECT maker, style, camera_frame, style_read FROM files WHERE path = ?",
+                params![path_bytes(&broken)],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                Some("Olympus".into()),
+                Some("Olympus Vivid".into()),
+                Some(held.into()),
+                0
+            )
+        );
+        drop(lib);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A schema 16 library gains the camera's frame: every Olympus and
+    /// OM System row is marked unread, and the next pass reads its tags
+    /// (the maker note, from the file's head) and fills the column, a
+    /// frame shot at 3:2 with its frame and one at 4:3 with none. An
+    /// edit with no crop on the 3:2 frame has its key taken anew with
+    /// the frame in it. The step met again on a library that has the
+    /// column adds nothing twice.
+    #[test]
+    fn a_schema_16_library_reads_the_cameras_frame_of_its_olympus_rows() {
+        use greycard_core::raw::CameraFrame;
+        use greycard_edit::Edit;
+        let held = lens_name_held();
+        let dir = scratch("migrate-16");
+        let db = dir.join("library.sqlite");
+        let shoot_dir = dir.join("shoot");
+        std::fs::create_dir_all(&shoot_dir).unwrap();
+        let area = [8, 8, 5184, 3888];
+        let (framed, whole) = (shoot_dir.join("P1.ORF"), shoot_dir.join("P2.ORF"));
+        let head = greycard_core::testing::olympus_head;
+        std::fs::write(&framed, head(1, area, [0, 216, 5183, 3671])).unwrap();
+        std::fs::write(&whole, head(1, area, [0, 0, 5183, 3887])).unwrap();
+        let mut brightened = Edit::default();
+        brightened.light.exposure = 0.7;
+        Sidecar {
+            line: greycard_edit::Line::of(brightened.clone()),
+            ..Sidecar::default()
+        }
+        .save(&framed)
+        .unwrap();
+        let unframed = greycard_edit_io::key::develop_key(&brightened, None);
+        let row = |lib: &Library, p: &Path| -> (Option<String>, Option<i64>) {
+            lib.conn
+                .query_row(
+                    "SELECT camera_frame, develop_key FROM files WHERE path = ?",
+                    params![path_bytes(p)],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap()
+        };
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+            // As a schema 16 build left them: read, a maker of theirs
+            // (the head is no raw the decoder opens, so the make is set
+            // here), no column, and the edit's key without the frame.
+            lib.conn
+                .execute(
+                    "UPDATE files SET make = 'OM Digital Solutions', style_read = 1, \
+                     develop_key = CASE WHEN develop_key IS NULL THEN NULL ELSE ? END",
+                    params![unframed as i64],
+                )
+                .unwrap();
+            lib.conn
+                .execute_batch(
+                    "ALTER TABLE files DROP COLUMN camera_frame; PRAGMA user_version = 16;",
+                )
+                .unwrap();
+        }
+        let mut lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        let unread: Vec<String> = lib
+            .conn
+            .prepare("SELECT name FROM files WHERE style_read = 0 ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(unread, ["P1.ORF", "P2.ORF"]);
+        assert_eq!(row(&lib, &framed), (None, Some(unframed as i64)));
+        lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+        let frame = greycard_core::decode::camera_frame_path(&framed)
+            .unwrap()
+            .expect("a 3:2 frame");
+        let (text, key) = row(&lib, &framed);
+        assert_eq!(
+            text.as_deref().and_then(CameraFrame::from_text),
+            Some(frame)
+        );
+        assert_eq!(
+            key,
+            Some(greycard_edit::key::framed_key(unframed, true, false, Some(&frame)) as i64),
+            "the key taken anew with the frame"
+        );
+        assert_ne!(key, Some(unframed as i64));
+        assert_eq!(row(&lib, &whole), (None, None), "4:3: no frame, no edit");
+        // A library of this schema marked back to 16 comes up again,
+        // the column kept.
+        lib.conn.execute_batch("PRAGMA user_version = 16;").unwrap();
+        drop(lib);
+        let lib = Library::open(&db).unwrap();
+        assert_eq!(row(&lib, &framed).0, text);
+        drop(lib);
+        drop(held);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

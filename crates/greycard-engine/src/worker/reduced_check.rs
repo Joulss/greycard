@@ -398,6 +398,7 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                 kind: developed.kind,
                 white: developed.white.clone(),
                 detail: developed.detail.clone(),
+                camera: developed.camera,
             };
             let made = crate::edited_pictures::make(&developed.image, &finish);
             let reduced_ms = started.elapsed().as_secs_f64() * 1e3;
@@ -546,6 +547,7 @@ fn the_reduced_develop_of_the_samples_timed() {
                 kind: developed.kind,
                 white: developed.white.clone(),
                 detail: developed.detail.clone(),
+                camera: developed.camera,
             };
             let before_finish = started.elapsed().as_secs_f64();
             let made = crate::edited_pictures::make(&developed.image, &finish);

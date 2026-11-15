@@ -131,7 +131,12 @@ pub(crate) fn bring(
         .par_iter()
         .zip(rows.par_iter())
         .map(|(path, row)| match row {
-            Some(row) => from_row(path, row, sidecars.is_some(), fresh),
+            Some(row) => {
+                // The camera's frame as the row has it, for the cut of
+                // the camera's pictures and the keys, with nothing read.
+                note_camera_of_row(path, row);
+                from_row(path, row, sidecars.is_some(), fresh)
+            }
             None => {
                 let mut held = from_disk(path, sidecars, fresh);
                 hold_unreadable(&mut held, path);
@@ -1587,6 +1592,16 @@ pub(crate) fn versions_differ(st: &State, file: usize) -> bool {
 /// lists that the cells lack, or one gone, moves the list at the next
 /// turn: the caller may hold cell numbers.
 pub(crate) fn apply_row(st: &mut State, file: usize, row: &RowMeta) -> bool {
+    // A frame whose camera's frame the row read anew asks again for its
+    // pictures, which are cut to it (a row whose maker's tags the step
+    // to schema 17 left unread, read since).
+    if st
+        .files
+        .get(file)
+        .is_some_and(|path| note_camera_of_row(path, row))
+    {
+        reframed(st, file);
+    }
     let Some(from) = st.from_row.get_mut(file) else {
         return false;
     };
@@ -1636,6 +1651,79 @@ pub(crate) fn apply_row(st: &mut State, file: usize, row: &RowMeta) -> bool {
         }
     }
     moved || turned
+}
+
+/// File `file`'s camera frame became known (its row read since its
+/// pictures were made): the culling loupe's, the stand-in's and the
+/// lightbox's copies of the camera's picture go, to be asked for again
+/// cut; and its cells' thumbnails are asked for again as they are in
+/// view, those in view now at once ([`ask_reframed`]).
+fn reframed(st: &mut State, file: usize) {
+    let Some(path) = st.files.get(file).cloned() else {
+        return;
+    };
+    st.views.reframed.insert(path);
+    for c in st.cells_of_file(file) {
+        crate::lightbox::forget(st, c);
+        for cull in [st.culling.cull.as_mut(), st.culling.hold.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            if cull.cache.get(c).is_some_and(|p| !p.edited) {
+                cull.cache.forget(c);
+            }
+        }
+    }
+    if st.culling.cull.is_some() {
+        crate::panel::cull::cull_refresh(st);
+    }
+    let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) else {
+        return;
+    };
+    for (first, last) in [st.views.grid_shown, st.views.strip_shown]
+        .into_iter()
+        .flatten()
+    {
+        ask_reframed(st, &worker, first.max(0) as usize, last.max(0) as usize);
+    }
+}
+
+/// The cells shown in rows `first..=last` whose file was reframed
+/// ([`reframed`]) and has a picture in hand ask for it again, cut; a
+/// file goes off the list once asked. Called where the grid and the
+/// strip say what they show.
+pub(crate) fn ask_reframed(st: &mut State, worker: &Worker, first: usize, last: usize) {
+    if st.views.reframed.is_empty() {
+        return;
+    }
+    let mut asked = Vec::new();
+    for row in first..=last {
+        let Some(&c) = st.views.shown.get(row) else {
+            break;
+        };
+        let path = st.path_of(c);
+        if st.views.reframed.contains(path) && st.views.thumb_made.get(c).is_some_and(|&m| m > 0) {
+            asked.push(path.clone());
+            worker.send(thumb_job(st, c));
+        }
+    }
+    for path in asked {
+        st.views.reframed.remove(&path);
+    }
+}
+
+/// The camera's frame of the file at `path` as its row says, where the
+/// row's maker's tags are read; what was known goes where they are not,
+/// to be read with them. True when the row moved what a picture of the
+/// file is cut to.
+fn note_camera_of_row(path: &std::path::Path, row: &RowMeta) -> bool {
+    match row.camera_frame {
+        Some(camera) => crate::edited_pictures::note_camera(path, camera),
+        None => {
+            crate::edited_pictures::forget_camera(path);
+            false
+        }
+    }
 }
 
 /// The thumbnail job for cell `c`: its frame's picture made from the
@@ -1781,5 +1869,109 @@ mod unreadable {
             assert_eq!(std::fs::read_to_string(&gcd).unwrap(), body, "{name}");
         }
         remove_dir_retry(&dir);
+    }
+}
+
+#[cfg(test)]
+mod camera_frames {
+    use super::*;
+    use greycard_core::raw::Orientation;
+    use std::path::PathBuf;
+
+    fn row(camera_frame: Option<Option<greycard_core::raw::CameraFrame>>) -> RowMeta {
+        RowMeta {
+            id: 1,
+            hash: "ab".repeat(32),
+            mtime: 1,
+            meta: Default::default(),
+            edited: false,
+            turns: 0,
+            exported: false,
+            iso: None,
+            sidecar_hash: None,
+            develop_key: None,
+            versions: Vec::new(),
+            taken: None,
+            edited_at: None,
+            focus: None,
+            camera_frame,
+        }
+    }
+
+    /// A row that comes to say a frame's camera frame, after the
+    /// migration, drops the stand-in's camera picture of it (asked for
+    /// again, cut) and marks its cells to ask for their thumbnails again
+    /// as they come into view, not all at once: one out of view stays
+    /// marked until it is shown.
+    #[test]
+    fn a_frame_told_its_camera_frame_asks_again_as_it_is_shown() {
+        let dir = crate::testing::scratch_dir("rows-reframed");
+        let files: Vec<PathBuf> = (0..3)
+            .map(|i| {
+                let p = dir.join(format!("P000000{i}.ORF"));
+                std::fs::write(&p, b"not a raw").unwrap();
+                p
+            })
+            .collect();
+        let app = crate::testing::window(files.len());
+        let (state, worker) = crate::testing::state_for(&app, files.clone());
+        let mut st = state.borrow_mut();
+        st.views.thumb_made[..3].fill(256);
+        let mut hold = crate::panel::cull::Cull::new("".into(), 1024);
+        hold.cache.insert(
+            2,
+            Arc::new(crate::cull::Preview::new(4, 3, vec![0; 48], (4, 3), false)),
+        );
+        st.culling.hold = Some(hold);
+        st.views.strip_shown = Some((0, 0));
+        let frame = greycard_core::testing::three_two_frame(Orientation::Normal);
+        apply_row(&mut st, 2, &row(Some(Some(frame))));
+        assert!(st.views.reframed.contains(&files[2]), "marked, out of view");
+        assert!(
+            st.culling.hold.as_ref().unwrap().cache.get(2).is_none(),
+            "the stand-in's camera picture goes, to come back cut"
+        );
+        // Told the same again: nothing moves.
+        st.views.reframed.clear();
+        apply_row(&mut st, 2, &row(Some(Some(frame))));
+        assert!(st.views.reframed.is_empty());
+        // Shown: asked, and off the list.
+        st.views.reframed.insert(files[2].clone());
+        ask_reframed(&mut st, &worker, 0, 1);
+        assert!(
+            st.views.reframed.contains(&files[2]),
+            "rows 0 and 1 are others"
+        );
+        ask_reframed(&mut st, &worker, 2, 2);
+        assert!(st.views.reframed.is_empty());
+        drop(st);
+        crate::edited_pictures::forget_camera(&files[2]);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The shape of a frame whose camera frame is not known yet is never
+    /// read off a picture that may be cut to it: it waits. Known framed,
+    /// it is the area's; known whole, the picture's.
+    #[test]
+    fn a_frames_aspect_waits_rather_than_read_a_cut_picture() {
+        let dir = crate::testing::scratch_dir("rows-aspect-unknown");
+        let raw = dir.join("P0000001.ORF");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, vec![raw.clone()]);
+        let mut st = state.borrow_mut();
+        st.views.thumb_base[0] = Some((300, 200, vec![0; 300 * 200 * 3]));
+        crate::edited_pictures::forget_camera(&raw);
+        assert_eq!(crate::panel::browser::frame_aspect(&mut st, 0), None);
+        let frame = greycard_core::testing::three_two_frame(Orientation::Normal);
+        crate::edited_pictures::note_camera(&raw, Some(frame));
+        let a = crate::panel::browser::frame_aspect(&mut st, 0).unwrap();
+        assert!((a - 5184.0 / 3888.0).abs() < 1e-4, "{a}");
+        crate::edited_pictures::note_camera(&raw, None);
+        let a = crate::panel::browser::frame_aspect(&mut st, 0).unwrap();
+        assert!((a - 1.5).abs() < 1e-4, "{a}");
+        drop(st);
+        crate::edited_pictures::forget_camera(&raw);
+        crate::testing::remove_scratch(state, &dir);
     }
 }

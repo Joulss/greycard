@@ -57,9 +57,11 @@ fn sample_cubic_of<const N: usize>(
     out
 }
 
-/// The frame of `geometry` cut from `image`.
+/// The frame of `geometry` cut from `image`. A frame the camera framed
+/// comes here with its frame resolved
+/// (`Geometry::with_camera_frame`), as every renderer here takes it.
 pub fn apply(image: &WorkingImage, geometry: &Geometry) -> WorkingImage {
-    if geometry.is_identity_on(image.width as f32, image.height as f32) {
+    if geometry.is_identity_on(image.width as f32, image.height as f32, None) {
         return image.clone();
     }
     let (data, width, height) = frame_of::<3>(&image.data, image.width, image.height, geometry);
@@ -78,7 +80,7 @@ pub fn apply_plane(
     height: usize,
     geometry: &Geometry,
 ) -> (Vec<f32>, usize, usize) {
-    if geometry.is_identity_on(width as f32, height as f32) {
+    if geometry.is_identity_on(width as f32, height as f32, None) {
         return (data.to_vec(), width, height);
     }
     frame_of::<1>(data, width, height, geometry)
@@ -92,7 +94,7 @@ fn frame_of<const N: usize>(
     geometry: &Geometry,
 ) -> (Vec<f32>, usize, usize) {
     let (w, h) = (width as f32, height as f32);
-    let frame = geometry.frame(w, h);
+    let frame = geometry.frame(w, h, None);
     let (ow, oh) = (frame.size.0 as usize, frame.size.1 as usize);
     let mut out = vec![0.0f32; ow * oh * N];
     let turned = geometry.resamples();
@@ -174,7 +176,7 @@ mod tests {
         };
         let out = apply(&image, &turned);
         assert!(out.width < 64 && out.height < 48);
-        let f = turned.frame(64.0, 48.0);
+        let f = turned.frame(64.0, 48.0, None);
         // Away from the frame's corners, which the fit puts on the
         // source's edges, where the cubic's taps clamp.
         for (oy, ox) in [
@@ -218,7 +220,7 @@ mod keystone {
             ..Default::default()
         };
         let out = apply(&image, &g);
-        let f = g.frame(w as f32, h as f32);
+        let f = g.frame(w as f32, h as f32, None);
         assert!(out.width < w || out.height < h);
         for (oy, ox) in [
             (5usize, 5usize),

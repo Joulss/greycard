@@ -393,10 +393,13 @@ mod tests {
     #[test]
     fn the_open_frames_own_size_alone_would_draw_into_one_pixel() {
         let geometry = greycard_edit::geometry::Geometry::default();
-        let one_pixel = geometry.frame(0.0, 0.0).size;
+        let one_pixel = geometry.frame(0.0, 0.0, None).size;
         assert_eq!(one_pixel, (1.0, 1.0));
         let (w, h) = drawn_source((0, 0), (6000, 4000));
-        assert_eq!(geometry.frame(w as f32, h as f32).size, (6000.0, 4000.0));
+        assert_eq!(
+            geometry.frame(w as f32, h as f32, None).size,
+            (6000.0, 4000.0)
+        );
     }
 
     #[test]

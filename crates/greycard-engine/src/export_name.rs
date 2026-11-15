@@ -45,7 +45,7 @@ pub fn read_shot(path: &Path) -> Shot {
         if greycard_core::picture::is_picture_path(path) {
             greycard_core::picture::probe_path(path)
         } else {
-            greycard_core::decode::index_read_path(path).map(|(probe, _, _)| probe)
+            greycard_core::decode::index_read_path(path).map(|(probe, ..)| probe)
         }
     });
     match read {

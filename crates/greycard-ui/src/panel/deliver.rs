@@ -900,6 +900,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // where the last frame's develop stood.
             st.develop.shown_size = (image.width(), image.height());
             st.develop.shown_turn = st.current.map(|c| (c, turn % 4));
+            st.develop.drawn_camera = st
+                .develop
+                .frame
+                .as_ref()
+                .and_then(|(f, _)| crate::panel::viewport::camera_of_frame(f));
             st.develop.planes_wants = planes.as_ref().map(|p| p.wants).unwrap_or_default();
             st.develop.planes_asked = Default::default();
             st.develop.pending = Some(Landed {

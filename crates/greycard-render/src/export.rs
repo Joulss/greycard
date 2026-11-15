@@ -674,7 +674,7 @@ pub fn render_framed(
         .collect();
     // A pixel of the image, through the resize and the frame, to the
     // source, in units of the source's width.
-    let frame = edit.geometry.frame(sw, sh);
+    let frame = edit.geometry.frame(sw, sh, None);
     let scale = framed / image.width as f32;
     let reach = image.width as f32 / full_framed;
     let position = |x: usize, y: usize| {
@@ -802,7 +802,7 @@ pub fn scene_framed(
         None => image,
     };
     let (sw, sh) = (source.0 as f32, source.1 as f32);
-    let frame = edit.geometry.frame(sw, sh);
+    let frame = edit.geometry.frame(sw, sh, None);
     let scale = sw / image.width as f32;
     let position = |x: usize, y: usize| {
         let r = (

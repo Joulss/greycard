@@ -104,7 +104,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 16;
+pub const SCHEMA_VERSION: i32 = 17;
 
 /// `taken_at`'s expression, one text for [`SCHEMA`] and the step from
 /// schema 11 both: `taken` moved by `shift` seconds, worked out by
@@ -188,7 +188,13 @@ macro_rules! taken_at {
 /// as no style (a setting not known leaves no group key,
 /// `CameraStyle::group_key`), so every Olympus and OM System row with
 /// no style is marked unread the same way; one with a style read the
-/// tag as it reads now.
+/// tag as it reads now. Schema 17 adds the camera's frame
+/// (`camera_frame`, `greycard_core::raw::CameraFrame::to_text`, NULL
+/// for none), which a frame shot at an aspect the sensor is not opens
+/// at; it is read with the maker's tags, so every Olympus and OM
+/// System row is marked unread and the next pass over its folder reads
+/// its tags (the maker note, from the file's head) and nothing else.
+/// Every other row has none, and no maker but these two is read.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -264,7 +270,35 @@ const MIGRATIONS: &[(i32, &str)] = &[
         "UPDATE files SET style_read = 0 WHERE style IS NULL
              AND (make LIKE 'OLYMPUS%' OR make LIKE 'OM Digital%');",
     ),
+    (
+        16,
+        "UPDATE files SET style_read = 0
+             WHERE make LIKE 'OLYMPUS%' OR make LIKE 'OM Digital%';",
+    ),
 ];
+
+/// The columns a step adds, by the version it steps from: added before
+/// the step's statements, and only where the table lacks them, so a
+/// step met again (a library a build of this schema wrote and an older
+/// one marked back) adds nothing twice. The steps before these add
+/// theirs in their statements.
+const COLUMNS_ADDED: &[(i32, &str, &str)] = &[(16, "camera_frame", "TEXT")];
+
+/// [`COLUMNS_ADDED`]'s for the step from `from`, each where `files`
+/// lacks it.
+fn add_columns(tx: &rusqlite::Transaction<'_>, from: i32) -> rusqlite::Result<()> {
+    for (_, name, kind) in COLUMNS_ADDED.iter().filter(|(v, ..)| *v == from) {
+        let there: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('files') WHERE name = ?)",
+            [name],
+            |r| r.get(0),
+        )?;
+        if !there {
+            tx.execute_batch(&format!("ALTER TABLE files ADD COLUMN {name} {kind};"))?;
+        }
+    }
+    Ok(())
+}
 
 /// The index's own facts about itself, by name: `develop_keys`, what
 /// the rows' develop keys were made under
@@ -407,7 +441,8 @@ CREATE TABLE IF NOT EXISTS files (
     taken_at      TEXT GENERATED ALWAYS AS (",
     taken_at!(),
     ") VIRTUAL,
-    focus         REAL
+    focus         REAL,
+    camera_frame  TEXT
 );
 CREATE INDEX IF NOT EXISTS files_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
@@ -501,7 +536,8 @@ const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash
     files.aperture, files.shutter, files.taken, files.sidecar, files.sidecar_mtime, \
     files.rating, files.flag, files.label, files.keywords, files.missing_since, \
     files.maker, files.style, files.style_fixed, files.peripheral, files.edited, \
-    files.turns, files.exported, files.mosaic, files.taken_at, files.shift, files.focus";
+    files.turns, files.exported, files.mosaic, files.taken_at, files.shift, files.focus, \
+    files.camera_frame";
 
 /// The columns [`RowMeta`] is read from, in the order `row_meta`
 /// reads them, after the path.
@@ -511,7 +547,7 @@ const META_COLUMNS: &str = "files.id, files.hash, files.mtime, files.rating, fil
     (SELECT json_group_array(json_array(v.version, v.name, v.made, v.edited, v.exported, \
      v.develop_key) ORDER BY v.position) FROM versions v WHERE v.file = files.id), \
     files.taken_at, CASE WHEN files.edited <> 0 THEN files.sidecar_mtime END, files.shift, \
-    files.focus";
+    files.focus, CASE WHEN files.style_read <> 0 THEN COALESCE(files.camera_frame, '') END";
 
 /// Whether the learned denoiser's `blend` is what nobody has touched:
 /// the default, or what the first open or export of a raw seeds from
@@ -716,17 +752,39 @@ pub struct StyleTags {
     pub fixed: bool,
     /// The camera's own vignetting correction, where the file says.
     pub peripheral: Option<bool>,
+    /// The part of the picture the camera framed, where it framed less
+    /// than the raw keeps: read from the maker note with the style.
+    pub camera_frame: Option<greycard_core::raw::CameraFrame>,
 }
 
 impl StyleTags {
-    pub fn from_style(style: &greycard_core::decode::CameraStyle) -> StyleTags {
+    /// The tags of a style, and `camera_frame` beside it.
+    pub fn from_style(
+        style: &greycard_core::decode::CameraStyle,
+        camera_frame: Option<greycard_core::raw::CameraFrame>,
+    ) -> StyleTags {
         StyleTags {
             maker: Some(style.maker.name().to_string()),
             style: style.group_key(),
             fixed: style.is_fixed(),
             peripheral: style.peripheral_correction,
+            camera_frame,
         }
     }
+
+    /// The camera's frame as its column holds it.
+    pub fn camera_frame_text(&self) -> Option<String> {
+        self.camera_frame.map(|c| c.to_text())
+    }
+}
+
+/// The `camera_frame` column read back: none for NULL or text this
+/// build does not read.
+pub(crate) fn camera_frame_of_column(
+    text: Option<String>,
+) -> Option<greycard_core::raw::CameraFrame> {
+    text.as_deref()
+        .and_then(greycard_core::raw::CameraFrame::from_text)
 }
 
 impl Exif {
@@ -759,6 +817,7 @@ impl Exif {
             focus_distance: None,
             iso: self.iso,
             exposure_time: self.shutter.map(|v| v as f32),
+            camera_frame: self.style.camera_frame,
         }
     }
 }
@@ -925,6 +984,13 @@ pub struct RowMeta {
     /// The focus score, none for a frame not scored or with no preview
     /// ([`FOCUS_SQL`]): what a list sorted by focus reads.
     pub focus: Option<f32>,
+    /// The part of the picture the camera framed, where it framed less
+    /// than the raw keeps (`StyleTags::camera_frame`): what the views
+    /// of a frame with no edit are cut to, and its keys take. `None`
+    /// until the row's maker tags are read (the frame unknown, and to
+    /// be read from the file's head), `Some(None)` where they say the
+    /// camera framed the whole.
+    pub camera_frame: Option<Option<greycard_core::raw::CameraFrame>>,
 }
 
 /// One version of a file as the index mirrors it from the sidecar: what
@@ -1427,6 +1493,7 @@ impl Library {
                             path.display(),
                             from + 1
                         );
+                        add_columns(&tx, *from)?;
                         tx.execute_batch(sql)?;
                     }
                     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -2897,6 +2964,7 @@ fn entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
                 style: row.get(22)?,
                 fixed: row.get::<_, i64>(23)? != 0,
                 peripheral: row.get::<_, Option<i64>>(24)?.map(|v| v != 0),
+                camera_frame: camera_frame_of_column(row.get(32)?),
             },
             mosaic: row
                 .get::<_, Option<String>>(28)?
@@ -2942,6 +3010,9 @@ fn row_meta(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<RowMeta> {
         taken: row.get(from + 14)?,
         edited_at: row.get(from + 15)?,
         focus: focus_of_column(row.get(from + 17)?),
+        camera_frame: row
+            .get::<_, Option<String>>(from + 18)?
+            .map(|t| camera_frame_of_column(Some(t))),
     })
 }
 

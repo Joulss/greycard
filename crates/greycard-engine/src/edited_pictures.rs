@@ -213,6 +213,132 @@ pub struct Edited {
     made_under: Mutex<String>,
 }
 
+type Frame = Option<greycard_core::raw::CameraFrame>;
+
+/// The camera frame of each raw that may have one
+/// ([`greycard_core::decode::may_have_camera_frame`]), by path, from
+/// two sources kept apart. What a row read or a decode told
+/// ([`note_camera`], [`note_decoded`]) is kept unbounded: a row is in
+/// memory anyway, and a decode is the last word. What a file's head
+/// said ([`camera_of`]) is kept up to `held` entries, the map emptied
+/// past that, to be read again; a told entry wins over a read one.
+pub struct Cameras {
+    told: HashMap<PathBuf, Frame>,
+    read: HashMap<PathBuf, Frame>,
+    held: usize,
+}
+
+impl Cameras {
+    pub fn new(held: usize) -> Self {
+        Self {
+            told: HashMap::new(),
+            read: HashMap::new(),
+            held,
+        }
+    }
+
+    /// What is known of `path`: `Some(frame)` told or read, `None` not
+    /// known.
+    pub fn known(&self, path: &Path) -> Option<Frame> {
+        self.told.get(path).or_else(|| self.read.get(path)).copied()
+    }
+
+    /// Told by a row read or a decode; true when that moved the frame
+    /// known.
+    pub fn tell(&mut self, path: &Path, camera: Frame) -> bool {
+        let before = self.known(path).flatten();
+        self.read.remove(path);
+        self.told.insert(path.to_path_buf(), camera);
+        before != camera
+    }
+
+    /// Read from the head.
+    pub fn read(&mut self, path: &Path, camera: Frame) {
+        if self.read.len() >= self.held && !self.read.contains_key(path) {
+            self.read.clear();
+        }
+        self.read.insert(path.to_path_buf(), camera);
+    }
+
+    /// The row says its tags are not read: nothing known stands.
+    pub fn forget(&mut self, path: &Path) {
+        self.told.remove(path);
+        self.read.remove(path);
+    }
+}
+
+static CAMERAS: std::sync::LazyLock<Mutex<Cameras>> =
+    std::sync::LazyLock::new(|| Mutex::new(Cameras::new(CAMERAS_READ_HELD)));
+
+/// The most head reads [`CAMERAS`] keeps.
+const CAMERAS_READ_HELD: usize = 1 << 16;
+
+/// The camera frame of the file at `path`, as told or read: what its
+/// keys take, and what the camera's pictures of it are cut to
+/// (`worker::thumbs::cut_to_camera`). Reads the file's head on a miss
+/// (`decode::camera_frame_path`, which takes the frame as the decode
+/// does), so only for a thread that reads the file anyway (a thumbnail
+/// made, a decode, a develop); a read that fails is not kept, and is
+/// tried again when next asked. [`camera_known`] reads nothing.
+pub fn camera_of(path: &Path) -> Frame {
+    if let Some(c) = CAMERAS.lock().expect("cameras").known(path) {
+        return c;
+    }
+    if !greycard_core::decode::may_have_camera_frame(path) {
+        return None;
+    }
+    match greycard_core::decode::camera_frame_path(path) {
+        Ok(read) => {
+            CAMERAS.lock().expect("cameras").read(path, read);
+            read
+        }
+        Err(e) => {
+            tracing::debug!("{}: the camera's frame: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// The camera frame of the file at `path` when it is known (told or
+/// read before), with nothing read: for the window's thread, and for a
+/// picture of a file out of reach or not yet read over a share.
+pub fn camera_known(path: &Path) -> Frame {
+    camera_state(path).flatten()
+}
+
+/// What is known of the camera frame of the file at `path`, with
+/// nothing read: `None` when nothing is, `Some(None)` when it is known
+/// that the camera framed the whole.
+pub fn camera_state(path: &Path) -> Option<Frame> {
+    CAMERAS.lock().expect("cameras").known(path)
+}
+
+/// The camera frame of the file at `path` as its index row, read, holds
+/// it. True when that moved what was known of it, so the pictures cut
+/// to it are asked for again.
+pub fn note_camera(path: &Path, camera: Frame) -> bool {
+    if !greycard_core::decode::may_have_camera_frame(path) {
+        return false;
+    }
+    CAMERAS.lock().expect("cameras").tell(path, camera)
+}
+
+/// The camera frame a decode of the file at `path` took
+/// (`Shot::camera_frame`, checked against the decoder's crop): the
+/// last word, over a row's or a head's, so the thumbnails, the
+/// stand-in and the keys frame as the develop does.
+pub fn note_decoded(path: &Path, camera: Frame) {
+    if greycard_core::decode::may_have_camera_frame(path) {
+        CAMERAS.lock().expect("cameras").tell(path, camera);
+    }
+}
+
+/// The file at `path` has a row whose maker's tags are not read: what
+/// was known of its frame goes, to be read with them.
+pub fn forget_camera(path: &Path) {
+    CAMERAS.lock().expect("cameras").forget(path);
+}
+
 type InHand = Arc<Mutex<std::collections::HashSet<(String, u64, u16)>>>;
 
 /// A picture in hand on the keeping thread, let go when the making that
@@ -408,10 +534,24 @@ impl Edited {
         *self.made_under.lock().expect("made under") = self.under_now();
     }
 
-    /// The key of `edit` under the lens database the develop reads now.
-    pub fn key_of(&self, edit: &Edit) -> u64 {
+    /// The key of `edit` on the file at `path` under the lens database
+    /// the develop reads now, the file's camera frame taken in as the
+    /// index takes it (`greycard_edit::key::framed_key`).
+    pub fn key_of(&self, path: &Path, edit: &Edit) -> u64 {
+        self.key_under(edit, camera_of(path))
+    }
+
+    /// [`Edited::key_of`] with the camera's frame as known, nothing of
+    /// the file read: the window's thread's. A frame whose row is not
+    /// read yet gets its edit's own key, a hint the thumbnail's read
+    /// corrects.
+    pub fn key_known(&self, path: &Path, edit: &Edit) -> u64 {
+        self.key_under(edit, camera_known(path))
+    }
+
+    fn key_under(&self, edit: &Edit, camera: Option<greycard_core::raw::CameraFrame>) -> u64 {
         let lenses = self.lenses();
-        match &*self.dirs.lock().expect("key dirs") {
+        let key = match &*self.dirs.lock().expect("key dirs") {
             Some((looks, profiles)) => greycard_edit_io::key::develop_key_in(
                 edit,
                 Some(looks),
@@ -419,7 +559,16 @@ impl Edited {
                 lenses.as_deref(),
             ),
             None => greycard_edit_io::key::develop_key(edit, lenses.as_deref()),
-        }
+        };
+        greycard_edit::key::framed_key(
+            key,
+            edit.geometry.crop.is_none(),
+            matches!(
+                edit.geometry.aspect,
+                greycard_edit::geometry::Aspect::Ratio { .. }
+            ),
+            camera.as_ref(),
+        )
     }
 
     /// A new list: these frames are held as edited (true) or not, each
@@ -572,7 +721,7 @@ impl Edited {
             Want::Key(k) => Shows::Edit(k),
             Want::Unread => held.unread(),
             Want::Read => {
-                let read = read_key(frame, held.iso, |e| self.key_of(e));
+                let read = read_key(frame, held.iso, |e| self.key_of(&frame.path, e));
                 let mut wants = self.wants();
                 // A save or a keep since the read began has the last word.
                 if wants.get(frame) != Some(&held) {
@@ -932,6 +1081,9 @@ pub struct Finish {
     /// The masks' bands, of the developed picture `source` is the size
     /// of, when a mask asks for them.
     pub detail: Option<Arc<greycard_render::detail::DetailPlanes>>,
+    /// The camera's frame on the developed picture
+    /// (`stages::Facts::camera`), which frames an edit with no crop.
+    pub camera: Option<greycard_edit::geometry::Crop>,
 }
 
 /// The pictures of an edit, as they are kept: the larger one and each
@@ -945,8 +1097,12 @@ pub struct Made {
 /// The whole factor a developed picture of `source` is reduced by before
 /// its geometry, so its frame is still at least [`BIG`] on its long edge
 /// and is brought to it by one resize that is less than a halving.
-pub fn factor_for(source: (u32, u32), geometry: &Geometry) -> usize {
-    let frame = geometry.frame(source.0 as f32, source.1 as f32);
+pub fn factor_for(
+    source: (u32, u32),
+    geometry: &Geometry,
+    camera: Option<greycard_edit::geometry::Crop>,
+) -> usize {
+    let frame = geometry.frame(source.0 as f32, source.1 as f32, camera);
     let long = frame.size.0.max(frame.size.1);
     ((long / BIG as f32).floor() as usize).max(1)
 }
@@ -991,13 +1147,21 @@ pub fn read_back_reduced(
 /// output sharpening), the frame's own turns taken back out, and the
 /// made sizes shrunk from that.
 pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
-    let edit = &finish.edit;
+    // The camera's frame resolved into the geometry at the full
+    // develop's size, as the export resolves it, for the renderers that
+    // take a whole geometry.
+    let (fw, fh) = (finish.full.0 as f32, finish.full.1 as f32);
+    let edit = &Edit {
+        geometry: finish
+            .edit
+            .geometry
+            .with_camera_frame(fw, fh, finish.camera),
+        ..finish.edit.clone()
+    };
     let framed;
     // Whether the geometry frames anything is asked at the full
     // develop's size, as `fitted_size` asks it, so the two agree.
-    let whole = edit
-        .geometry
-        .is_identity_on(finish.full.0 as f32, finish.full.1 as f32);
+    let whole = edit.geometry.is_identity_on(fw, fh, None);
     let image = if whole {
         reduced
     } else {
@@ -1008,7 +1172,7 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
     // pixel, so the two agree and so does the grain laid on each, which
     // is placed by the output's own pixels: a crop rounded at another
     // scale would put the picture a pixel off it.
-    let (w, h) = fitted_size(finish.full, &edit.geometry);
+    let (w, h) = fitted_size(finish.full, &edit.geometry, None);
     let fitted = greycard_render::export::fit_exact(image, w, h);
     let image = fitted.as_ref().unwrap_or(image);
     // The masks' bands by the same steps: reduced by the whole factor
@@ -1019,7 +1183,7 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
         } else {
             // Averaged straight from the half floats, with no
             // full-size copy of three f32 channels in between.
-            let bands = planes.to_image_reduced(factor_for(finish.full, &edit.geometry));
+            let bands = planes.to_image_reduced(factor_for(finish.full, &edit.geometry, None));
             let (rw, rh) = (reduced.width as u32, reduced.height as u32);
             bands.fit_exact(rw, rh).unwrap_or(bands)
         };
@@ -1029,9 +1193,8 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
         bands.fit_exact(w, h).unwrap_or(bands)
     });
     let (sw, sh) = (finish.source.0 as f32, finish.source.1 as f32);
-    let frame_width = edit.geometry.frame(sw, sh).size.0;
-    let (fw, fh) = (finish.full.0 as f32, finish.full.1 as f32);
-    let full_width = edit.geometry.frame(fw, fh).size.0;
+    let frame_width = edit.geometry.frame(sw, sh, None).size.0;
+    let full_width = edit.geometry.frame(fw, fh, None).size.0;
     let settings = greycard_render::export::Settings {
         format: greycard_render::export::Format::Jpeg,
         long_edge: None,
@@ -1077,8 +1240,12 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
 /// `geometry` has: the geometry's frame as `geometry::apply` cuts it, then
 /// brought to [`BIG`] on its long edge as `export::fit` brings it, or left
 /// when it is no larger.
-pub fn fitted_size(full: (u32, u32), geometry: &Geometry) -> (u32, u32) {
-    let (w, h) = framed_size(full, geometry);
+pub fn fitted_size(
+    full: (u32, u32),
+    geometry: &Geometry,
+    camera: Option<greycard_edit::geometry::Crop>,
+) -> (u32, u32) {
+    let (w, h) = framed_size(full, geometry, camera);
     let long = w.max(h);
     if long <= BIG {
         return (w.max(1), h.max(1));
@@ -1209,6 +1376,81 @@ pub mod tests {
     use super::*;
     use crate::testing::edited::{Heard, rig};
 
+    /// What the camera's frames are known by: a read only where asked
+    /// for one (never for the window's thread, nor a picture from the
+    /// cache alone), a failed one tried again; only files that may have
+    /// a frame kept; a row's word and a decode's over a read, and an
+    /// unread row's forgetting. The window's key reads nothing.
+    #[test]
+    fn a_cameras_frame_is_read_only_where_asked_and_once() {
+        let dir = crate::testing::scratch_dir("camera-frames-known");
+        let framed = dir.join("framed.ORF");
+        let head =
+            greycard_core::testing::olympus_head(1, [8, 8, 5184, 3888], [0, 216, 5183, 3671]);
+        std::fs::write(&framed, &head).unwrap();
+        let frame = greycard_core::decode::camera_frame_path(&framed)
+            .unwrap()
+            .expect("a 3:2 frame");
+        // Nothing known, nothing read: the window's key is the edit's
+        // own; the worker's reads the head and takes the frame in.
+        assert_eq!(camera_known(&framed), None);
+        let edited = Edited::new(Arc::new(Mutex::new(None)));
+        let edit = Edit::default();
+        let own = edited.key_known(&framed, &edit);
+        assert_eq!(camera_known(&framed), None, "the window read nothing");
+        let worker = edited.key_of(&framed, &edit);
+        assert_ne!(worker, own);
+        assert_eq!(camera_known(&framed), Some(frame), "read once, kept");
+        assert_eq!(edited.key_known(&framed, &edit), worker);
+        // A read that fails is not kept: the file that comes after is
+        // read, and framed as its decode would frame it.
+        let gone = dir.join("gone.ORF");
+        assert_eq!(camera_of(&gone), None);
+        assert_eq!(camera_state(&gone), None, "nothing kept");
+        std::fs::write(&gone, &head).unwrap();
+        assert_eq!(camera_of(&gone), Some(frame), "read again");
+        // A decode's word over the head's: the decoder took no frame.
+        note_decoded(&gone, None);
+        assert_eq!(camera_state(&gone), Some(None));
+        forget_camera(&gone);
+        // A row read since says, and an unread row's forgetting has the
+        // file read again.
+        assert!(note_camera(&gone, Some(frame)), "moved");
+        assert!(!note_camera(&gone, Some(frame)), "the same");
+        assert_eq!(camera_known(&gone), Some(frame));
+        forget_camera(&gone);
+        assert_eq!(camera_known(&gone), None);
+        assert_eq!(camera_of(&gone), Some(frame));
+        // Another maker's file is never read, nor kept from its row.
+        let other = dir.join("other.CR3");
+        std::fs::write(&other, &head).unwrap();
+        assert_eq!(camera_of(&other), None);
+        assert!(!note_camera(&other, Some(frame)));
+        assert_eq!(camera_known(&other), None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The head reads are bounded; what rows and decodes told is not,
+    /// so a view of more frames than the bound keeps every tile's frame.
+    #[test]
+    fn the_bound_on_head_reads_spares_what_rows_told() {
+        let frame =
+            greycard_core::testing::three_two_frame(greycard_core::raw::Orientation::Normal);
+        let mut cameras = Cameras::new(4);
+        let told: Vec<PathBuf> = (0..10)
+            .map(|i| PathBuf::from(format!("/t/{i}.ORF")))
+            .collect();
+        for p in &told {
+            cameras.tell(p, Some(frame));
+        }
+        for i in 0..10 {
+            cameras.read(Path::new(&format!("/r/{i}.ORF")), Some(frame));
+        }
+        assert!(told.iter().all(|p| cameras.known(p) == Some(Some(frame))));
+        assert_eq!(cameras.known(Path::new("/r/0.ORF")), None, "reads emptied");
+        assert_eq!(cameras.known(Path::new("/r/9.ORF")), Some(Some(frame)));
+    }
+
     fn picture(w: u32, h: u32) -> Thumb {
         let mut rgb = Vec::new();
         for y in 0..h {
@@ -1246,9 +1488,9 @@ pub mod tests {
     #[test]
     fn the_factor_keeps_the_frame_at_the_big_size_or_more() {
         let g = Geometry::default();
-        assert_eq!(factor_for((6000, 4000), &g), 2);
-        assert_eq!(factor_for((8192, 5464), &g), 4);
-        assert_eq!(factor_for((1600, 1200), &g), 1);
+        assert_eq!(factor_for((6000, 4000), &g, None), 2);
+        assert_eq!(factor_for((8192, 5464), &g, None), 4);
+        assert_eq!(factor_for((1600, 1200), &g, None), 1);
         let cropped = Geometry {
             crop: Some(greycard_edit::geometry::Crop {
                 x: 0.25,
@@ -1258,7 +1500,7 @@ pub mod tests {
             }),
             ..Geometry::default()
         };
-        assert_eq!(factor_for((8192, 5464), &cropped), 2);
+        assert_eq!(factor_for((8192, 5464), &cropped, None), 2);
     }
 
     /// The reduced develop's pictures read the color mean over the
@@ -1327,6 +1569,7 @@ pub mod tests {
                 kind: greycard_render::finish::Source::SCENE,
                 white: None,
                 detail: None,
+                camera: None,
             };
             let big = make(&reduced, &finish).big;
             assert_eq!((big.width, big.height), (w as u32, h as u32));
@@ -1396,7 +1639,7 @@ pub mod tests {
             }
         }
         let hash = greycard_library::hash_file(&other).unwrap();
-        let key = edited.key_of(&edit);
+        let key = edited.key_of(&other, &edit);
         assert!(edited.all_kept(&hash, key), "every size kept under the key");
         assert!(
             edited.wants_develop(&other_frame).is_none(),
@@ -1437,7 +1680,7 @@ pub mod tests {
         let mut bright = Edit::for_picture();
         bright.light.exposure = 1.0;
         let hash = greycard_library::hash_file(&rig.png).unwrap();
-        let key = edited.key_of(&bright);
+        let key = edited.key_of(&rig.png, &bright);
         // A flat dark picture standing for the reduced develop's.
         let big = Thumb {
             width: 600,

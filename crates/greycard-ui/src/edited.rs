@@ -141,7 +141,7 @@ pub(crate) fn saved(st: &mut crate::State, c: usize) {
     // The line's key under the edit just written is its hint until the
     // thumbnail reads it: what the cell shows now, not before the save.
     let edited = is_edited(&frame.path, &line.current, iso);
-    let key = edited.then(|| worker.edited().key_of(&line.current));
+    let key = edited.then(|| worker.edited().key_known(&frame.path, &line.current));
     if worker.edited().note(&frame, edited, iso, key) {
         worker.send(crate::rows::thumb_job(st, c));
     }

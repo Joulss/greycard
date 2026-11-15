@@ -592,11 +592,28 @@ fn stand_in_edit(st: &mut State) {
     }
     let size = hold.size;
     let path = st.path_of(c).clone();
+    let whole = crop_stored(st, c);
     st.culling.prefetch.want(vec![
         cull::Want::of_file(c, path.clone(), size)
             .of_version(st.cells[c].version.clone())
-            .with_picture(companion_picture(&st.views.companions, &path)),
+            .with_picture(companion_picture(&st.views.companions, &path))
+            .whole(whole),
     ]);
+}
+
+/// Whether cell `c`'s edit stores a crop of its own, as far as its
+/// sidecar has been read: the camera's picture standing in for its
+/// develop is then the whole sensor's, as the crop was made on, and not
+/// cut to the camera's frame. A sidecar still standing in from its row
+/// says no crop: the row keeps none.
+pub(crate) fn crop_stored(st: &State, c: usize) -> bool {
+    let read = st
+        .cells
+        .get(c)
+        .is_some_and(|cell| st.from_row.get(cell.file).is_none_or(|r| r.read));
+    read && st
+        .line(c)
+        .is_some_and(|line| line.current.geometry.crop.is_some())
 }
 
 /// The Loupe in Develop: out of either Cull, the frame developed and
@@ -965,6 +982,9 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
     // An edited frame stands in with its edit's picture: a camera
     // picture Cull asked for alone is not that, and is asked again.
     let edited = crate::edited::held_edited(st, cell);
+    // A frame with a crop of its own stands in with the camera's whole
+    // picture: one cut to the camera's frame is asked again.
+    let whole = crop_stored(st, cell);
     // The hold is the mode's own state without the mode: its tab is
     // never put back from here, since nothing took it away.
     let hold = st
@@ -974,7 +994,7 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
     let held = hold
         .cache
         .get(cell)
-        .is_some_and(|p| !p.camera_only || !edited);
+        .is_some_and(|p| (!p.camera_only || !edited) && !(whole && p.cut));
     // A frame whose decode came back with nothing is not asked for
     // again: there is no camera JPEG in that cell, and every select
     // would pay a decode to be told so. The record goes when the
@@ -1021,7 +1041,8 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
         // asked as its file's would be dropped there.
         cull::Want::of_file(cell, path.clone(), size)
             .of_version(st.cells[cell].version.clone())
-            .with_picture(companion_picture(&st.views.companions, &path)),
+            .with_picture(companion_picture(&st.views.companions, &path))
+            .whole(whole),
     ]);
     // The frame before this one may have gone with the window — a
     // jump across the folder — and then there is nothing standing in
@@ -1122,7 +1143,13 @@ fn stands_for(st: &State, app: &App, cell: usize) -> Option<(u32, u32)> {
     } else {
         (w, h)
     };
-    let frame = geometry.frame(w as f32, h as f32).size;
+    // The develop's frame by the camera's where the edit has no crop:
+    // the frame as the index's row or the thumbnails told it.
+    let camera = crate::edited_pictures::camera_known(st.path_of(cell)).map(|c| {
+        let at = c.orientation.turned(i32::from(sidecar.turn % 4));
+        greycard_edit::geometry::Crop::of(c.oriented(at))
+    });
+    let frame = geometry.frame(w as f32, h as f32, camera).size;
     let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, cell, app, panel);
     let (fw, fh) = Geometry {
         turns,
@@ -1635,7 +1662,9 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
         // grows by the copy's scale and the center shrinks by it.
         let scale = tw / fw;
         let full = geometry.plane_size(fw, fh);
-        let frame = geometry.frame(tw, th);
+        // The camera's picture comes cut to the camera's frame
+        // (`thumbs::cut_to_camera`), so it is drawn whole.
+        let frame = geometry.frame(tw, th, None);
         // One frame alone fits inside the mat, as the develop's does
         // (`effective_zoom`): the camera's picture standing in for it
         // must not jump when the develop lands.
@@ -4666,7 +4695,7 @@ mod tests {
             );
             assert_eq!(st.develop.source_size, (4000, 6000));
             // The edit is measured on the source standing on end.
-            let frame = st.develop.edit.geometry.frame(4000.0, 6000.0);
+            let frame = st.develop.edit.geometry.frame(4000.0, 6000.0, None);
             assert!(frame.size.1 > frame.size.0, "{:?}", frame.size);
         }
 
@@ -7365,7 +7394,7 @@ mod tests {
         for f in &files {
             let hash = greycard_library::hash_file(f).unwrap();
             edited
-                .store_reduced(&hash, edited.key_of(&edit), &made)
+                .store_reduced(&hash, edited.key_of(f, &edit), &made)
                 .unwrap();
         }
         let previews = Arc::new(crate::previews::Previews::new(cache).with_edited(edited));

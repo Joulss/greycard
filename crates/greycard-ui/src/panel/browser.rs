@@ -1169,11 +1169,27 @@ pub(crate) fn frame_aspect(st: &mut State, cell: usize) -> Option<f32> {
         let (w, h) = if turn % 2 == 1 { (h, w) } else { (w, h) };
         aspect((w, h))
     };
+    // A frame the camera framed: its develop is the whole area the
+    // frame is a part of, which its pictures may be cut from
+    // (`cull::cut_to_camera`) or not (the camera's JPEG beside it).
+    // One whose frame is not known yet may have pictures cut to it:
+    // only a picture known to be whole says its shape, and failing one
+    // the answer waits (`None`) rather than be a cut picture's.
+    let path = st.path_of(cell);
+    let unknown = match crate::edited_pictures::camera_state(path) {
+        Some(Some(camera)) => return shown(camera.shown_area()),
+        Some(None) => false,
+        None => greycard_core::decode::may_have_camera_frame(path),
+    };
     if let Some(cull) = st.culling.cull.as_ref().or(st.culling.hold.as_ref())
         && let Some(preview) = cull.cache.best(cell)
+        && !(unknown && (preview.cut || preview.companion))
         && let Some(a) = shown(preview.source)
     {
         return Some(a);
+    }
+    if unknown {
+        return None;
     }
     st.views
         .thumb_base
@@ -3914,6 +3930,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     worker.send(crate::rows::thumb_job(&st, i));
                 }
             }
+            crate::rows::ask_reframed(&mut st, &worker, first as usize, last as usize);
             worker.want_thumbnails(f, l);
             near_shown(&mut st, &worker, first as usize, last as usize);
             crate::edited::note_editing(&mut st, &worker, false);
@@ -4079,6 +4096,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     worker.send(crate::rows::thumb_job(&st, i));
                 }
             }
+            crate::rows::ask_reframed(&mut st, &worker, first, last);
             // After the pushes, which clear the queue's order.
             worker.want_thumbnails(st.views.shown[first], st.views.shown[last]);
             near_shown(&mut st, &worker, first, last);

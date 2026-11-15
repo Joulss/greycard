@@ -82,6 +82,34 @@ pub(crate) fn picture_up(develop: &mut owners::Develop, landed: &crate::panel::d
     renderer.set_detail(landed.planes.as_ref());
 }
 
+/// The camera's frame on the develop the viewport draws
+/// ([`drawn_picture`]) at the turn it is drawn at, as fractions of it
+/// (`stages::Facts::camera`): what an edit with no crop is framed to.
+/// None for a frame whose camera framed all of it, and for a picture
+/// that is not a develop (the camera's picture standing in comes cut).
+/// `source_size` is the same picture once the open frame's develop has
+/// landed, so the panel measures the crop by this too.
+pub(crate) fn camera_crop(st: &State) -> Option<greycard_edit::geometry::Crop> {
+    let (frame, tag) = st.develop.drawn_camera?;
+    let (_, turn) = st.develop.shown_turn?;
+    let lag = own_develop(st).unwrap_or(0);
+    let at = tag.turned(i32::from((turn + lag) % 4));
+    Some(greycard_edit::geometry::Crop::of(frame.oriented(at)))
+}
+
+/// The camera's frame of a raw as its develop is framed by
+/// (`stages::Facts::camera`, which says whether it applies), with the
+/// tag the develop turns the raw by.
+pub(crate) fn camera_of_frame(
+    frame: &greycard_core::raw::RawFrame,
+) -> Option<(
+    greycard_core::raw::CameraFrame,
+    greycard_core::raw::Orientation,
+)> {
+    greycard_engine::stages::Facts::raw(frame, 0).camera()?;
+    Some((frame.shot.camera_frame?, frame.orientation))
+}
+
 /// The turn the develop on the GPU lags the open frame by, when that
 /// develop is the open frame's own; none for another frame's.
 pub(crate) fn own_develop(st: &State) -> Option<u8> {
@@ -417,6 +445,9 @@ pub(crate) fn settle_source_size(st: &mut State) {
 /// picture as the viewport draws it ([`drawn_picture`]).
 pub(crate) fn show_source_shape(st: &State, app: &App) {
     let ((w, h), _) = drawn_picture(st);
+    // The camera's frame's shape where it framed one: what Original
+    // holds there.
+    let (w, h) = Geometry::default().own_shape(w as f32, h as f32, camera_crop(st));
     let tall = h > w;
     if app.get_source_tall() != tall {
         app.set_source_tall(tall);
@@ -438,7 +469,7 @@ pub(crate) fn show_crop_on_view(st: &State, app: &App, geometry: &Geometry) {
         app.get_view_height().max(1) as u32,
     );
     let zoom = effective_zoom(st, vw, vh);
-    let c = geometry.effective_crop(sw, sh);
+    let c = geometry.effective_crop(sw, sh, camera_crop(st));
     let (pw, ph) = geometry.plane_size(sw, sh);
     let to_view = |fx: f32, fy: f32| {
         (
@@ -569,7 +600,7 @@ impl ViewMap {
         let frame = if app.get_crop_mode() {
             geometry.bounds(sw, sh)
         } else {
-            geometry.frame(sw, sh)
+            geometry.frame(sw, sh, camera_crop(st))
         };
         Self {
             scale: app.window().scale_factor(),
@@ -610,7 +641,7 @@ pub(crate) fn view_to_source(st: &State, app: &App, x: f32, y: f32) -> (f32, f32
     let frame = if app.get_crop_mode() {
         geometry.bounds(sw, sh)
     } else {
-        geometry.frame(sw, sh)
+        geometry.frame(sw, sh, camera_crop(st))
     };
     let r = (
         (x * scale - vw as f32 / 2.0) / zoom + st.develop.center.0 + frame.origin.0,
@@ -703,7 +734,7 @@ fn view_in_frame(
     let frame = if app.get_crop_mode() {
         geometry.bounds(sw, sh)
     } else {
-        geometry.frame(sw, sh)
+        geometry.frame(sw, sh, camera_crop(st))
     };
     let at = (
         (x * scale - vw as f32 / 2.0) / zoom + st.develop.center.0,
@@ -855,7 +886,7 @@ pub(crate) fn view_to_plane(st: &State, app: &App, x: f32, y: f32) -> (f32, f32)
     let frame = if app.get_crop_mode() {
         geometry.bounds(sw, sh)
     } else {
-        geometry.frame(sw, sh)
+        geometry.frame(sw, sh, camera_crop(st))
     };
     let (pw, ph) = geometry.plane_size(sw, sh);
     let r = (
@@ -4215,6 +4246,53 @@ pub(crate) mod tests {
         crate::testing::press(&app, Key::F7);
         let kept = crate::panel::startup::remember(&app);
         assert!(kept.hide_left && !kept.hide_right && !kept.hide_strip);
+    }
+
+    /// The viewport frames the open frame's develop by the camera's
+    /// frame as the export does (`stages::Facts::camera`), at each turn
+    /// of the frame and while a turn pressed since lags the develop;
+    /// a raw whose camera framed nothing, and a merge, are not framed.
+    #[test]
+    fn the_viewport_frames_by_the_cameras_frame_as_the_export() {
+        use greycard_core::raw::{CameraFrame, Orientation, Rect};
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let area = Rect {
+            x: 8,
+            y: 8,
+            width: 2,
+            height: 2,
+        };
+        let mut frame = daylight_frame();
+        frame.crop = Some(area);
+        frame.orientation = Orientation::Rotate90;
+        frame.shot.camera_frame = Some(CameraFrame {
+            area,
+            frame: Rect {
+                x: 8,
+                y: 8,
+                width: 2,
+                height: 1,
+            },
+            orientation: Orientation::Rotate90,
+        });
+        for (developed, now) in [(0u8, 0u8), (1, 1), (2, 2), (3, 3), (0, 1), (1, 3)] {
+            let mut st = state.borrow_mut();
+            st.sidecars[0].turn = now;
+            st.develop.shown_turn = Some((0, developed));
+            st.develop.drawn_camera = camera_of_frame(&frame);
+            let viewport = camera_crop(&st);
+            let export = greycard_engine::stages::Facts::raw(&frame, now).camera();
+            assert_eq!(viewport, export, "developed at {developed}, now at {now}");
+            assert!(viewport.is_some());
+        }
+        let mut whole = frame.clone();
+        whole.shot.camera_frame = None;
+        assert_eq!(camera_of_frame(&whole), None);
+        let mut merged = frame.clone();
+        merged.dng.merged = Some(Default::default());
+        assert_eq!(camera_of_frame(&merged), None, "a merge opens whole");
     }
 
     /// A raw of a camera that is Rec.2020 itself, calibrated under

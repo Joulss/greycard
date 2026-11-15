@@ -15,6 +15,19 @@ pub struct Crop {
     pub h: f32,
 }
 
+impl Crop {
+    /// A crop of fractions `[x, y, w, h]`, as the camera's frame is
+    /// given (`greycard_core::raw::CameraFrame::oriented`).
+    pub fn of(f: [f32; 4]) -> Self {
+        Crop {
+            x: f[0],
+            y: f[1],
+            w: f[2],
+            h: f[3],
+        }
+    }
+}
+
 /// A crop as written, each side possibly null (a NaN serialized).
 #[derive(Deserialize)]
 struct CropAsWritten {
@@ -194,14 +207,29 @@ pub struct Frame {
     pub size: (f32, f32),
 }
 
+/// Whether a camera's frame (fractions of the source) is centered on
+/// it, within a thousandth: a quarter turn and a mirror leave it so.
+pub fn camera_centered(c: Crop) -> bool {
+    let (x, y) = c.center();
+    (x - 0.5).abs() < 1e-3 && (y - 0.5).abs() < 1e-3
+}
+
+/// [`Geometry::framed_by_camera`] from what the index keeps of an
+/// edit: whether it stores no crop, and whether its aspect is a ratio.
+pub fn framed_by_camera(uncropped: bool, by_ratio: bool, camera: Option<Crop>) -> bool {
+    uncropped && camera.is_some_and(|c| !(by_ratio && camera_centered(c)))
+}
+
 impl Geometry {
     /// Whether the geometry leaves a source `w` by `h` as it is: no
     /// turn, mirror, angle, keystone, or crop, and no aspect that fits
     /// a crop of its own ([`Geometry::effective_crop`]) to less than
     /// the whole of it. A ratio over no crop frames the picture as a
     /// crop does, so the size is needed to say: 3:2 over a 4:3 source
-    /// cuts it, over a 3:2 one it is the whole frame.
-    pub fn is_identity_on(&self, w: f32, h: f32) -> bool {
+    /// cuts it, over a 3:2 one it is the whole frame. So does the
+    /// camera's frame over no crop (`camera`, see
+    /// [`Geometry::effective_crop`]).
+    pub fn is_identity_on(&self, w: f32, h: f32, camera: Option<Crop>) -> bool {
         if self.turns != 0
             || self.flip
             || self.angle != 0.0
@@ -210,10 +238,10 @@ impl Geometry {
         {
             return false;
         }
-        if !self.frames_by_aspect() {
+        if !self.frames_by_aspect() && self.camera_crop(w, h, camera).is_none() {
             return true;
         }
-        let f = self.frame(w, h);
+        let f = self.frame(w, h, camera);
         f.size == (w.round().max(1.0), h.round().max(1.0))
             && f.origin.0.abs() < 0.5
             && f.origin.1.abs() < 0.5
@@ -411,7 +439,10 @@ impl Geometry {
     /// mapped there and never stored.) Free reads no flag and leaves
     /// it be. The same aspect picked again, and a source of no size,
     /// change nothing.
-    pub fn with_aspect(&self, aspect: Aspect, w: f32, h: f32) -> Self {
+    ///
+    /// On a frame the camera framed (`camera`), the way up is its
+    /// frame's: a 3:4 frame of a 4:3 sensor stands a ratio on end.
+    pub fn with_aspect(&self, aspect: Aspect, w: f32, h: f32, camera: Option<Crop>) -> Self {
         let mut g = self.clone();
         if aspect == self.aspect {
             return g;
@@ -421,7 +452,7 @@ impl Geometry {
             Aspect::Ratio { .. }
                 if !matches!(self.aspect, Aspect::Ratio { .. }) || self.crop.is_none() =>
             {
-                let (pw, ph) = self.plane_size(w, h);
+                let (pw, ph) = self.own_shape(w, h, camera);
                 if pw >= 1.0 && ph >= 1.0 {
                     g.portrait = ph > pw;
                 }
@@ -826,22 +857,142 @@ impl Geometry {
     }
 
     /// The crop in force: the one set, or the largest that fits.
-    pub fn effective_crop(&self, w: f32, h: f32) -> Crop {
+    ///
+    /// `camera` is the camera's frame, where the camera framed less
+    /// of the picture than the raw keeps (an aspect chosen on the
+    /// body): fractions of the source `w` by `h` as the develop makes
+    /// it, the camera's tag and the frame's turns on it, before this
+    /// geometry. It is the crop of an edit that stores none and whose
+    /// aspect frames nothing ([`Geometry::frames_by_aspect`]), a
+    /// default and never stored: so a frame shot at 3:2 on a 4:3
+    /// sensor shows at 3:2 until a crop is set, and the whole sensor
+    /// is a crop set to it. Where the camera framed nothing, `None`.
+    pub fn effective_crop(&self, w: f32, h: f32, camera: Option<Crop>) -> Crop {
         match self.crop {
             Some(c) if self.fits(&c, w, h) => c,
-            _ => {
+            // A crop of the user's that no longer fits (a turn since):
+            // refitted as it always was, the camera's frame no part of
+            // it, so the edit's picture and its key stay put.
+            Some(_) => {
                 let (pw, ph) = self.plane_size(w, h);
                 let ratio = self.aspect.ratio(pw, ph, self.portrait).unwrap_or(pw / ph);
                 self.largest_fit((0.5, 0.5), ratio, w, h)
             }
+            None => {
+                if let Some(c) = self.camera_crop(w, h, camera) {
+                    return c;
+                }
+                let (pw, ph) = self.plane_size(w, h);
+                let ratio = self.ratio(w, h, camera).unwrap_or(pw / ph);
+                // About the camera frame's center; one centered on the
+                // picture (as a body's frames are) is the picture's
+                // own, exactly, so an aspect over no crop frames as it
+                // did before the camera's frame was read.
+                let center = match camera.filter(|c| w > 0.0 && h > 0.0 && !camera_centered(*c)) {
+                    Some(c) => self.camera_on_plane(c, w, h).center(),
+                    None => (0.5, 0.5),
+                };
+                self.largest_fit(center, ratio, w, h)
+            }
         }
     }
 
-    /// What the export writes and the viewport shows: the crop in
-    /// source pixels of the leveled plane.
-    pub fn frame(&self, w: f32, h: f32) -> Frame {
+    /// Whether the camera's frame `camera` frames this geometry's
+    /// picture, so that it moves the picture and the key: no crop
+    /// stored, and not a ratio over no crop about a centered frame,
+    /// which [`Geometry::effective_crop`] fits exactly as with none.
+    pub fn framed_by_camera(&self, camera: Option<Crop>) -> bool {
+        framed_by_camera(
+            self.crop.is_none(),
+            matches!(self.aspect, Aspect::Ratio { .. }),
+            camera,
+        )
+    }
+
+    /// The geometry a picture of the source is rendered under on a
+    /// frame the camera framed: the crop no crop stands for
+    /// ([`Geometry::effective_crop`] with `camera`) set in place of
+    /// none, so a renderer that takes a whole geometry and no camera
+    /// frame cuts the same picture. For the renderers alone, at the
+    /// size the picture is developed at; never an edit's to keep, since
+    /// it would turn the default into a crop the user did not set. The
+    /// geometry as it is where it stores a crop, and where the camera
+    /// framed nothing.
+    pub fn with_camera_frame(&self, w: f32, h: f32, camera: Option<Crop>) -> Geometry {
+        let mut g = self.clone();
+        if self.crop.is_none() && camera.is_some() && w > 0.0 && h > 0.0 {
+            g.crop = Some(self.effective_crop(w, h, camera));
+        }
+        g
+    }
+
+    /// The camera's frame (fractions of the source) on the leveled
+    /// plane, through the quarter turns and the mirror alone, which
+    /// are exact.
+    fn camera_on_plane(&self, camera: Crop, w: f32, h: f32) -> Crop {
+        let plain = Geometry {
+            turns: self.turns,
+            flip: self.flip,
+            ..Geometry::default()
+        };
         let (pw, ph) = self.plane_size(w, h);
-        let c = self.effective_crop(w, h);
+        let a = plain.to_plane((camera.x * w, camera.y * h), w, h);
+        let b = plain.to_plane(((camera.x + camera.w) * w, (camera.y + camera.h) * h), w, h);
+        Crop {
+            x: a.0.min(b.0) / pw,
+            y: a.1.min(b.1) / ph,
+            w: (a.0 - b.0).abs() / pw,
+            h: (a.1 - b.1).abs() / ph,
+        }
+    }
+
+    /// The crop no crop stands for on a frame the camera framed: the
+    /// camera's frame on the plane, or, where an angle or a keystone
+    /// leaves that off the source, the largest of its shape about its
+    /// center, as a crop of that shape is fitted. `None` where a crop
+    /// is stored, where the aspect frames the picture, and where the
+    /// camera framed nothing.
+    fn camera_crop(&self, w: f32, h: f32, camera: Option<Crop>) -> Option<Crop> {
+        if self.crop.is_some() || self.frames_by_aspect() || w <= 0.0 || h <= 0.0 {
+            return None;
+        }
+        let c = self.camera_on_plane(camera?, w, h);
+        if self.fits(&c, w, h) {
+            return Some(c);
+        }
+        let (pw, ph) = self.plane_size(w, h);
+        Some(self.largest_fit(c.center(), c.w * pw / (c.h * ph).max(1e-6), w, h))
+    }
+
+    /// The picture's own shape on the plane, in pixels: the camera's
+    /// frame's on a frame the camera framed, else the plane's. What
+    /// Original holds and what a ratio picked takes its way up from.
+    pub fn own_shape(&self, w: f32, h: f32, camera: Option<Crop>) -> (f32, f32) {
+        let (pw, ph) = self.plane_size(w, h);
+        match camera.filter(|_| w > 0.0 && h > 0.0) {
+            Some(c) => {
+                let c = self.camera_on_plane(c, w, h);
+                (c.w * pw, c.h * ph)
+            }
+            None => (pw, ph),
+        }
+    }
+
+    /// Width over height the crop is held to, none when free: the
+    /// aspect's, Original the picture's own shape
+    /// ([`Geometry::own_shape`]), so on a frame the camera framed at
+    /// 3:2 Original is 3:2, and the whole sensor is Free or 4:3 away.
+    pub fn ratio(&self, w: f32, h: f32, camera: Option<Crop>) -> Option<f32> {
+        let (ow, oh) = self.own_shape(w, h, camera);
+        self.aspect.ratio(ow, oh, self.portrait)
+    }
+
+    /// What the export writes and the viewport shows: the crop in
+    /// source pixels of the leveled plane, `camera` as
+    /// [`Geometry::effective_crop`] takes it.
+    pub fn frame(&self, w: f32, h: f32, camera: Option<Crop>) -> Frame {
+        let (pw, ph) = self.plane_size(w, h);
+        let c = self.effective_crop(w, h, camera);
         Frame {
             origin: (c.x * pw, c.y * ph),
             size: ((c.w * pw).round().max(1.0), (c.h * ph).round().max(1.0)),
@@ -1293,8 +1444,8 @@ mod tests {
     #[test]
     fn the_whole_frame_is_the_identity() {
         let g = Geometry::default();
-        assert!(g.is_identity_on(W, H));
-        let f = g.frame(W, H);
+        assert!(g.is_identity_on(W, H, None));
+        let f = g.frame(W, H, None);
         assert_eq!(f.origin, (0.0, 0.0));
         assert_eq!(f.size, (W, H));
         assert_eq!(g.to_source((123.0, 45.0), W, H), (123.0, 45.0));
@@ -1470,7 +1621,7 @@ mod tests {
         assert_eq!(g.to_source((0.0, 0.0), W, H), (W, 0.0));
         assert_eq!(g.to_source((H, W), W, H), (0.0, H));
         assert_eq!(g.to_plane((W, 0.0), W, H), (0.0, 0.0));
-        assert_eq!(g.frame(W, H).size, (H, W));
+        assert_eq!(g.frame(W, H, None).size, (H, W));
         assert_eq!(g.bounds(W, H).size, (H, W));
         // A pixel center lands on a pixel center.
         assert_eq!(g.to_source((10.5, 20.5), W, H), (W - 20.5, 10.5));
@@ -1482,7 +1633,7 @@ mod tests {
         assert_eq!(m.to_source((0.0, 0.0), W, H), (W, 0.0));
         assert_eq!(m.to_source((10.5, 20.5), W, H), (W - 10.5, 20.5));
         assert_eq!(m.to_plane((W - 10.5, 20.5), W, H), (10.5, 20.5));
-        assert!(!m.is_identity_on(W, H) && !m.resamples());
+        assert!(!m.is_identity_on(W, H, None) && !m.resamples());
         // Four turns are none; a turn and its undoing are none.
         let c = Crop {
             x: 0.6,
@@ -1597,10 +1748,10 @@ mod tests {
         assert!((Geometry::default().leveled_by(-88.0) + 2.0).abs() < 1e-6);
         // The frame without a crop is the largest fit, inside the source
         // and smaller than it, keeping the source's shape.
-        let f = g.frame(W, H);
+        let f = g.frame(W, H, None);
         assert!(f.size.0 < W && f.size.1 < H);
         assert!((f.size.0 / f.size.1 - W / H).abs() < 1e-2);
-        let c = g.effective_crop(W, H);
+        let c = g.effective_crop(W, H, None);
         assert!(g.fits(&c, W, H));
         let bigger = Crop { w: c.w * 1.02, ..c };
         assert!(!g.fits(&bigger, W, H));
@@ -1619,9 +1770,15 @@ mod tests {
             ..Default::default()
         };
         assert!(three_two.frames_by_aspect());
-        assert!(three_two.is_identity_on(W, H), "3:2 over a 3:2 source");
-        assert!(!three_two.is_identity_on(4000.0, 3000.0), "3:2 over 4:3");
-        assert_eq!(three_two.frame(4000.0, 3000.0).size, (4000.0, 2667.0));
+        assert!(
+            three_two.is_identity_on(W, H, None),
+            "3:2 over a 3:2 source"
+        );
+        assert!(
+            !three_two.is_identity_on(4000.0, 3000.0, None),
+            "3:2 over 4:3"
+        );
+        assert_eq!(three_two.frame(4000.0, 3000.0, None).size, (4000.0, 2667.0));
         let original = Geometry {
             aspect: Aspect::Original,
             ..Default::default()
@@ -1630,22 +1787,24 @@ mod tests {
             !original.frames_by_aspect(),
             "the whole plane, as it stands"
         );
-        assert!(original.is_identity_on(W, H) && original.is_identity_on(4000.0, 3000.0));
+        assert!(
+            original.is_identity_on(W, H, None) && original.is_identity_on(4000.0, 3000.0, None)
+        );
         let stood = Geometry {
             portrait: true,
             ..original
         };
         assert!(stood.frames_by_aspect());
         assert!(
-            !stood.is_identity_on(W, H),
+            !stood.is_identity_on(W, H, None),
             "the frame's shape stood on end"
         );
         // A crop stored is never the identity, as before.
         let cropped = Geometry {
-            crop: Some(three_two.effective_crop(W, H)),
+            crop: Some(three_two.effective_crop(W, H, None)),
             ..three_two
         };
-        assert!(!cropped.frames_by_aspect() && !cropped.is_identity_on(W, H));
+        assert!(!cropped.frames_by_aspect() && !cropped.is_identity_on(W, H, None));
     }
 
     #[test]
@@ -1657,7 +1816,7 @@ mod tests {
             vertical: 20.0,
             ..Default::default()
         };
-        assert!(g.keystoned() && g.resamples() && !g.is_identity_on(W, H));
+        assert!(g.keystoned() && g.resamples() && !g.is_identity_on(W, H, None));
         let top = g.to_source((0.0, 0.0), W, H);
         let bottom = g.to_source((0.0, H), W, H);
         let t = 20.0f32.to_radians().tan();
@@ -1710,9 +1869,9 @@ mod tests {
             );
         }
         // The frame without a crop fits and is smaller than the plane.
-        let f = g.frame(W, H);
+        let f = g.frame(W, H, None);
         assert!(f.size.0 < H && f.size.1 < W);
-        assert!(g.fits(&g.effective_crop(W, H), W, H));
+        assert!(g.fits(&g.effective_crop(W, H, None), W, H));
         // Beyond the horizon nothing fits: the bisection is not fooled
         // by a corner mirrored back into the source.
         let far = Geometry {
@@ -2020,7 +2179,7 @@ mod tests {
             aspect: Aspect::Original,
             ..Default::default()
         };
-        let whole = upright.effective_crop(H, W);
+        let whole = upright.effective_crop(H, W, None);
         assert!(
             (whole.w - 1.0).abs() < 1e-3 && (whole.h - 1.0).abs() < 1e-3,
             "{whole:?}"
@@ -2066,7 +2225,7 @@ mod tests {
             h: 0.5,
         });
         // A frame shot on end, nothing held: 3:2 picked is tall.
-        let upright = Geometry::default().with_aspect(three_two, H, W);
+        let upright = Geometry::default().with_aspect(three_two, H, W, None);
         assert!(upright.portrait && upright.aspect == three_two);
         let (pw, ph) = upright.plane_size(H, W);
         assert!(upright.aspect.ratio(pw, ph, upright.portrait).unwrap() < 1.0);
@@ -2078,13 +2237,13 @@ mod tests {
             crop,
             ..Default::default()
         };
-        assert!(!original.with_aspect(three_two, W, H).portrait);
+        assert!(!original.with_aspect(three_two, W, H, None).portrait);
         let turned = Geometry {
             turns: 1,
             ..Default::default()
         };
-        assert!(!turned.with_aspect(three_two, H, W).portrait);
-        assert!(turned.with_aspect(three_two, W, H).portrait);
+        assert!(!turned.with_aspect(three_two, H, W, None).portrait);
+        assert!(turned.with_aspect(three_two, W, H, None).portrait);
         // One ratio over another keeps the flag, whichever way it was
         // turned by hand; with no crop to keep the way up of, the
         // plane's is taken again.
@@ -2094,26 +2253,26 @@ mod tests {
             crop,
             ..Default::default()
         };
-        assert!(!held.with_aspect(four_three, H, W).portrait);
+        assert!(!held.with_aspect(four_three, H, W, None).portrait);
         let flipped = Geometry {
             portrait: true,
             ..held.clone()
         };
-        assert!(flipped.with_aspect(four_three, W, H).portrait);
+        assert!(flipped.with_aspect(four_three, W, H, None).portrait);
         let uncropped = Geometry {
             crop: None,
             ..held.clone()
         };
-        assert!(uncropped.with_aspect(four_three, H, W).portrait);
+        assert!(uncropped.with_aspect(four_three, H, W, None).portrait);
         // The same aspect again is no pick at all.
-        assert_eq!(flipped.with_aspect(three_two, W, H), flipped);
+        assert_eq!(flipped.with_aspect(three_two, W, H, None), flipped);
         // "Original" is the frame's own shape, flag off; free leaves it.
-        assert!(!flipped.with_aspect(Aspect::Original, H, W).portrait);
-        assert!(flipped.with_aspect(Aspect::Free, H, W).portrait);
+        assert!(!flipped.with_aspect(Aspect::Original, H, W, None).portrait);
+        assert!(flipped.with_aspect(Aspect::Free, H, W, None).portrait);
         // A source of no size says nothing about which way up.
         assert!(
             !Geometry::default()
-                .with_aspect(three_two, 0.0, 0.0)
+                .with_aspect(three_two, 0.0, 0.0, None)
                 .portrait
         );
     }
@@ -2227,7 +2386,7 @@ mod tests {
         // without a floor, and `frame` would export a sliver.
         let c = g.drawn((0.3, 0.3), (0.3, 0.32), None, W, H).unwrap();
         assert!(c.w > 0.0, "{c:?}");
-        let f = g.frame(W, H);
+        let f = g.frame(W, H, None);
         assert!(f.size.0 >= 1.0, "{f:?}");
         // Too small a reach either way: floored on both axes, not a
         // sliver the other way either.
@@ -2498,5 +2657,269 @@ mod tests {
         );
         assert!((c.w * W - c.h * H).abs() < 1.0, "{c:?}");
         assert!((c.x + c.w - 1.0).abs() < 1e-3, "{c:?}");
+    }
+
+    /// A 4:3 develop, 5184 by 3888, and the camera's 3:2 frame of it:
+    /// the middle band, 216 rows off the top and the bottom.
+    const FW: f32 = 5184.0;
+    const FH: f32 = 3888.0;
+    const BAND: Crop = Crop {
+        x: 0.0,
+        y: 216.0 / 3888.0,
+        w: 1.0,
+        h: 3456.0 / 3888.0,
+    };
+
+    fn close(a: (f32, f32), b: (f32, f32)) -> bool {
+        (a.0 - b.0).abs() < 0.51 && (a.1 - b.1).abs() < 0.51
+    }
+
+    /// No crop on a frame the camera framed at 3:2 is the camera's
+    /// frame: the band, 5184 by 3456, centered. A crop set to the whole
+    /// sensor is the whole sensor, and a frame the camera framed nothing
+    /// of is as it was.
+    #[test]
+    fn no_crop_is_the_cameras_frame_and_a_whole_crop_is_the_sensor() {
+        let g = Geometry::default();
+        let f = g.frame(FW, FH, Some(BAND));
+        assert_eq!(f.size, (5184.0, 3456.0));
+        assert!(close(f.origin, (0.0, 216.0)), "{f:?}");
+        assert!(!g.is_identity_on(FW, FH, Some(BAND)));
+        assert!(g.is_identity_on(FW, FH, None), "no camera frame");
+        assert_eq!(g.frame(FW, FH, None).size, (FW, FH));
+        let whole = Geometry {
+            crop: Some(Crop {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: 1.0,
+            }),
+            ..Geometry::default()
+        };
+        assert_eq!(whole.frame(FW, FH, Some(BAND)).size, (FW, FH));
+        assert_eq!(
+            whole.effective_crop(FW, FH, Some(BAND)),
+            whole.crop.unwrap()
+        );
+        // A crop of its own wins whatever the camera framed.
+        let set = Geometry {
+            crop: Some(Crop {
+                x: 0.1,
+                y: 0.1,
+                w: 0.5,
+                h: 0.5,
+            }),
+            ..Geometry::default()
+        };
+        assert_eq!(set.frame(FW, FH, Some(BAND)), set.frame(FW, FH, None));
+        // A ratio over no crop is the user's framing (§666): fitted
+        // about the camera frame's center over the whole sensor, as
+        // picking that ratio in Crop fits it.
+        let ratio = Geometry {
+            aspect: Aspect::Ratio { w: 1.0, h: 1.0 },
+            ..Geometry::default()
+        };
+        assert_eq!(ratio.frame(FW, FH, Some(BAND)).size, (3888.0, 3888.0));
+    }
+
+    /// The camera's frame turns with the picture: the edit's quarter
+    /// turns and mirror stand the band on end in the plane, and the
+    /// source on end (a frame shot on end, the tag turning the develop)
+    /// takes the frame on end with it.
+    #[test]
+    fn the_cameras_frame_turns_with_the_picture() {
+        for turns in 0..4u8 {
+            for flip in [false, true] {
+                let g = Geometry {
+                    turns,
+                    flip,
+                    ..Geometry::default()
+                };
+                let f = g.frame(FW, FH, Some(BAND));
+                let want = if turns % 2 == 1 {
+                    (3456.0, 5184.0)
+                } else {
+                    (5184.0, 3456.0)
+                };
+                assert_eq!(f.size, want, "turns {turns} flip {flip}");
+                let o = if turns % 2 == 1 {
+                    (216.0, 0.0)
+                } else {
+                    (0.0, 216.0)
+                };
+                assert!(close(f.origin, o), "turns {turns} flip {flip}: {f:?}");
+            }
+        }
+        // On end: the develop is 3888 by 5184 and the band runs down it.
+        let down = Crop {
+            x: BAND.y,
+            y: 0.0,
+            w: BAND.h,
+            h: 1.0,
+        };
+        let f = Geometry::default().frame(FH, FW, Some(down));
+        assert_eq!(f.size, (3456.0, 5184.0));
+        assert!(close(f.origin, (216.0, 0.0)), "{f:?}");
+    }
+
+    /// Straightened, the camera's frame is no longer on the source: the
+    /// largest of its 3:2 about its center that is, as a crop of that
+    /// shape is fitted, never larger than the frame.
+    #[test]
+    fn an_angle_fits_the_cameras_shape_inside_the_source() {
+        let g = Geometry {
+            angle: 3.0,
+            ..Geometry::default()
+        };
+        let c = g.effective_crop(FW, FH, Some(BAND));
+        assert!(g.fits(&c, FW, FH), "{c:?}");
+        let ratio = c.w * FW / (c.h * FH);
+        assert!((ratio - 1.5).abs() < 1e-3, "{ratio}");
+        assert!(c.w < 1.0 && c.h < BAND.h, "{c:?}");
+        assert!(close(c.center(), BAND.center()));
+    }
+
+    /// Original on a frame the camera framed holds the camera's shape:
+    /// a drag holds 3:2 and the Portrait switch stands it on end; a
+    /// ratio picked there takes the camera frame's way up.
+    #[test]
+    fn original_holds_the_cameras_shape() {
+        let original = Geometry {
+            aspect: Aspect::Original,
+            ..Geometry::default()
+        };
+        assert!((original.ratio(FW, FH, Some(BAND)).unwrap() - 1.5).abs() < 1e-5);
+        assert_eq!(original.ratio(FW, FH, None), Some(FW / FH));
+        assert_eq!(original.frame(FW, FH, Some(BAND)).size, (5184.0, 3456.0));
+        let stood = Geometry {
+            portrait: true,
+            ..original.clone()
+        };
+        let f = stood.frame(FW, FH, Some(BAND));
+        assert!((f.size.0 / f.size.1 - 2.0 / 3.0).abs() < 1e-3, "{f:?}");
+        assert_eq!(f.size.1, FH);
+        // A 3:4 frame of the 4:3 sensor stands on end: a 3:2 picked
+        // over it is tall.
+        let tall = Crop {
+            x: (1.0 - 0.5625) / 2.0,
+            y: 0.0,
+            w: 0.5625,
+            h: 1.0,
+        };
+        let three_two = Aspect::Ratio { w: 3.0, h: 2.0 };
+        assert!(
+            Geometry::default()
+                .with_aspect(three_two, FW, FH, Some(tall))
+                .portrait
+        );
+        assert!(
+            !Geometry::default()
+                .with_aspect(three_two, FW, FH, None)
+                .portrait
+        );
+    }
+
+    /// Original turned by the Portrait switch over no crop takes the
+    /// camera frame's shape on end.
+    #[test]
+    fn a_portrait_original_over_no_crop_stands_the_cameras_shape_on_end() {
+        // §666's Portrait switch over Original turns the picture's own
+        // shape: on a frame the camera framed at 3:2 that is 2:3 now,
+        // where it was the sensor's 3:4.
+        let stood = Geometry {
+            aspect: Aspect::Original,
+            portrait: true,
+            ..Geometry::default()
+        };
+        assert_eq!(stood.frame(FW, FH, None).size, (2916.0, 3888.0));
+        assert_eq!(stood.frame(FW, FH, Some(BAND)).size, (2592.0, 3888.0));
+        assert!(stood.framed_by_camera(Some(BAND)));
+    }
+
+    /// A crop of the user's that no longer fits is refitted as it was
+    /// before the camera's frame was read, the frame no part of it.
+    #[test]
+    fn a_stored_crop_refitted_takes_no_camera_frame() {
+        let g = Geometry {
+            aspect: Aspect::Original,
+            angle: 5.0,
+            crop: Some(Crop {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: 1.0,
+            }),
+            ..Geometry::default()
+        };
+        assert!(!g.fits(&g.crop.unwrap(), FW, FH));
+        assert_eq!(
+            g.effective_crop(FW, FH, Some(BAND)),
+            g.effective_crop(FW, FH, None)
+        );
+        let f = g.frame(FW, FH, Some(BAND));
+        assert_eq!(f, g.frame(FW, FH, None));
+        assert!((f.size.0 / f.size.1 - FW / FH).abs() < 1e-3, "{f:?}");
+        assert!(!g.framed_by_camera(Some(BAND)));
+    }
+
+    /// A ratio over no crop on a frame the camera framed about the
+    /// picture's center fits exactly as with no camera frame, to the
+    /// bit, whatever the turn, the angle, the ratio, and the Portrait
+    /// switch; so its key stays the edit's own. About a frame off
+    /// center it follows the frame.
+    #[test]
+    fn a_ratio_over_no_crop_about_a_centered_frame_is_as_without_one() {
+        let bits = |c: Crop| [c.x, c.y, c.w, c.h].map(f32::to_bits);
+        for turns in 0..4u8 {
+            for angle in [0.0, 2.5] {
+                for (w, h) in [(16.0, 9.0), (4.0, 5.0), (1.0, 1.0), (3.0, 2.0)] {
+                    for portrait in [false, true] {
+                        let g = Geometry {
+                            turns,
+                            angle,
+                            aspect: Aspect::Ratio { w, h },
+                            portrait,
+                            ..Geometry::default()
+                        };
+                        assert_eq!(
+                            bits(g.effective_crop(FW, FH, Some(BAND))),
+                            bits(g.effective_crop(FW, FH, None)),
+                            "turns {turns} angle {angle} {w}:{h} portrait {portrait}"
+                        );
+                        assert!(!g.framed_by_camera(Some(BAND)));
+                    }
+                }
+            }
+        }
+        let off = Crop { y: 0.0, ..BAND };
+        let g = Geometry {
+            aspect: Aspect::Ratio { w: 16.0, h: 9.0 },
+            ..Geometry::default()
+        };
+        assert_ne!(
+            g.effective_crop(FW, FH, Some(off)),
+            g.effective_crop(FW, FH, None)
+        );
+        assert!(g.framed_by_camera(Some(off)));
+    }
+
+    /// For a renderer that takes a whole geometry: the camera's frame
+    /// set as the crop where none is, the same frame; a crop of the
+    /// user's, and a frame the camera framed nothing of, left alone.
+    #[test]
+    fn a_geometry_resolved_for_a_renderer_frames_alike() {
+        let g = Geometry {
+            turns: 1,
+            ..Geometry::default()
+        };
+        let resolved = g.with_camera_frame(FW, FH, Some(BAND));
+        assert!(resolved.crop.is_some());
+        assert_eq!(resolved.frame(FW, FH, None), g.frame(FW, FH, Some(BAND)));
+        assert_eq!(g.with_camera_frame(FW, FH, None), g);
+        let set = Geometry {
+            crop: Some(BAND),
+            ..Geometry::default()
+        };
+        assert_eq!(set.with_camera_frame(FW, FH, Some(BAND)), set);
     }
 }

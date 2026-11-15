@@ -28,7 +28,7 @@ use greycard_core::develop::sharpen::SharpenOptions;
 use greycard_core::develop::{DemosaicMethod, DevelopSettings, HighlightMode};
 use greycard_core::opcodes::Warp;
 use greycard_core::raw::{CfaPattern, Orientation, RawFrame, SensorLayout, Shot};
-use greycard_edit::geometry::Geometry;
+use greycard_edit::geometry::{Crop, Geometry};
 use greycard_edit::lens::FileCorrects;
 use greycard_edit::retouch::Retouch;
 use greycard_edit::{DetailWants, Edit};
@@ -297,6 +297,23 @@ impl Facts {
         }
     }
 
+    /// The camera's frame on the develop as it stands, the tag and the
+    /// frame's turns on it: what an edit with no crop is framed to
+    /// (`Geometry::effective_crop`). None for a picture, for a raw
+    /// whose camera framed all of what it keeps, and for a merge of
+    /// ours, which is no one frame's and opens whole (its DNG carries
+    /// no frame), or any raw whose crop is not the area the frame is
+    /// of.
+    pub fn camera(&self) -> Option<Crop> {
+        let InputKind::Raw { crop, merged, .. } = &self.input else {
+            return None;
+        };
+        let o = self.orientation()?;
+        let frame = self.identity.shot.camera_frame?;
+        (!merged && (frame.area.width, frame.area.height) == *crop)
+            .then(|| Crop::of(frame.oriented(o)))
+    }
+
     /// The full develop's size as it stands, turned.
     pub fn full(&self) -> (usize, usize) {
         match &self.input {
@@ -330,7 +347,7 @@ impl Facts {
             _ => reduced::BIN,
         };
         let full = self.full();
-        let (w, h) = framed_size((full.0 as u32, full.1 as u32), geometry);
+        let (w, h) = framed_size((full.0 as u32, full.1 as u32), geometry, self.camera());
         let bin = reduced::bin_for_cell(cell, w as usize, h as usize);
         match &self.input {
             InputKind::Raw {
@@ -1374,12 +1391,13 @@ pub fn prompted(shape: &greycard_edit::mask::Shape) -> bool {
 }
 
 /// The size of a develop of `full` once `geometry` has framed it, as
-/// `geometry::apply` cuts it.
-pub fn framed_size(full: (u32, u32), geometry: &Geometry) -> (u32, u32) {
-    if geometry.is_identity_on(full.0 as f32, full.1 as f32) {
+/// `geometry::apply` cuts it, `camera` the camera's frame on it
+/// ([`Facts::camera`]).
+pub fn framed_size(full: (u32, u32), geometry: &Geometry, camera: Option<Crop>) -> (u32, u32) {
+    if geometry.is_identity_on(full.0 as f32, full.1 as f32, camera) {
         return full;
     }
-    let frame = geometry.frame(full.0 as f32, full.1 as f32);
+    let frame = geometry.frame(full.0 as f32, full.1 as f32, camera);
     (frame.size.0 as u32, frame.size.1 as u32)
 }
 

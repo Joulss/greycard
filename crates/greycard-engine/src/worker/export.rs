@@ -202,7 +202,8 @@ pub(super) fn walk_for_export(
     models.patient = true;
     models.short = None;
     let purpose = Purpose::Export(Box::new(settings.clone()));
-    let mut steps = stages(edit, &purpose, &input.facts(turn), lenses);
+    let facts = input.facts(turn);
+    let mut steps = stages(edit, &purpose, &facts, lenses);
     // Nothing is kept for a later walk: each kept point holds a picture
     // the size of the frame, and the stage after it would copy it
     // rather than change it. The patched picture alone stays when a
@@ -268,7 +269,8 @@ pub(super) fn walk_for_export(
     // and the sharpen's blend, which the viewport alone paints.
     walked.taps.masks = None;
     walked.sharpen_mask = None;
-    let finish = walked.finish_input();
+    let mut finish = walked.finish_input();
+    finish.camera = facts.camera();
     let Buf::Working(image) = walked.buf else {
         unreachable!("an export's walk ends at a picture in memory")
     };

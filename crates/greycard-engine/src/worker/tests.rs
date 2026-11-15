@@ -5103,6 +5103,7 @@ fn the_edits_pictures_are_refined() {
             kind: developed.kind,
             white: developed.white.clone(),
             detail: developed.detail.clone(),
+            camera: developed.camera,
         };
         (
             developed.guide.picture.is_some(),

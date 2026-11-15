@@ -481,6 +481,14 @@ impl Worker {
                                         },
                                     )
                                 })
+                                .map(|t| {
+                                    super::thumbs::cut_to_camera(
+                                        t,
+                                        &frame.path,
+                                        Some(&edited),
+                                        false,
+                                    )
+                                })
                         })
                 }))
                 .unwrap_or_else(|payload| {

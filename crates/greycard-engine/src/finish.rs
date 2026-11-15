@@ -24,6 +24,10 @@ pub struct FinishInput {
     pub white: Option<WhiteShift>,
     pub clip_level: f32,
     pub kind: Source,
+    /// The camera's frame on the picture (`stages::Facts::camera`),
+    /// which frames an edit with no crop; none where the camera framed
+    /// all of it, or where the caller frames the picture its own way.
+    pub camera: Option<greycard_edit::geometry::Crop>,
 }
 
 impl Walked {
@@ -44,6 +48,7 @@ impl Walked {
             white: self.meta.white_shift(),
             clip_level: self.meta.clip_level,
             kind: self.meta.source,
+            camera: None,
         }
     }
 }
@@ -52,16 +57,21 @@ impl Walked {
 /// `settings`, as an export is: the edit's geometry, then the render
 /// crate's finish, with the masks' bands taken through the same
 /// geometry when they are the picture's size. No border and no mark.
+/// An edit with no crop on a frame the camera framed is cut to the
+/// camera's frame (`input.camera`).
 pub fn render(
     image: &WorkingImage,
     edit: &Edit,
     input: &FinishInput,
     settings: &export::Settings,
 ) -> export::Rendered {
+    let (w, h) = (image.width as f32, image.height as f32);
+    let edit = &Edit {
+        geometry: edit.geometry.with_camera_frame(w, h, input.camera),
+        ..edit.clone()
+    };
     let framed;
-    let whole = edit
-        .geometry
-        .is_identity_on(image.width as f32, image.height as f32);
+    let whole = edit.geometry.is_identity_on(w, h, None);
     let picture: &WorkingImage = if whole {
         image
     } else {
@@ -141,6 +151,7 @@ mod tests {
             white: None,
             clip_level: f32::INFINITY,
             kind: Source::Display,
+            camera: None,
         }
     }
 
@@ -175,6 +186,46 @@ mod tests {
         }
     }
 
+    /// On a frame the camera framed at 3:2 of its 4:3 sensor, an edit
+    /// with no crop exports the camera's frame: the same file, to the
+    /// byte, as that frame stored as the crop, the vignette and the mask
+    /// placed alike. A crop set to the whole sensor exports all of it,
+    /// and a frame the camera framed nothing of is as it was.
+    #[test]
+    fn no_crop_on_a_frame_the_camera_framed_exports_its_frame() {
+        let (w, h) = (120, 90);
+        let image = ramp(w, h);
+        let settings = export::Settings::default();
+        let band = greycard_edit::geometry::Crop {
+            x: 0.0,
+            y: 5.0 / 90.0,
+            w: 1.0,
+            h: 80.0 / 90.0,
+        };
+        let framed = FinishInput {
+            camera: Some(band),
+            ..input(w, h)
+        };
+        let uncropped = placed();
+        let mut by_crop = uncropped.clone();
+        by_crop.geometry.crop = Some(band);
+        let a = render(&image, &uncropped, &framed, &settings);
+        let b = render(&image, &by_crop, &input(w, h), &settings);
+        assert_eq!((a.width, a.height), (120, 80), "3:2, not the whole 4:3");
+        assert!(pixels(&a) == pixels(&b), "placed alike");
+        let mut whole = uncropped.clone();
+        whole.geometry.crop = Some(greycard_edit::geometry::Crop {
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+        });
+        let c = render(&image, &whole, &framed, &settings);
+        assert_eq!((c.width, c.height), (120, 90), "the whole sensor");
+        let d = render(&image, &uncropped, &input(w, h), &settings);
+        assert_eq!((d.width, d.height), (120, 90), "no camera frame");
+    }
+
     /// An aspect over no crop (a sidecar 0.11.0 wrote on Crop and Done
     /// under Last used) exports the frame the viewport shows: the same
     /// file, to the byte, as the crop that aspect fits, stored, with the
@@ -190,7 +241,7 @@ mod tests {
             ..Default::default()
         };
         let mut by_crop = by_aspect.clone();
-        by_crop.geometry.crop = Some(by_aspect.geometry.effective_crop(w as f32, h as f32));
+        by_crop.geometry.crop = Some(by_aspect.geometry.effective_crop(w as f32, h as f32, None));
         let a = render(&image, &by_aspect, &input(w, h), &settings);
         let b = render(&image, &by_crop, &input(w, h), &settings);
         assert_eq!((a.width, a.height), (120, 80), "3:2, not the whole 4:3");

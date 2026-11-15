@@ -355,6 +355,170 @@ pub struct Rect {
     pub height: usize,
 }
 
+/// The camera's frame: the part of the picture the photographer framed
+/// in camera (an aspect ratio chosen on the body) when the raw keeps
+/// more of the sensor than that, as Olympus and OM System bodies keep
+/// the whole 4:3 sensor. `area` is the sensor's valid area, the region
+/// a develop is cut to (the frame's crop), and `frame` the part of it
+/// framed, both in sensor samples; `orientation` the file's own tag,
+/// which the camera's preview is shown turned by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CameraFrame {
+    pub area: Rect,
+    pub frame: Rect,
+    pub orientation: Orientation,
+}
+
+impl CameraFrame {
+    /// The frame as fractions of the area, `[x, y, w, h]`: of the
+    /// picture a develop makes before the orientation turns it, and of
+    /// the camera's preview, which shows the same area.
+    pub fn fractions(&self) -> [f32; 4] {
+        let (aw, ah) = (self.area.width as f32, self.area.height as f32);
+        [
+            (self.frame.x as f32 - self.area.x as f32) / aw,
+            (self.frame.y as f32 - self.area.y as f32) / ah,
+            self.frame.width as f32 / aw,
+            self.frame.height as f32 / ah,
+        ]
+    }
+
+    /// [`CameraFrame::fractions`] on the picture as `orientation`
+    /// shows it, `orient`'s turn taken through the rectangle.
+    pub fn oriented(&self, orientation: Orientation) -> [f32; 4] {
+        let [x, y, w, h] = self.fractions();
+        let at = |u: f32, v: f32| match orientation {
+            Orientation::Normal => (u, v),
+            Orientation::FlipHorizontal => (1.0 - u, v),
+            Orientation::Rotate180 => (1.0 - u, 1.0 - v),
+            Orientation::FlipVertical => (u, 1.0 - v),
+            Orientation::Transpose => (v, u),
+            Orientation::Rotate90 => (1.0 - v, u),
+            Orientation::Transverse => (1.0 - v, 1.0 - u),
+            Orientation::Rotate270 => (v, 1.0 - u),
+        };
+        let (a, b) = (at(x, y), at(x + w, y + h));
+        let (x0, y0) = (a.0.min(b.0), a.1.min(b.1));
+        [x0, y0, a.0.max(b.0) - x0, a.1.max(b.1) - y0]
+    }
+
+    /// [`CameraFrame::fractions`] on the camera's preview, which the
+    /// file's own tag turns: the cut of the camera's picture as the
+    /// thumbnails, the loupe and the stand-in show it.
+    pub fn shown(&self) -> [f32; 4] {
+        self.oriented(self.orientation)
+    }
+
+    /// Whether a develop of `size` (the decoder's crop, before the tag
+    /// turns it, `None` where it will not say) may be of this frame's
+    /// area, as the decode requires before it takes the frame: a frame
+    /// read from the note alone is refused where the decoder says
+    /// another size.
+    pub fn develops_at(&self, size: Option<(u32, u32)>) -> bool {
+        size.is_none_or(|s| s == (self.area.width as u32, self.area.height as u32))
+    }
+
+    /// The whole area's size as the tag turns it: what the develop of
+    /// the frame is, before an edit's geometry.
+    pub fn shown_area(&self) -> (u32, u32) {
+        let (w, h) = (self.area.width as u32, self.area.height as u32);
+        match self.orientation {
+            Orientation::Transpose
+            | Orientation::Rotate90
+            | Orientation::Transverse
+            | Orientation::Rotate270 => (h, w),
+            _ => (w, h),
+        }
+    }
+
+    /// Whether a picture `w` by `h`, as the tag turns it, is of the
+    /// whole area: its shape the area's, within a hundredth. A camera
+    /// JPEG beside the raw, or a preview a body embeds already cut to
+    /// its frame, is not.
+    pub fn shows_whole_area(&self, w: u32, h: u32) -> bool {
+        let (aw, ah) = self.shown_area();
+        let (aw, ah) = (f64::from(aw), f64::from(ah));
+        w > 0
+            && h > 0
+            && ah > 0.0
+            && ((f64::from(w) / f64::from(h)) / (aw / ah) - 1.0).abs() <= 0.01
+    }
+
+    /// The camera's picture as the tag turns it, `w` by `h` with
+    /// `channels` bytes a pixel, cut to the frame ([`CameraFrame::shown`]),
+    /// each edge on the nearest whole pixel: what the thumbnails, the
+    /// loupe and the stand-in show of a frame with no edit. A picture
+    /// not of the whole area ([`CameraFrame::shows_whole_area`]) is the
+    /// camera's cut already, and comes back as it is.
+    pub fn cut_shown(&self, w: u32, h: u32, pixels: &[u8], channels: usize) -> (u32, u32, Vec<u8>) {
+        if !self.shows_whole_area(w, h) {
+            return (w, h, pixels.to_vec());
+        }
+        let [x, y, fw, fh] = self.shown();
+        let edge = |v: f32, n: u32| ((v * n as f32).round().max(0.0) as u32).min(n);
+        let (x0, x1) = (edge(x, w), edge(x + fw, w).max(edge(x, w) + 1).min(w));
+        let (y0, y1) = (edge(y, h), edge(y + fh, h).max(edge(y, h) + 1).min(h));
+        if x1 <= x0 || y1 <= y0 || pixels.len() < (w * h) as usize * channels {
+            return (w, h, pixels.to_vec());
+        }
+        let row = w as usize * channels;
+        let mut out = Vec::with_capacity(((x1 - x0) * (y1 - y0)) as usize * channels);
+        for yy in y0..y1 {
+            let at = yy as usize * row;
+            out.extend_from_slice(
+                &pixels[at + x0 as usize * channels..at + x1 as usize * channels],
+            );
+        }
+        (x1 - x0, y1 - y0, out)
+    }
+
+    /// The fact as the index keeps it: the area's and the frame's
+    /// numbers and the tag's, space-separated.
+    pub fn to_text(&self) -> String {
+        let (a, f) = (self.area, self.frame);
+        format!(
+            "{} {} {} {} {} {} {} {} {}",
+            a.x,
+            a.y,
+            a.width,
+            a.height,
+            f.x,
+            f.y,
+            f.width,
+            f.height,
+            self.orientation.to_exif()
+        )
+    }
+
+    /// [`CameraFrame::to_text`] read back; `None` for text that is not
+    /// nine numbers, a frame of nothing, or a tag past the eight.
+    pub fn from_text(text: &str) -> Option<Self> {
+        let n: Vec<usize> = text
+            .split_whitespace()
+            .map(|t| t.parse().ok())
+            .collect::<Option<_>>()?;
+        let [ax, ay, aw, ah, fx, fy, fw, fh, o] = n[..] else {
+            return None;
+        };
+        let orientation = Orientation::from_exif(u16::try_from(o).ok()?)?;
+        (aw > 0 && ah > 0 && fw > 0 && fh > 0).then_some(CameraFrame {
+            area: Rect {
+                x: ax,
+                y: ay,
+                width: aw,
+                height: ah,
+            },
+            frame: Rect {
+                x: fx,
+                y: fy,
+                width: fw,
+                height: fh,
+            },
+            orientation,
+        })
+    }
+}
+
 /// Orientation the image should be shown in, from the file's metadata.
 /// Variants follow the EXIF `Orientation` tag in tag order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -581,6 +745,9 @@ pub struct Shot {
     pub iso: Option<u32>,
     /// The shutter, in seconds.
     pub exposure_time: Option<f32>,
+    /// The part of the picture the camera framed, when it framed less
+    /// than the raw keeps (an aspect ratio chosen on the body).
+    pub camera_frame: Option<CameraFrame>,
 }
 
 /// What the frame was shot at, in words, for a display to show: the
@@ -902,6 +1069,7 @@ mod tests {
             exposure_time: Some(1.0 / 250.0),
             iso: Some(400),
             focus_distance: Some(2.0),
+            camera_frame: None,
         };
         let s = shot.summary("Canon", "Canon EOS R5");
         assert_eq!(s.camera, "Canon EOS R5 \u{b7} RF50mm F1.2 L USM");
@@ -1086,5 +1254,131 @@ mod tests {
         let ignored = frame_with(border).white_check();
         assert_eq!(ignored.above, 0);
         assert_eq!(ignored.brightest, 500.0);
+    }
+
+    /// The 3:2 frame of a 4:3 area, as an Olympus body writes it.
+    fn three_two(orientation: Orientation) -> CameraFrame {
+        CameraFrame {
+            area: Rect {
+                x: 8,
+                y: 8,
+                width: 5184,
+                height: 3888,
+            },
+            frame: Rect {
+                x: 8,
+                y: 224,
+                width: 5184,
+                height: 3456,
+            },
+            orientation,
+        }
+    }
+
+    fn near(a: [f32; 4], b: [f32; 4]) -> bool {
+        a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-6)
+    }
+
+    /// The frame as fractions of the area, and on the picture each tag
+    /// turns it to: a band across a landscape picture, down a portrait
+    /// one, the way `develop::orient` moves its pixels.
+    #[test]
+    fn a_camera_frame_turns_with_the_picture() {
+        let (top, height) = (216.0 / 3888.0, 3456.0 / 3888.0);
+        let band = [0.0, top, 1.0, height];
+        let down = [top, 0.0, height, 1.0];
+        let f = three_two(Orientation::Normal);
+        assert!(near(f.fractions(), band));
+        for o in [
+            Orientation::Normal,
+            Orientation::FlipHorizontal,
+            Orientation::Rotate180,
+            Orientation::FlipVertical,
+        ] {
+            assert!(near(f.oriented(o), band), "{o:?}");
+        }
+        for o in [
+            Orientation::Transpose,
+            Orientation::Rotate90,
+            Orientation::Transverse,
+            Orientation::Rotate270,
+        ] {
+            assert!(near(f.oriented(o), down), "{o:?}");
+        }
+        // A frame off the center lands where `orient` puts its pixels:
+        // a pixel at the top left, under a clockwise turn, at the top
+        // right.
+        let corner = CameraFrame {
+            frame: Rect {
+                x: 8,
+                y: 8,
+                width: 2592,
+                height: 1944,
+            },
+            ..f
+        };
+        assert!(near(
+            corner.oriented(Orientation::Rotate90),
+            [0.5, 0.0, 0.5, 0.5]
+        ));
+        assert!(near(
+            corner.oriented(Orientation::Rotate270),
+            [0.0, 0.5, 0.5, 0.5]
+        ));
+        // The camera's preview is shown as the tag turns it.
+        assert!(near(three_two(Orientation::Rotate270).shown(), down));
+    }
+
+    /// The index's text reads back the fact it was written from, and
+    /// text that is not one reads as none.
+    #[test]
+    fn a_camera_frame_reads_back_from_its_text() {
+        let f = three_two(Orientation::Rotate90);
+        assert_eq!(f.to_text(), "8 8 5184 3888 8 224 5184 3456 6");
+        assert_eq!(CameraFrame::from_text(&f.to_text()), Some(f));
+        for bad in [
+            "",
+            "8 8 5184 3888 8 224 5184 3456",
+            "8 8 0 3888 8 224 5184 3456 1",
+            "a b c d e f g h i",
+            "8 8 5184 3888 8 224 5184 3456 9",
+        ] {
+            assert_eq!(CameraFrame::from_text(bad), None, "{bad:?}");
+        }
+    }
+
+    /// The camera's picture cut to the frame: a 3:2 band of a 4:3
+    /// picture, its rows the band's, on whole pixels.
+    #[test]
+    fn the_camera_picture_is_cut_to_the_frame() {
+        let (w, h) = (40u32, 30u32);
+        let rgb: Vec<u8> = (0..h)
+            .flat_map(|y| (0..w).flat_map(move |x| [x as u8, y as u8, 7]))
+            .collect();
+        let (cw, ch, cut) = three_two(Orientation::Normal).cut_shown(w, h, &rgb, 3);
+        assert_eq!((cw, ch), (40, 26));
+        assert_eq!(cut.len(), (cw * ch * 3) as usize);
+        // Rows 2 to 27 of 30: the band's edges, 1.67 and 28.33, on
+        // the nearest rows.
+        assert_eq!(&cut[..3], &[0, 2, 7]);
+        assert_eq!(&cut[cut.len() - 3..], &[39, 27, 7]);
+        let (pw, ph, _) = three_two(Orientation::Rotate90).cut_shown(h, w, &rgb, 3);
+        assert_eq!((pw, ph), (26, 40), "on end");
+        // A picture the camera cut already (its JPEG beside the raw, or
+        // a cut preview) is not cut again: 3:2, landscape and on end.
+        let shot: Vec<u8> = vec![7; 45 * 30 * 3];
+        let (sw, sh, same) = three_two(Orientation::Normal).cut_shown(45, 30, &shot, 3);
+        assert_eq!((sw, sh, same.len()), (45, 30, shot.len()));
+        let (sw, sh, _) = three_two(Orientation::Rotate90).cut_shown(30, 45, &shot, 3);
+        assert_eq!((sw, sh), (30, 45));
+        // Within a hundredth is the sensor's shape: a copy rounded to
+        // whole pixels is still cut.
+        assert!(three_two(Orientation::Normal).shows_whole_area(176, 133));
+        // Taken where the decoder develops the note's area, or will not
+        // say; refused where it says another size.
+        let f = three_two(Orientation::Normal);
+        assert!(f.develops_at(Some((5184, 3888))) && f.develops_at(None));
+        assert!(!f.develops_at(Some((10368, 7776))));
+        assert!(!three_two(Orientation::Normal).shows_whole_area(176, 117));
     }
 }

@@ -168,6 +168,8 @@ pub struct Developed {
     pub white: Option<greycard_edit::WhiteShift>,
     /// The masks' bands, of `image`.
     pub detail: Option<Arc<greycard_render::detail::DetailPlanes>>,
+    /// The camera's frame on the picture (`Facts::camera`).
+    pub camera: Option<greycard_edit::geometry::Crop>,
     /// How long each step took, seconds: the decode, the develop to
     /// the binned picture, the rest to the finish.
     pub decode: f64,
@@ -192,9 +194,11 @@ fn open(path: &Path) -> anyhow::Result<Input> {
     // Read whole, never mapped: the thumbnails' pool develops every
     // edited frame of a folder, a share's among them, and a mapped file
     // whose volume goes away is a SIGBUS.
-    Ok(Input::Raw(Arc::new(
-        greycard_core::decode::decode_path_unmapped(path)?,
-    )))
+    let frame = greycard_core::decode::decode_path_unmapped(path)?;
+    // The decode's camera frame is the last word for the keys
+    // (`edited_pictures::note_decoded`).
+    crate::edited_pictures::note_decoded(path, frame.shot.camera_frame);
+    Ok(Input::Raw(Arc::new(frame)))
 }
 
 /// The frame at `path` developed reduced under `edit` at `turn`, up to
@@ -309,7 +313,8 @@ fn walk_reduced(
     let started = Instant::now();
     let input = open(path).map_err(|e| Why::Failed(format!("{e:#}")))?;
     let decode = started.elapsed().as_secs_f64();
-    let mut steps = stages(edit, purpose, &input.facts(turn), lenses);
+    let facts = input.facts(turn);
+    let mut steps = stages(edit, purpose, &facts, lenses);
     // Nothing is kept for a walk after this one: a kept point holds its
     // picture, and the next stage would copy it rather than change it.
     steps.steps.retain(|s| !matches!(s, Step::Keep(_)));
@@ -369,6 +374,7 @@ fn walk_reduced(
         kind: walked.meta.source,
         white,
         detail: walked.taps.planes,
+        camera: facts.camera(),
         decode,
         develop,
         rest,
@@ -812,7 +818,7 @@ impl Reducer {
         // have come between. The frame is settled on the sidecar's, and
         // that is what is made.
         let iso = edited.iso_of(frame);
-        let key = edited.key_of(&line.current);
+        let key = edited.key_of(path, &line.current);
         let mut moved = false;
         if key != held {
             if !crate::edited_pictures::is_edited(path, &line.current, iso) {
@@ -874,6 +880,7 @@ impl Reducer {
             kind: developed.kind,
             white: developed.white.clone(),
             detail: developed.detail.clone(),
+            camera: developed.camera,
         };
         let made = self
             .pool()
@@ -1177,7 +1184,7 @@ mod tests {
         assert!(reducer.wants(&edited, &version));
         assert!(matches!(reducer.make(&edited, &version), Ok(true)));
         let hash = greycard_library::hash_file(&file.path).unwrap();
-        let key = edited.key_of(&warm);
+        let key = edited.key_of(&version.path, &warm);
         assert!(
             edited.all_kept(&hash, key),
             "the version's pictures, under its key"
@@ -1322,7 +1329,7 @@ mod tests {
         let store = greycard_ai::Store::at(dir.join("models"));
         let reducer = Reducer::with_ai(Ai::for_test_on_disk(store.clone()));
         let hash = greycard_library::hash_file(&frame.path).unwrap();
-        let key = edited.key_of(&edit);
+        let key = edited.key_of(&frame.path, &edit);
         assert!(reducer.wants(&edited, &frame));
         match reducer.make(&edited, &frame) {
             Err(Why::NoModel(which)) => assert!(which[0].contains("Sky"), "{which:?}"),
@@ -1407,7 +1414,7 @@ mod tests {
         edit.light.exposure = 1.0;
         let wiped = greycard_edit_io::key::develop_key(&edit, Some("a lens database since wiped"));
         let (frame, edited) = frame(&dir, "stale.png", &edit, Some(wiped));
-        let key = edited.key_of(&edit);
+        let key = edited.key_of(&frame.path, &edit);
         assert_ne!(key, wiped);
         assert_eq!(edited.shows_offline(&frame), Shows::Edit(wiped), "offline");
         assert_eq!(edited.shows(&frame), Shows::Edit(key), "online, read");
@@ -1429,7 +1436,7 @@ mod tests {
         }
         .save(&frame.path)
         .unwrap();
-        let now = edited.key_of(&refit);
+        let now = edited.key_of(&frame.path, &refit);
         edited.settle_key(&frame, &hash, 77, None);
         assert!(matches!(reducer.make(&edited, &frame), Ok(true)));
         assert_eq!(edited.shows(&frame), Shows::Edit(now));
@@ -1464,14 +1471,14 @@ mod tests {
             dir.join("models"),
         )));
         let hash = greycard_library::hash_file(&frame.path).unwrap();
-        let fitted = edited.key_of(&edit);
+        let fitted = edited.key_of(&frame.path, &edit);
         assert!(matches!(reducer.make(&edited, &frame), Ok(true)));
         assert!(edited.all_kept(&hash, fitted));
         assert!(!edited.files_moved(), "nothing moved");
         assert!(!reducer.wants(&edited, &frame));
         // The refit: other contents, another length.
         std::fs::write(&table, "LUT_3D_SIZE 2\n0 0 0.5\n").unwrap();
-        let refit = edited.key_of(&edit);
+        let refit = edited.key_of(&frame.path, &edit);
         assert_ne!(refit, fitted, "a refit is another picture");
         assert!(
             !reducer.wants(&edited, &frame),

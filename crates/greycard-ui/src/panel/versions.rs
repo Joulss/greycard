@@ -1605,6 +1605,7 @@ mod tests {
             taken: None,
             edited_at: None,
             focus: None,
+            camera_frame: None,
         };
         let mut st = state.borrow_mut();
         assert!(crate::rows::apply_row(&mut st, 0, &row));

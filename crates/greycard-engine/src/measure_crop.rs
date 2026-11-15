@@ -259,7 +259,9 @@ fn frame(pair: &lx::Pair, shot: &lx::Shot, lenses: Option<&greycard_lens::Databa
     let mut center_off = (0.0f32, 0.0f32);
     if let Some((w, h)) = stance.and_then(|s| s.shown_size(0)) {
         let (w, h) = (w as f32, h as f32);
-        let f = edit.geometry.frame(w, h);
+        // Lightroom's crop against ours: the import's own, never the
+        // camera's frame.
+        let f = edit.geometry.frame(w, h, None);
         line.ours = f.size;
         let (pw, ph) = edit.geometry.plane_size(w, h);
         center_off = (

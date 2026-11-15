@@ -1006,6 +1006,14 @@ impl FrameDevelop {
             &mut crate::walk::Kept::new(),
             &mut None,
         )?;
+        // Its pictures are laid over the camera's JPEG or another
+        // editor's export of the whole frame (the camera match, the
+        // measures): framed by the edit's own crop alone, never by the
+        // camera's frame.
+        let input = crate::finish::FinishInput {
+            camera: None,
+            ..input
+        };
         Ok(FrameDevelop {
             image,
             input,
@@ -1029,6 +1037,7 @@ impl FrameDevelop {
                 white: None,
                 clip_level: f32::INFINITY,
                 kind: Default::default(),
+                camera: None,
             },
             left_out: Vec::new(),
         }
@@ -1063,7 +1072,7 @@ impl FrameDevelop {
     ) -> greycard_render::export::Scene {
         let framed;
         let (w, h) = (self.image.width as f32, self.image.height as f32);
-        let image: &WorkingImage = if edit.geometry.is_identity_on(w, h) {
+        let image: &WorkingImage = if edit.geometry.is_identity_on(w, h, self.input.camera) {
             &self.image
         } else {
             framed = greycard_render::geometry::apply(&self.image, &edit.geometry);

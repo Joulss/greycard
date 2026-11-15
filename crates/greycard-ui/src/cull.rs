@@ -134,6 +134,9 @@ pub struct Preview {
     /// to read, as its local preview is made. Named as the local
     /// preview is, never as the camera's JPEG, and its own every pixel.
     pub developed: bool,
+    /// Cut to the camera's frame (`cut_to_camera`): not the picture of
+    /// the whole sensor a frame with a crop of its own stands in with.
+    pub cut: bool,
     /// How long the decode took, for the log.
     pub seconds: f64,
 }
@@ -154,6 +157,7 @@ impl Preview {
             companion: false,
             camera_only: false,
             developed: false,
+            cut: false,
             seconds: 0.0,
         }
     }
@@ -486,6 +490,10 @@ pub struct Want {
     /// lightbox's. The develop view's stand-in is not: the develop it
     /// stands in for is on its way.
     pub develop: bool,
+    /// The camera's picture whole, never cut to the camera's frame: the
+    /// frame's edit stores a crop of its own, made on the whole sensor,
+    /// which the picture standing in for its develop must show.
+    pub whole: bool,
 }
 
 impl Want {
@@ -502,6 +510,7 @@ impl Want {
             camera: false,
             picture: None,
             develop: false,
+            whole: false,
         }
     }
 
@@ -514,6 +523,12 @@ impl Want {
     /// JPEG beside the raw) when there is one.
     pub fn with_picture(self, picture: Option<PathBuf>) -> Self {
         Self { picture, ..self }
+    }
+
+    /// The same want, the camera's picture whole when `whole`
+    /// ([`Want::whole`]).
+    pub fn whole(self, whole: bool) -> Self {
+        Self { whole, ..self }
     }
 
     /// The same want, of version `version` of the file.
@@ -559,6 +574,7 @@ impl Want {
             && self.camera == other.camera
             && self.picture == other.picture
             && self.develop == other.develop
+            && self.whole == other.whole
     }
 
     /// Whether a thread on `in_flight` will deliver what this want
@@ -786,6 +802,54 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, previews: Previewe
     }
 }
 
+/// The camera's picture of the raw at `path` cut to the camera's frame,
+/// where the camera framed less than the raw keeps, as the thumbnails
+/// are (`worker::thumbs::cut_to_camera`): what the loupe, the lightbox,
+/// and the camera's picture standing in for a develop show of a frame,
+/// so the develop framed by the same frame lands where it stood. The
+/// camera's JPEG beside the raw is the camera's own cut already, and the
+/// edit's picture is cut by its edit; both are as they are, as is any
+/// picture not of the sensor's shape (`CameraFrame::cut_shown`), and
+/// one asked for `whole`. The frame is read from the file's head only
+/// with `read` (the file was read for the picture); a local preview
+/// takes it as the index's row told it. Its 1:1 size is cut with it.
+pub(crate) fn cut_to_camera(preview: Preview, path: &Path, read: bool, whole: bool) -> Preview {
+    if preview.edited || preview.companion || whole {
+        return preview;
+    }
+    let camera = if read {
+        crate::edited_pictures::camera_of(path)
+    } else {
+        crate::edited_pictures::camera_known(path)
+    };
+    let Some(frame) = camera else {
+        return preview;
+    };
+    if !frame.shows_whole_area(preview.width, preview.height) {
+        return preview;
+    }
+    let (w, h, rgba) = frame.cut_shown(preview.width, preview.height, &preview.rgba, 4);
+    let (sw, sh, _) = frame.cut_shown(preview.source.0, preview.source.1, &[], 0);
+    Preview {
+        width: w,
+        height: h,
+        rgba,
+        source: (sw, sh),
+        cut: true,
+        ..preview
+    }
+}
+
+/// Whether the picture decoded for `path` is kept as its local
+/// preview: not the camera's JPEG beside a raw the camera framed, as
+/// far as that is known (nothing of the raw is read for it, only the
+/// JPEG was), which is the camera's cut and not the raw's picture of
+/// the whole sensor the local preview is cut from. That one is left
+/// owed, for the pool to make from the raw's own picture.
+fn keeps_as_preview(companion: bool, path: &Path) -> bool {
+    !(companion && crate::edited_pictures::camera_known(path).is_some())
+}
+
 /// One picture wanted, from where it says, handed to `deliver`: the
 /// local preview from the cache, which reads nothing of the file, or
 /// the file's. A picture decoded from the file for the loupe makes the
@@ -824,10 +888,15 @@ pub(crate) fn fetch(
                 file: want.file,
                 frame: want.frame(),
                 size: want.size,
-                preview: Arc::new(Preview {
-                    camera_only: want.camera,
-                    ..Preview::local(thumb, want.size == 0)
-                }),
+                preview: Arc::new(cut_to_camera(
+                    Preview {
+                        camera_only: want.camera,
+                        ..Preview::local(thumb, want.size == 0)
+                    },
+                    &want.path,
+                    false,
+                    want.whole,
+                )),
             },
             None => Loaded::NoPreview {
                 file: want.file,
@@ -870,9 +939,10 @@ pub(crate) fn fetch(
                 file: want.file,
                 frame: want.frame(),
                 size: want.size,
-                preview: Arc::new(preview),
+                preview: Arc::new(cut_to_camera(preview, &want.path, true, want.whole)),
             });
             if want.make_preview
+                && keeps_as_preview(companion, &want.path)
                 && let Some(previews) = previews
                 && let Some((owed, in_hand)) = previews.take_for_picture(&want.path)
             {
@@ -1171,6 +1241,87 @@ fn box_down(w: u32, h: u32, rgb: &[u8], factor: u32) -> (u32, u32, Vec<u8>) {
 mod tests {
     use super::*;
     use crate::zoom::tile_grid;
+
+    /// Whether a companion is kept as the raw's local preview is told by
+    /// what is known of the raw's frame, nothing of the raw read: one
+    /// not yet known is kept (its shape keeps it from being cut again),
+    /// one known to be framed is left to the pool.
+    #[test]
+    fn a_companion_is_kept_as_the_preview_by_what_is_known() {
+        let dir = crate::testing::scratch_dir("companion-kept");
+        let raw = dir.join("P0000001.ORF");
+        std::fs::write(
+            &raw,
+            greycard_core::testing::olympus_head(1, [8, 8, 5184, 3888], [0, 216, 5183, 3671]),
+        )
+        .unwrap();
+        assert!(keeps_as_preview(true, &raw));
+        assert_eq!(
+            crate::edited_pictures::camera_state(&raw),
+            None,
+            "the raw's head was not read"
+        );
+        crate::edited_pictures::note_camera(
+            &raw,
+            Some(greycard_core::testing::three_two_frame(
+                greycard_core::raw::Orientation::Normal,
+            )),
+        );
+        assert!(!keeps_as_preview(true, &raw));
+        assert!(keeps_as_preview(false, &raw));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The camera's picture of a frame the camera framed at 3:2 comes to
+    /// the loupe, the lightbox, culling, and the stand-in cut to the
+    /// band, its 1:1 size with it; the edit's picture and the camera's
+    /// JPEG beside the raw come as they are.
+    #[test]
+    fn the_cameras_picture_comes_cut_to_its_frame() {
+        use greycard_core::raw::Orientation;
+        let path = Path::new("/nowhere/framed-preview.orf");
+        crate::edited_pictures::note_camera(
+            path,
+            Some(greycard_core::testing::three_two_frame(
+                Orientation::Rotate90,
+            )),
+        );
+        let thumb = greycard_library::thumbs::Thumb {
+            width: 30,
+            height: 40,
+            rgb: vec![9; 30 * 40 * 3],
+        };
+        let cut = cut_to_camera(Preview::local(thumb.clone(), false), path, false, false);
+        assert_eq!((cut.width, cut.height, cut.source), (26, 40, (26, 40)));
+        assert!(cut.cut);
+        assert_eq!(cut.rgba.len(), 26 * 40 * 4);
+        let shot = Preview::new(300, 400, vec![9; 300 * 400 * 4], (3888, 5184), false);
+        let cut = cut_to_camera(shot, path, false, false);
+        assert_eq!((cut.width, cut.height), (266, 400));
+        assert_eq!(cut.source, (3456, 5184));
+        for (edited, companion) in [(true, false), (false, true)] {
+            let p = Preview {
+                edited,
+                companion,
+                ..Preview::local(thumb.clone(), false)
+            };
+            let same = cut_to_camera(p, path, false, false);
+            assert_eq!((same.width, same.height), (30, 40));
+        }
+        // A local preview kept from the camera's JPEG beside the raw is
+        // the camera's cut already, and comes back as it is, not cut a
+        // second time.
+        let kept = greycard_library::thumbs::Thumb {
+            width: 30,
+            height: 45,
+            rgb: vec![9; 30 * 45 * 3],
+        };
+        let once = cut_to_camera(Preview::local(kept, false), path, false, false);
+        assert_eq!((once.width, once.height, once.cut), (30, 45, false));
+        // Asked for whole (a frame with a crop of its own), never cut.
+        let whole = cut_to_camera(Preview::local(thumb, false), path, false, true);
+        assert_eq!((whole.width, whole.height, whole.cut), (30, 40, false));
+    }
 
     #[test]
     fn the_window_keeps_a_dozen_either_side_and_drops_the_rest_as_it_moves() {

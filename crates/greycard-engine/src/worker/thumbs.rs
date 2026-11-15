@@ -128,13 +128,15 @@ pub(super) fn thumb_lookup(
         edited.lookup(hash, size, edited.shows(frame))
     });
     let hit = from_edit.or_else(|| {
-        key.as_ref().and_then(|(hash, tag)| {
-            cache
-                .lock()
-                .expect("thumbnail cache")
-                .as_mut()
-                .and_then(|c| c.get(hash, size, *tag))
-        })
+        key.as_ref()
+            .and_then(|(hash, tag)| {
+                cache
+                    .lock()
+                    .expect("thumbnail cache")
+                    .as_mut()
+                    .and_then(|c| c.get(hash, size, *tag))
+            })
+            .map(|t| cut_to_camera(t, path, edited, false))
     });
     if let (Some(previews), Some(stat), Some((hash, _))) = (previews, before, key.as_ref()) {
         previews.note(path, stat, hash);
@@ -168,6 +170,7 @@ pub(super) fn cached_thumbnail_noting(
     }
     let (width, height, rgb) = make(path, size)?;
     let thumb = Thumb { width, height, rgb };
+    let shown = cut_to_camera(thumb.clone(), path, edited, true);
     if let Some((hash, tag)) = key {
         if file_stat(path) != before {
             tracing::debug!(
@@ -180,7 +183,40 @@ pub(super) fn cached_thumbnail_noting(
             tracing::debug!("thumbnail {}: not cached: {e}", path.display());
         }
     }
-    Ok((thumb, false))
+    Ok((shown, false))
+}
+
+/// The camera's picture of the file at `path` cut to the camera's
+/// frame, where the camera framed less of it than the raw keeps (an
+/// aspect chosen on the body): what a view of a frame with no edit
+/// shows, as its develop is framed. The cache keeps the camera's
+/// picture whole; the cut is made as it is handed out, so a frame
+/// cropped by hand to the whole sensor still has its whole picture.
+/// The frame is the one the index's row told, or, with `read` (the
+/// file was read for the picture), read from the file's head once; a
+/// picture from the cache alone of a frame whose row is not read yet
+/// stays whole until the row is, and is asked for again then. A
+/// picture not of the sensor's shape (one the camera cut already)
+/// stays as it is (`CameraFrame::cut_shown`).
+pub fn cut_to_camera(
+    thumb: Thumb,
+    path: &std::path::Path,
+    edited: Option<&crate::edited_pictures::Edited>,
+    read: bool,
+) -> Thumb {
+    if edited.is_none() {
+        return thumb;
+    }
+    let camera = if read {
+        crate::edited_pictures::camera_of(path)
+    } else {
+        crate::edited_pictures::camera_known(path)
+    };
+    let Some(frame) = camera else {
+        return thumb;
+    };
+    let (width, height, rgb) = frame.cut_shown(thumb.width, thumb.height, &thumb.rgb, 3);
+    Thumb { width, height, rgb }
 }
 
 /// A small sRGB rendering of a file, `size` on its long edge: the
@@ -302,5 +338,65 @@ fn srgb_encode(v: f32) -> f32 {
         12.92 * v
     } else {
         1.055 * v.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A frame the camera framed at 3:2 has its camera picture handed
+    /// out cut to the band, as the grid, the strip, and the Navigator
+    /// draw it; a frame it did not frame, and a lookup with no edited
+    /// pictures to say whose, as made.
+    #[test]
+    fn the_cameras_picture_is_handed_out_cut_to_its_frame() {
+        use greycard_core::raw::Orientation;
+        let thumb = Thumb {
+            width: 40,
+            height: 30,
+            rgb: vec![9; 40 * 30 * 3],
+        };
+        let edited = crate::edited_pictures::Edited::new(Arc::new(Mutex::new(None)));
+        let (framed, whole) = (
+            std::path::Path::new("/nowhere/framed-thumb.orf"),
+            std::path::Path::new("/nowhere/whole-thumb.orf"),
+        );
+        crate::edited_pictures::note_camera(
+            framed,
+            Some(greycard_core::testing::three_two_frame(Orientation::Normal)),
+        );
+        crate::edited_pictures::note_camera(whole, None);
+        let cut = cut_to_camera(thumb.clone(), framed, Some(&edited), false);
+        assert_eq!((cut.width, cut.height), (40, 26));
+        assert_eq!(cut.rgb.len(), 40 * 26 * 3);
+        let kept = cut_to_camera(thumb.clone(), whole, Some(&edited), false);
+        assert_eq!((kept.width, kept.height), (40, 30));
+        let unasked = cut_to_camera(thumb.clone(), framed, None, false);
+        assert_eq!((unasked.width, unasked.height), (40, 30));
+        // A picture from the cache alone of a frame not known yet
+        // stays whole, and nothing of the file is read for it.
+        let dir = crate::testing::scratch_dir("thumb-cut-unread");
+        let unknown = dir.join("unknown.ORF");
+        std::fs::write(
+            &unknown,
+            greycard_core::testing::olympus_head(1, [8, 8, 5184, 3888], [0, 216, 5183, 3671]),
+        )
+        .unwrap();
+        let whole_still = cut_to_camera(thumb.clone(), &unknown, Some(&edited), false);
+        assert_eq!((whole_still.width, whole_still.height), (40, 30));
+        assert_eq!(crate::edited_pictures::camera_known(&unknown), None);
+        // Made from the file, which was read: its head is read too.
+        let made = cut_to_camera(thumb, &unknown, Some(&edited), true);
+        assert_eq!((made.width, made.height), (40, 26));
+        crate::testing::remove_dir_retry(&dir);
+        // A picture the camera cut already is not cut again.
+        let shot = Thumb {
+            width: 45,
+            height: 30,
+            rgb: vec![9; 45 * 30 * 3],
+        };
+        let same = cut_to_camera(shot, framed, Some(&edited), false);
+        assert_eq!((same.width, same.height), (45, 30));
     }
 }

@@ -1044,7 +1044,7 @@ mod tests {
             thumbs: grid::MADE.iter().map(|&s| (s, bright(s))).collect(),
         };
         edited
-            .store_reduced(&hash, edited.key_of(&edit), &made)
+            .store_reduced(&hash, edited.key_of(&kept, &edit), &made)
             .unwrap();
         let previews = Arc::new(crate::previews::Previews::new(cache).with_edited(edited));
         let fetched = |path: &Path, size: u32| {

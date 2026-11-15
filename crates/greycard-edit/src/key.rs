@@ -119,6 +119,38 @@ pub fn mask_pipelines(shape: &Shape) -> &'static [&'static str] {
     }
 }
 
+/// The key of an edit's picture on a frame whose camera framed less of
+/// the picture than the raw keeps (`camera`, the index's and the
+/// decode's [`greycard_core::raw::CameraFrame`]): `key`, the edit's own
+/// ([`Edit::develop_key_with`]), with the frame taken in where it frames
+/// the edit ([`crate::geometry::framed_by_camera`]: no crop stored,
+/// `uncropped`, and not a ratio, `by_ratio`, over a centered frame,
+/// which frames as with none). Every other key is `key` itself, so the
+/// frames of every camera that frames nothing, every edit with a crop,
+/// and a ratio over a centered frame keep their pictures.
+pub fn framed_key(
+    key: u64,
+    uncropped: bool,
+    by_ratio: bool,
+    camera: Option<&greycard_core::raw::CameraFrame>,
+) -> u64 {
+    let Some(camera) = camera.filter(|c| {
+        crate::geometry::framed_by_camera(
+            uncropped,
+            by_ratio,
+            Some(crate::geometry::Crop::of(c.fractions())),
+        )
+    }) else {
+        return key;
+    };
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"greycard camera frame\0");
+    hasher.update(&key.to_le_bytes());
+    hasher.update(camera.to_text().as_bytes());
+    let hash = hasher.finalize();
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("eight bytes"))
+}
+
 /// A file the develop of an edit reads outside the sidecar, as the key
 /// takes it: its file name, and BLAKE3 of its contents, `None` for a
 /// file that is not there or will not read.
@@ -518,5 +550,59 @@ mod tests {
             with(Shape::Sky { picks: Vec::new() }).develop_key_with(&[], None),
             with(Shape::Sky { picks: Vec::new() }).develop_key_by(&[], None, |_| Vec::new()),
         );
+    }
+
+    /// The camera's frame takes part in the key of an edit with no
+    /// crop, which it frames, and in no other: an edit with a crop, and
+    /// a frame the camera framed nothing of, keep their keys.
+    #[test]
+    fn the_cameras_frame_is_in_the_key_of_an_edit_it_frames() {
+        use greycard_core::raw::{CameraFrame, Orientation, Rect};
+        let frame = CameraFrame {
+            area: Rect {
+                x: 8,
+                y: 8,
+                width: 5184,
+                height: 3888,
+            },
+            frame: Rect {
+                x: 8,
+                y: 224,
+                width: 5184,
+                height: 3456,
+            },
+            orientation: Orientation::Normal,
+        };
+        let square = CameraFrame {
+            frame: Rect {
+                x: 656,
+                y: 8,
+                width: 3888,
+                height: 3888,
+            },
+            ..frame
+        };
+        let key = key(&Edit::default(), None);
+        assert_eq!(framed_key(key, true, false, None), key);
+        assert_eq!(
+            framed_key(key, false, false, Some(&frame)),
+            key,
+            "a crop of its own"
+        );
+        let framed = framed_key(key, true, false, Some(&frame));
+        assert_ne!(framed, key);
+        assert_ne!(framed_key(key, true, false, Some(&square)), framed);
+        assert_eq!(framed_key(key, true, false, Some(&frame)), framed);
+        // A ratio over no crop frames as with no camera frame where the
+        // frame is centered, and keeps its key; one off center does not.
+        assert_eq!(framed_key(key, true, true, Some(&frame)), key);
+        let off = CameraFrame {
+            frame: Rect {
+                y: 8,
+                ..frame.frame
+            },
+            ..frame
+        };
+        assert_ne!(framed_key(key, true, true, Some(&off)), key);
     }
 }

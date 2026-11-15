@@ -112,3 +112,102 @@ pub fn rename_retry(from: impl AsRef<std::path::Path>, to: impl AsRef<std::path:
         panic!("{} could not be renamed: {e}", from.display());
     }
 }
+
+/// A camera's frame shot at 3:2 on a 4:3 sensor, as an Olympus body
+/// keeps it: the 5184 by 3888 area at (8, 8) and the band of 3456 rows
+/// 216 below its top, under the orientation tag `orientation`.
+pub fn three_two_frame(orientation: crate::raw::Orientation) -> crate::raw::CameraFrame {
+    use crate::raw::{CameraFrame, Rect};
+    CameraFrame {
+        area: Rect {
+            x: 8,
+            y: 8,
+            width: 5184,
+            height: 3888,
+        },
+        frame: Rect {
+            x: 8,
+            y: 224,
+            width: 5184,
+            height: 3456,
+        },
+        orientation,
+    }
+}
+
+/// The head of an OM System raw as the camera's-frame reader takes it,
+/// and nothing else: a little-endian TIFF whose IFD0 holds the Make and
+/// the orientation tag (`orientation`, EXIF's 1 to 8), whose Exif IFD
+/// holds a maker note with an Image Processing sub-IFD of the valid
+/// area `area` (left, top, width, height) and the AspectFrame `frame`
+/// (x0, y0, x1, y1, inclusive, in the area). No image data: a file the
+/// index reads the maker's tags of, and the decoder will not open.
+pub fn olympus_head(orientation: u16, area: [u32; 4], frame: [u16; 4]) -> Vec<u8> {
+    fn entry(out: &mut Vec<u8>, tag: u16, typ: u16, count: u32, value: [u8; 4]) {
+        out.extend_from_slice(&tag.to_le_bytes());
+        out.extend_from_slice(&typ.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&value);
+    }
+    let short2 = |a: u16, b: u16| {
+        let mut v = [0u8; 4];
+        v[..2].copy_from_slice(&a.to_le_bytes());
+        v[2..].copy_from_slice(&b.to_le_bytes());
+        v
+    };
+    let make = b"OM Digital Solutions\0";
+    // IFD0 at 8: three entries.
+    let make_at = 8 + 2 + 3 * 12 + 4;
+    let exif_at = make_at + make.len() + make.len() % 2;
+    let note_at = exif_at + 2 + 12 + 4;
+    // The note: its header, its main IFD at 16, the Image Processing
+    // IFD at 34, the AspectFrame's eight bytes after it; offsets from
+    // the note's start.
+    let ip = 34u32;
+    let frame_at = ip + 2 + 5 * 12 + 4;
+    let mut note = b"OM SYSTEM\0\0\0II\x04\0".to_vec();
+    note.extend_from_slice(&1u16.to_le_bytes());
+    entry(&mut note, 0x2040, 4, 1, ip.to_le_bytes());
+    note.extend_from_slice(&0u32.to_le_bytes());
+    assert_eq!(note.len() as u32, ip);
+    note.extend_from_slice(&5u16.to_le_bytes());
+    entry(&mut note, 0x0612, 3, 2, short2(area[0] as u16, 0));
+    entry(&mut note, 0x0613, 3, 2, short2(area[1] as u16, 0));
+    entry(&mut note, 0x0614, 4, 1, area[2].to_le_bytes());
+    entry(&mut note, 0x0615, 4, 1, area[3].to_le_bytes());
+    entry(&mut note, 0x1113, 3, 4, frame_at.to_le_bytes());
+    note.extend_from_slice(&0u32.to_le_bytes());
+    for v in frame {
+        note.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut out = b"II*\0".to_vec();
+    out.extend_from_slice(&8u32.to_le_bytes());
+    out.extend_from_slice(&3u16.to_le_bytes());
+    entry(
+        &mut out,
+        0x010f,
+        2,
+        make.len() as u32,
+        (make_at as u32).to_le_bytes(),
+    );
+    entry(&mut out, 0x0112, 3, 1, short2(orientation, 0));
+    entry(&mut out, 0x8769, 4, 1, (exif_at as u32).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(make);
+    if make.len() % 2 == 1 {
+        out.push(0);
+    }
+    assert_eq!(out.len(), exif_at);
+    out.extend_from_slice(&1u16.to_le_bytes());
+    entry(
+        &mut out,
+        0x927c,
+        7,
+        note.len() as u32,
+        (note_at as u32).to_le_bytes(),
+    );
+    out.extend_from_slice(&0u32.to_le_bytes());
+    assert_eq!(out.len(), note_at);
+    out.extend_from_slice(&note);
+    out
+}

@@ -746,7 +746,7 @@ mod tests {
         assert!(p.drawn_in);
         let g = p.applied(&Geometry::default());
         assert!(g.fits(&p.crop, 6000.0, 4000.0));
-        assert_eq!(g.effective_crop(6000.0, 4000.0), p.crop);
+        assert_eq!(g.effective_crop(6000.0, 4000.0, None), p.crop);
     }
 
     /// An edge finite but far past the frame, on a turned crop, runs

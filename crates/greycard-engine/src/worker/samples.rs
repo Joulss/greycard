@@ -49,7 +49,7 @@ fn the_edit_s_pictures_of_the_samples() {
         let image = image.expect("a picture on the CPU");
         let b = base.as_ref().unwrap();
         let source = (image.width as u32, image.height as u32);
-        let factor = crate::edited_pictures::factor_for(source, &edit.geometry);
+        let factor = crate::edited_pictures::factor_for(source, &edit.geometry, None);
         let finish = || crate::edited_pictures::Finish {
             edit: edit.clone(),
             turn: 0,
@@ -61,6 +61,7 @@ fn the_edit_s_pictures_of_the_samples() {
             kind: b.meta.source,
             white: b.white_shift(),
             detail: None,
+            camera: None,
         };
         let cache: ThumbCache = Arc::new(Mutex::new(Some(
             Thumbs::at(

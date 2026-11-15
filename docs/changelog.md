@@ -185,6 +185,13 @@ design note behind it.
   the picture is rendered with the profile's curve in place of the
   display curve, as the profile's maker meant it (issue 135,
   [§680](https://github.com/jessolmstead/greycard/blob/master/docs/notes/680-a-profiles-own-tone-curve-behind-a-switch.md)).
+- An Olympus or OM System raw opens at the aspect chosen in the
+  camera (3:2, 16:9, 1:1, 3:4): with no crop of your own it shows,
+  thumbnails, and exports at that frame where it showed the whole
+  4:3 sensor, and the rest of the sensor is still there to crop out
+  to. A crop you already made is kept as it is. The library reads
+  these files' headers once more to learn the frame (issue 145,
+  [§681](https://github.com/jessolmstead/greycard/blob/master/docs/notes/681-a-frame-opens-at-the-cameras-aspect.md)).
 
 ### Fixes
 

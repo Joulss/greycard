@@ -149,6 +149,14 @@ pub(crate) struct Develop {
     /// turning that picture in the viewport (`lagging_turn`) rather
     /// than waiting a second for the develop at the new turn.
     pub(crate) shown_turn: Option<(usize, u8)>,
+    /// The camera's frame of the raw that picture is a develop of and
+    /// the tag its develop turns it by: what an edit with no crop is
+    /// framed to (`viewport::camera_crop`). None for a frame whose
+    /// camera framed all of it, and for a picture.
+    pub(crate) drawn_camera: Option<(
+        greycard_core::raw::CameraFrame,
+        greycard_core::raw::Orientation,
+    )>,
     /// When the open frame was last turned, for the log's line on the
     /// first frame drawn after it.
     pub(crate) turn_pressed: Option<std::time::Instant>,

@@ -58,6 +58,11 @@ pub(super) fn timed_open(
         ),
         Err(e) => tracing::error!("open {name}: {e:#}"),
     }
+    // The decode's camera frame, checked against its crop, is the last
+    // word for the thumbnails, the stand-in and the keys.
+    if let Ok((Input::Raw(f), _)) = &result {
+        crate::edited_pictures::note_decoded(path, f.shot.camera_frame);
+    }
     result
 }
 

@@ -1316,15 +1316,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // develop (`drawn_picture`).
                     let ((dw, dh), lag) = drawn_picture(st);
                     let (sw, sh) = (dw as f32, dh as f32);
+                    // An edit with no crop on a frame the camera framed
+                    // is framed to the camera's frame, as its export.
+                    let camera = crate::panel::viewport::camera_crop(st);
                     let frame = if app.get_crop_mode() {
                         edit.geometry.bounds(sw, sh)
                     } else {
-                        edit.geometry.frame(sw, sh)
+                        edit.geometry.frame(sw, sh, camera)
                     };
                     let frame_size = (frame.size.0 as u32, frame.size.1 as u32);
                     // The picture's size as an export writes it, for
                     // the sheet's arithmetic.
-                    let exported = panel.geometry.frame(sw, sh).size;
+                    let exported = panel.geometry.frame(sw, sh, camera).size;
                     app.set_frame_width(exported.0 as i32);
                     app.set_frame_height(exported.1 as i32);
                     if frame_size != st.develop.image_size {

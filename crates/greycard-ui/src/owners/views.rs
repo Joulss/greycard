@@ -170,6 +170,10 @@ pub(crate) struct Views {
     pub(crate) thumb_failed: Vec<bool>,
     pub(crate) thumb_asked: Vec<u32>,
     pub(crate) thumb_want: u32,
+    /// Files whose camera's frame a row told since their pictures were
+    /// made: a cell of one asks for its picture again, cut to the frame,
+    /// when it is in view (`rows::ask_reframed`), not all at once.
+    pub(crate) reframed: std::collections::HashSet<std::path::PathBuf>,
     /// The folder's first round of thumbnails, counted as they come
     /// back, for one line in the log when the last one has.
     pub(crate) thumb_run: Option<panel::browser::ThumbRun>,

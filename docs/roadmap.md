@@ -317,18 +317,11 @@ the reasoning lives in `docs/notes.md`.
       today, so a frame with brush masks and one virtual copy wrote
       28 MB, 1,021 mask shapes of which 39 differ. Each mask once, or
       steps as changes; a format change (pixls, 2026-11-13)
-- [ ] A frame opened at the aspect chosen in the camera: Olympus
-      records it (ImageProcessing AspectRatio 0x1112 and AspectFrame
-      0x1113) and nothing reads it, so an ORF shot at 3:2 opens at
-      the sensor's 4:3. The reader is built on a held branch
-      (worktree-agent-a404a8d71cfb9bc51) with the design in its notes
-      draft: the embedded preview is the full 4:3 too, so the
-      stand-in, the thumbnails, the develop key, and the export must
-      take the same cut. An edit with no crop resolves to the
-      camera's frame; open are what Original means in Crop there, and
-      whether the index stores the frame (a schema step, only these
-      frames remade) or every cache is remade once (issue 145,
-      2026-11-14)
+- [ ] A merge of camera-framed frames opens at the sensor's aspect:
+      a merged DNG carries no maker note (§681)
+- [ ] The camera's frame on an Olympus High Res Shot: unverified for
+      lack of a sample, its note taken only where it passes the
+      plausibility and decode-area checks (§681; issue 145)
 - [ ] The window's size and place are written at a close or a quit
       only, so an editor ended by a signal, a force quit, or a logout
       opens as it was the time before (§623). Low priority

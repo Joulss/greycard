@@ -1808,7 +1808,7 @@ mod tests {
         h.open(&out);
         let key = {
             let st = h.s.state.borrow();
-            h.s.worker.edited().key_of(&st.develop.edit)
+            h.s.worker.edited().key_of(&out, &st.develop.edit)
         };
         h.pump(
             &|h| h.s.worker.edited().all_kept(&hash, key),
@@ -1855,7 +1855,7 @@ mod tests {
         let hash = greycard_library::hash_file(&out).unwrap();
         let key = {
             let st = h.s.state.borrow();
-            h.s.worker.edited().key_of(&st.develop.edit)
+            h.s.worker.edited().key_of(&out, &st.develop.edit)
         };
         h.pump(
             &|h| h.s.worker.edited().all_kept(&hash, key),

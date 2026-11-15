@@ -30,7 +30,12 @@ pub(super) fn keep_open(
         return None;
     }
     let left = |edited: &crate::edited_pictures::Edited| {
-        edited.note(&frame, true, keep.iso, Some(edited.key_of(&keep.edit)));
+        edited.note(
+            &frame,
+            true,
+            keep.iso,
+            Some(edited.key_of(&path, &keep.edit)),
+        );
         said(frame.clone());
     };
     // The develop in hand is the open file's under the edit saved: a
@@ -44,7 +49,7 @@ pub(super) fn keep_open(
         left(edited);
         return None;
     };
-    let key = edited.key_of(&keep.edit);
+    let key = edited.key_of(&path, &keep.edit);
     // Kept already from a develop of the frame (a save that changed
     // nothing of the picture, or a develop of an edit kept before): the
     // cells are asked again only when they were showing something else.
@@ -123,8 +128,10 @@ pub(super) fn keep_open(
         left(edited);
         return None;
     }
-    let factor =
-        |source: (u32, u32)| crate::edited_pictures::factor_for(source, &keep.edit.geometry);
+    let camera = base.facts_at(keep.turn).camera();
+    let factor = |source: (u32, u32)| {
+        crate::edited_pictures::factor_for(source, &keep.edit.geometry, camera)
+    };
     let (developed, source, factor, read_back) = match (cpu, gpu) {
         (Some((image, _)), _) => {
             let source = (image.width as u32, image.height as u32);
@@ -185,6 +192,7 @@ pub(super) fn keep_open(
                 base.meta.clip_level,
             ),
             edit: keep.edit,
+            camera,
         },
     };
     let (on, deliver) = (edited.clone(), deliver.clone());

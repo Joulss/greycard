@@ -69,6 +69,7 @@ use ::rawler::formats::tiff::{IFD, Value};
 
 use super::rawler_backend::{RAF_MAGIC, be_u32_at, guarded, half_copy_at};
 use crate::error::{Error, Result};
+use crate::raw::{CameraFrame, Rect};
 
 /// Who made the camera, as far as the reader tells makers apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -403,6 +404,9 @@ fn maker_note<R: Read + Seek>(
 }
 
 const TAG_MAKE: u16 = 0x010f;
+const TAG_ORIENTATION: u16 = 0x0112;
+const TAG_IMAGE_WIDTH: u16 = 0x0100;
+const TAG_IMAGE_LENGTH: u16 = 0x0101;
 const TAG_EXIF_IFD: u16 = 0x8769;
 const TAG_MAKER_NOTE: u16 = 0x927c;
 const TAG_DNG_VERSION: u16 = 0xc612;
@@ -1499,12 +1503,12 @@ fn olympus_scene_named(code: i64) -> bool {
     matches!(code, 0 | 6..=20 | 22..=50)
 }
 
-fn olympus_from_note<R: Read + Seek>(
+/// An Olympus note's main IFD, the base its offsets count from, and its
+/// byte order; `None` for a note of no header the reader knows.
+fn olympus_note<R: Read + Seek>(
     tiff: &mut Tiff<R>,
     note: &Field,
-    maker: Maker,
-) -> Result<CameraStyle> {
-    let mut style = CameraStyle::bare(maker);
+) -> Result<Option<(Vec<Field>, u64, Endian)>> {
     let head = tiff.read_at(note.at, (note.count as u64).min(16))?;
     let order = |b: &[u8]| match b {
         b"II" => Some(Endian::Little),
@@ -1515,31 +1519,54 @@ fn olympus_from_note<R: Read + Seek>(
     let (at, base, endian) = if head.len() >= 16 && head.starts_with(b"OM SYSTEM\0\0\0") {
         match order(&head[12..14]) {
             Some(e) => (note.at + 16, note.at, e),
-            None => return Ok(style),
+            None => return Ok(None),
         }
     } else if head.len() >= 12 && head.starts_with(b"OLYMPUS\0") {
         match order(&head[8..10]) {
             Some(e) => (note.at + 12, note.at, e),
-            None => return Ok(style),
+            None => return Ok(None),
         }
     } else if head.len() >= 8 && head.starts_with(b"OLYMP\0") {
         (note.at + 8, 0, note.endian)
     } else {
-        return Ok(style);
+        return Ok(None);
     };
-    let ifd = tiff.ifd(at, base, endian)?;
-    // A sub-IFD's entry: an offset (IFD or LONG), or the older bodies'
-    // UNDEFINED block that is the IFD itself. A note without Camera
-    // Settings is a maker with no style, as a Nikon type 1 note is.
-    let cs_at = match find(&ifd, OLYMPUS_CAMERA_SETTINGS) {
+    Ok(Some((tiff.ifd(at, base, endian)?, base, endian)))
+}
+
+/// A sub-IFD of an Olympus note by its tag: an offset (IFD or LONG), or
+/// the older bodies' UNDEFINED block that is the IFD itself. `None`
+/// when the note has no such entry.
+fn olympus_sub<R: Read + Seek>(
+    tiff: &mut Tiff<R>,
+    (ifd, base, endian): &(Vec<Field>, u64, Endian),
+    tag: u16,
+) -> Result<Option<Vec<Field>>> {
+    let at = match find(ifd, tag) {
         Some(f) if f.typ == 7 && f.count > 4 => f.at,
         Some(f) if matches!(f.typ, 4 | 13) => match tiff.int(&f) {
             Some(offset) => base + offset as u64,
-            None => return Ok(style),
+            None => return Ok(None),
         },
-        _ => return Ok(style),
+        _ => return Ok(None),
     };
-    let cs = tiff.ifd(cs_at, base, endian)?;
+    Ok(Some(tiff.ifd(at, *base, *endian)?))
+}
+
+fn olympus_from_note<R: Read + Seek>(
+    tiff: &mut Tiff<R>,
+    note: &Field,
+    maker: Maker,
+) -> Result<CameraStyle> {
+    let mut style = CameraStyle::bare(maker);
+    let Some(main) = olympus_note(tiff, note)? else {
+        return Ok(style);
+    };
+    // A note without Camera Settings is a maker with no style, as a
+    // Nikon type 1 note is.
+    let Some(cs) = olympus_sub(tiff, &main, OLYMPUS_CAMERA_SETTINGS)? else {
+        return Ok(style);
+    };
     let int = |tiff: &mut Tiff<R>, tag| int_tag(tiff, &cs, tag);
     let ints = |tiff: &mut Tiff<R>, tag| find(&cs, tag).and_then(|f| tiff.ints(&f));
     // A tag exiv2 types int16s, read as one whatever type the file
@@ -1663,6 +1690,128 @@ fn olympus_from_note<R: Read + Seek>(
     };
 
     Ok(style)
+}
+
+// The camera's frame: the rectangle the photographer chose in camera
+// (an aspect ratio), when the raw keeps more of the sensor than that.
+// Olympus and OM System bodies save the whole 4:3 sensor whatever the
+// aspect, and record the choice in the note's Image Processing
+// sub-IFD: AspectFrame, x0 y0 x1 y1 inclusive, in the coordinates of
+// the sensor's valid area CropLeft, CropTop, CropWidth and CropHeight
+// (the area rawler takes as the frame's crop). The tag numbers are
+// exiv2's (its OlympusIp group); the coordinates were checked on a 3:2
+// frame, whose camera picture is the area's middle 3:2 band.
+
+const OLYMPUS_IMAGE_PROCESSING: u16 = 0x2040;
+const OLYMPUS_CROP_LEFT: u16 = 0x0612;
+const OLYMPUS_CROP_TOP: u16 = 0x0613;
+const OLYMPUS_CROP_WIDTH: u16 = 0x0614;
+const OLYMPUS_CROP_HEIGHT: u16 = 0x0615;
+const OLYMPUS_ASPECT_FRAME: u16 = 0x1113;
+
+/// The camera's frame of the raw read from `file`, in sensor samples:
+/// `None` for a maker whose frame is not read, a DNG (whose converter
+/// has said what it kept), a note that does not say, a frame that is
+/// the whole valid area, and one that does not lie inside it.
+pub(crate) fn frame_stream(mut file: impl Read + Seek) -> Result<Option<CameraFrame>> {
+    // From the start, wherever a reader before this one left it.
+    file.seek(SeekFrom::Start(0))?;
+    let mut head = [0u8; 2];
+    if read_up_to(&mut file, &mut head)? < 2 || !(head == *b"II" || head == *b"MM") {
+        return Ok(None);
+    }
+    file.seek(SeekFrom::Start(0))?;
+    let mut tiff = Tiff::new(file)?;
+    let (ifd0, endian) = tiff_ifd0(&mut tiff)?;
+    if find(&ifd0, TAG_DNG_VERSION).is_some() {
+        return Ok(None);
+    }
+    let make = find(&ifd0, TAG_MAKE)
+        .and_then(|f| tiff.ascii(&f))
+        .unwrap_or_default();
+    if !matches!(Maker::from_make(&make), Maker::Olympus | Maker::OmDigital) {
+        return Ok(None);
+    }
+    // The image's declared size, where IFD0 says it: the valid area
+    // lies inside it, or the note's numbers are of another picture.
+    let declared =
+        int_tag(&mut tiff, &ifd0, TAG_IMAGE_WIDTH).zip(int_tag(&mut tiff, &ifd0, TAG_IMAGE_LENGTH));
+    let orientation = int_tag(&mut tiff, &ifd0, TAG_ORIENTATION)
+        .and_then(|o| u16::try_from(o).ok())
+        .and_then(crate::raw::Orientation::from_exif)
+        .unwrap_or_default();
+    let Some(note) = maker_note(&mut tiff, &ifd0, endian)? else {
+        return Ok(None);
+    };
+    let Some(main) = olympus_note(&mut tiff, &note)? else {
+        return Ok(None);
+    };
+    let Some(ip) = olympus_sub(&mut tiff, &main, OLYMPUS_IMAGE_PROCESSING)? else {
+        return Ok(None);
+    };
+    let mut ints = |tag| find(&ip, tag).and_then(|f| tiff.ints(&f));
+    // CropLeft and CropTop are two SHORTs, the second 0.
+    let mut area = [0i64; 4];
+    for (i, tag) in [
+        OLYMPUS_CROP_LEFT,
+        OLYMPUS_CROP_TOP,
+        OLYMPUS_CROP_WIDTH,
+        OLYMPUS_CROP_HEIGHT,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        match ints(tag).as_deref() {
+            Some([v, ..]) => area[i] = *v,
+            _ => return Ok(None),
+        }
+    }
+    let Some(&[x0, y0, x1, y1]) = ints(OLYMPUS_ASPECT_FRAME).as_deref() else {
+        return Ok(None);
+    };
+    Ok(
+        olympus_frame(area, [x0, y0, x1, y1], declared).map(|frame| CameraFrame {
+            area: Rect {
+                x: area[0] as usize,
+                y: area[1] as usize,
+                width: area[2] as usize,
+                height: area[3] as usize,
+            },
+            frame,
+            orientation,
+        }),
+    )
+}
+
+/// An AspectFrame (inclusive corners) inside the valid `area` (left,
+/// top, width, height) as a rectangle of the sensor; `None` when it is
+/// the whole area or not inside it, and when the two are not plausibly
+/// of one picture: the area past the image's `declared` size (IFD0's,
+/// where it says), or a frame that spans neither the area's whole width
+/// nor its whole height, as every aspect a body offers does (3:2 and
+/// 16:9 the width, 1:1 and 3:4 the height). A High Res Shot's note,
+/// whose numbers may be of the sensor's own size, is unverified: it is
+/// taken only where it passes these and the decode's own check.
+fn olympus_frame(
+    [left, top, width, height]: [i64; 4],
+    [x0, y0, x1, y1]: [i64; 4],
+    declared: Option<(i64, i64)>,
+) -> Option<Rect> {
+    let inside = left >= 0
+        && top >= 0
+        && (0..=x1).contains(&x0)
+        && (0..=y1).contains(&y0)
+        && x1 < width
+        && y1 < height;
+    let fits_declared = declared.is_none_or(|(dw, dh)| left + width <= dw && top + height <= dh);
+    let (w, h) = (x1 - x0 + 1, y1 - y0 + 1);
+    let spans = w == width || h == height;
+    (inside && fits_declared && spans && (w, h) != (width, height)).then(|| Rect {
+        x: (left + x0) as usize,
+        y: (top + y0) as usize,
+        width: w as usize,
+        height: h as usize,
+    })
 }
 
 #[cfg(test)]
@@ -3357,5 +3506,150 @@ mod tests {
             std::fs::remove_file(&path).unwrap();
             assert!(read.is_err(), "{i}");
         }
+    }
+
+    /// An ORF whose note's Image Processing holds the valid area at
+    /// (8, 8), 5184 by 3888, the aspect, and `frame` as its
+    /// AspectFrame (none left out), under `header`, little-endian.
+    fn orf_framed(make: &str, header: &'static [u8], frame: Option<[u16; 4]>) -> Vec<u8> {
+        let mut ip = vec![
+            shorts(OLYMPUS_CROP_LEFT, &[8, 0]),
+            shorts(OLYMPUS_CROP_TOP, &[8, 0]),
+            long(OLYMPUS_CROP_WIDTH, 5184),
+            long(OLYMPUS_CROP_HEIGHT, 3888),
+            (OLYMPUS_ASPECT_FRAME - 1, 1, 2, vec![3, 2]),
+        ];
+        ip.extend(frame.map(|f| shorts(OLYMPUS_ASPECT_FRAME, &f)));
+        raw_file(make, move |at| {
+            let base = if header.starts_with(b"OLYMP\0") {
+                at
+            } else {
+                0
+            };
+            let main_at = header.len();
+            let ip_at = main_at + 18;
+            let mut note = header.to_vec();
+            note.extend(ifd_bytes(
+                base + main_at,
+                &[long(OLYMPUS_IMAGE_PROCESSING, (base + ip_at) as u32)],
+            ));
+            note.extend(ifd_bytes(base + ip_at, &ip));
+            note
+        })
+    }
+
+    fn frame_of(bytes: Vec<u8>) -> Option<Rect> {
+        let read = frame_stream(Cursor::new(bytes)).unwrap();
+        if let Some(c) = read {
+            let area = Rect {
+                x: 8,
+                y: 8,
+                width: 5184,
+                height: 3888,
+            };
+            assert_eq!(c.area, area);
+        }
+        read.map(|c| c.frame)
+    }
+
+    /// A frame shot at 3:2 on the 4:3 sensor is the area's middle
+    /// band, 5184 by 3456, as a rectangle of the sensor, under each
+    /// header; one at 1:1 the middle square.
+    #[test]
+    fn an_olympus_frame_shot_at_a_ratio_reads_as_that_part_of_the_sensor() {
+        let band = Some(Rect {
+            x: 8,
+            y: 8 + 216,
+            width: 5184,
+            height: 3456,
+        });
+        let frame = Some([0, 216, 5183, 3671]);
+        assert_eq!(
+            frame_of(orf_framed("OM Digital Solutions", OM_SYSTEM, frame)),
+            band
+        );
+        for header in [&b"OLYMPUS\0II\x03\0"[..], &b"OLYMP\0\x01\0"[..]] {
+            assert_eq!(
+                frame_of(orf_framed("OLYMPUS CORPORATION", header, frame)),
+                band
+            );
+        }
+        // On the stream the style reader read first, as the index
+        // reads a raw's head once for both: from the start all the same.
+        let mut stream = Cursor::new(orf_framed("OM Digital Solutions", OM_SYSTEM, frame));
+        read_stream(&mut stream).unwrap();
+        stream.set_position(10);
+        assert_eq!(frame_stream(&mut stream).unwrap().map(|c| c.frame), band);
+        let square = Some([648, 0, 4535, 3887]);
+        assert_eq!(
+            frame_of(orf_framed("OLYMPUS CORPORATION", OM_SYSTEM, square)),
+            Some(Rect {
+                x: 8 + 648,
+                y: 8,
+                width: 3888,
+                height: 3888,
+            })
+        );
+    }
+
+    /// A frame is taken only where the note's numbers are plausibly of
+    /// one picture: the area inside the image's declared size, and the
+    /// frame spanning the area's whole width or whole height.
+    #[test]
+    fn an_olympus_frame_of_numbers_not_of_one_picture_is_none() {
+        let area = [8, 8, 5184, 3888];
+        let band = [0, 216, 5183, 3671];
+        assert!(olympus_frame(area, band, None).is_some());
+        assert!(olympus_frame(area, band, Some((5200, 3904))).is_some());
+        // The area past the declared image: another picture's numbers.
+        assert!(olympus_frame(area, band, Some((2600, 1952))).is_none());
+        // A frame spanning neither side, as a frame in other units would.
+        assert!(olympus_frame(area, [0, 0, 2591, 1727], None).is_none());
+        // 1:1 spans the height.
+        assert!(olympus_frame(area, [648, 0, 4535, 3887], Some((5200, 3904))).is_some());
+    }
+
+    /// A frame shot at the sensor's own 4:3 is the whole area and says
+    /// nothing; nor does a frame outside the area, a note without the
+    /// tag, another maker's file, a DNG, or a file that is no TIFF.
+    #[test]
+    fn an_olympus_frame_that_is_the_whole_area_or_unread_is_none() {
+        let make = "OM Digital Solutions";
+        for frame in [
+            Some([0, 0, 5183, 3887]),
+            Some([0, 216, 5184, 3671]),
+            Some([10, 216, 9, 3671]),
+            None,
+        ] {
+            assert_eq!(
+                frame_of(orf_framed(make, OM_SYSTEM, frame)),
+                None,
+                "{frame:?}"
+            );
+        }
+        let frame = Some([0, 216, 5183, 3671]);
+        assert_eq!(
+            frame_of(orf_framed("NIKON CORPORATION", OM_SYSTEM, frame)),
+            None
+        );
+        assert_eq!(frame_of(orf_with(make, OM_SYSTEM, &olympus_base())), None);
+        let dng = raw_file_with(make, &[(TAG_DNG_VERSION, 1, 4, vec![1, 6, 0, 0])], |at| {
+            let mut note = OM_SYSTEM.to_vec();
+            note.extend(ifd_bytes(at + OM_SYSTEM.len(), &[]));
+            note
+        });
+        assert_eq!(frame_of(dng), None);
+        assert_eq!(frame_of(b"\0\0\0\x0cftypcrx ".to_vec()), None);
+    }
+
+    /// With `GREYCARD_FRAME_FILE` a raw: its camera frame, printed, for
+    /// checking the reader against exiv2 on a real file.
+    #[test]
+    #[ignore]
+    fn the_camera_frame_of_a_file() {
+        let Some(path) = std::env::var_os("GREYCARD_FRAME_FILE") else {
+            return;
+        };
+        println!("{:?}", crate::decode::camera_frame_path(&path));
     }
 }

@@ -107,6 +107,44 @@ pub fn merge_tag_path(path: impl AsRef<Path>) -> Result<Option<crate::merge::Tag
     style::merge_tag_stream(std::io::BufReader::new(std::fs::File::open(path.as_ref())?))
 }
 
+/// The camera's frame of a raw: the rectangle of the sensor, in
+/// samples, that the photographer framed in camera (an aspect ratio
+/// chosen on the body), when the file keeps more of the sensor than
+/// that. `None` when the file does not say or the frame is all of it.
+/// Read from the maker note with no decode; Olympus and OM System are
+/// the makers read.
+///
+/// As the decode takes it: not where the decoder says it develops
+/// another size than the note's valid area ([`Stance::size`]), so what
+/// this says and what a develop frames agree. A file whose size the
+/// decoder will not say cheaply keeps the note's word; its decode, if
+/// it decodes, has the last one.
+pub fn camera_frame_path(path: impl AsRef<Path>) -> Result<Option<crate::raw::CameraFrame>> {
+    let path = path.as_ref();
+    let Some(frame) = rawler_backend::guarded(
+        || rawler_backend::half_copy_at(path),
+        || style::frame_stream(std::io::BufReader::new(std::fs::File::open(path)?)),
+    )?
+    else {
+        return Ok(None);
+    };
+    let size = stance_path_unmapped(path).ok().and_then(|s| s.size);
+    Ok(frame.develops_at(size).then_some(frame))
+}
+
+/// The extensions of the raws [`camera_frame_path`] can find a frame in:
+/// Olympus's and OM System's. Another maker read later adds its own.
+const FRAMED_EXTENSIONS: [&str; 2] = ["orf", "ori"];
+
+/// Whether the file at `path` is of a kind [`camera_frame_path`] can
+/// find a frame in, by its name alone: what spares every other file a
+/// read of its head.
+pub fn may_have_camera_frame(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| FRAMED_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
 /// A raw's kind of mosaic alone, without a sample decoded and without a
 /// memory map; `Ok(None)` for a raw that is not a mosaic.
 pub fn mosaic_path(path: impl AsRef<Path>) -> Result<Option<crate::raw::Mosaic>> {

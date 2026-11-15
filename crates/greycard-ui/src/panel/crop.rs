@@ -160,7 +160,8 @@ pub(crate) fn open_under_start(st: &State, app: &App, arrived: bool) -> Laid {
         st.develop.source_size.0 as f32,
         st.develop.source_size.1 as f32,
     );
-    pick_aspect(app, sw, sh);
+    let camera = crate::panel::viewport::camera_crop(st);
+    pick_aspect(app, sw, sh, camera);
     let held = arrived || aspect == Aspect::Original;
     app.set_aspect_held(held);
     if held {
@@ -168,7 +169,7 @@ pub(crate) fn open_under_start(st: &State, app: &App, arrived: bool) -> Laid {
     }
     // Taken: the crop fitted as a pick from the list fits it, so the
     // edit stores the crop the box shows, not an aspect alone.
-    refit_crop(app, sw, sh, !st.develop.edit.needs_frame());
+    refit_crop(app, sw, sh, !st.develop.edit.needs_frame(), camera);
     Laid::Taken
 }
 
@@ -222,7 +223,8 @@ fn fit_taken(st: &mut State, app: &App) {
         st.develop.source_size.0 as f32,
         st.develop.source_size.1 as f32,
     );
-    refit_crop(app, sw, sh, !st.develop.edit.needs_frame());
+    let camera = crate::panel::viewport::camera_crop(st);
+    refit_crop(app, sw, sh, !st.develop.edit.needs_frame(), camera);
     if app.get_geo_has_crop() {
         st.develop.crop_fit_due = None;
         app.window().request_redraw();
@@ -244,11 +246,16 @@ fn fit_taken(st: &mut State, app: &App) {
 ///
 /// The aspect it settles on, when it is another than the crop was
 /// fitted under: a pick, which "Last used" remembers.
-pub(crate) fn pick_aspect(app: &App, sw: f32, sh: f32) -> Option<String> {
-    if sw >= 1.0 && sh >= 1.0 {
-        app.set_source_tall(sh > sw);
-    }
+pub(crate) fn pick_aspect(app: &App, sw: f32, sh: f32, camera: Option<Crop>) -> Option<String> {
     let geometry = read_geometry(app);
+    if sw >= 1.0 && sh >= 1.0 {
+        let (ow, oh) = Geometry {
+            turns: 0,
+            ..geometry.clone()
+        }
+        .own_shape(sw, sh, camera);
+        app.set_source_tall(oh > ow);
+    }
     if geometry.aspect == Aspect::Free && app.get_aspect_name() == "Custom" {
         return None;
     }
@@ -257,7 +264,7 @@ pub(crate) fn pick_aspect(app: &App, sw: f32, sh: f32) -> Option<String> {
         aspect: aspect_of_key(fitted.as_str()),
         ..geometry.clone()
     };
-    app.set_portrait(was.with_aspect(geometry.aspect, sw, sh).portrait);
+    app.set_portrait(was.with_aspect(geometry.aspect, sw, sh, camera).portrait);
     let key = aspect_key(geometry.aspect);
     app.set_aspect_fitted(key.as_str().into());
     (key != fitted.as_str()).then_some(key)
@@ -315,7 +322,11 @@ pub(crate) fn set_crop(app: &App, crop: Option<Crop>) {
 /// It is a parameter rather than a check inside, so that the
 /// compiler asks the question at every call rather than trusting
 /// each of them to remember.
-pub(crate) fn refit_crop(app: &App, sw: f32, sh: f32, settled: bool) {
+///
+/// `camera` is the camera's frame on the source
+/// ([`crate::panel::viewport::camera_crop`]): with no crop stored, the
+/// crop in force is that frame, and Original holds its shape.
+pub(crate) fn refit_crop(app: &App, sw: f32, sh: f32, settled: bool, camera: Option<Crop>) {
     // The size is not known until the frame's develop lands (a switch
     // zeroes it); a fit into nothing is NaN, which the sidecar wrote
     // as null and then would not read.
@@ -323,9 +334,9 @@ pub(crate) fn refit_crop(app: &App, sw: f32, sh: f32, settled: bool) {
         return;
     }
     let geometry = read_geometry(app);
-    let current = geometry.effective_crop(sw, sh);
+    let current = geometry.effective_crop(sw, sh, camera);
     let (pw, ph) = geometry.plane_size(sw, sh);
-    let ratio = geometry.aspect.ratio(pw, ph, geometry.portrait);
+    let ratio = geometry.ratio(sw, sh, camera);
     let shape_ok = match ratio {
         None => true,
         Some(r) => ((current.w * pw) / (current.h * ph) / r - 1.0).abs() < 0.01,
@@ -375,15 +386,16 @@ pub(crate) fn refit_crop(app: &App, sw: f32, sh: f32, settled: bool) {
 fn level_by(state: &crate::Shared, app: &App, drawn: f32) {
     let geometry = read_geometry(app);
     app.set_geo_angle(geometry.leveled_by(drawn));
-    let (sw, sh, settled) = {
+    let (sw, sh, settled, camera) = {
         let st = state.borrow();
         (
             st.develop.source_size.0 as f32,
             st.develop.source_size.1 as f32,
             !st.develop.edit.needs_frame(),
+            crate::panel::viewport::camera_crop(&st),
         )
     };
-    refit_crop(app, sw, sh, settled);
+    refit_crop(app, sw, sh, settled, camera);
     app.invoke_view_changed();
 }
 
@@ -704,8 +716,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
                 st.develop.source_size.1 as f32,
             );
             // From the box on show: under an aspect held, the held
-            // aspect's, which the panel's geometry says.
-            st.develop.crop_drag = Some(read_geometry(&app).effective_crop(sw, sh));
+            // aspect's, which the panel's geometry says; with none,
+            // the camera's frame where it framed one.
+            let camera = crate::panel::viewport::camera_crop(&st);
+            st.develop.crop_drag = Some(read_geometry(&app).effective_crop(sw, sh, camera));
         });
     }
     {
@@ -731,7 +745,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             let scale = app.window().scale_factor();
             let geometry = read_geometry(&app);
             let (pw, ph) = geometry.plane_size(sw, sh);
-            let ratio = geometry.aspect.ratio(pw, ph, geometry.portrait);
+            let ratio = geometry.ratio(sw, sh, crate::panel::viewport::camera_crop(&st));
             let moved = geometry.drag_within(
                 &start,
                 handle,
@@ -795,10 +809,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
                 st.develop.source_size.1 as f32,
             );
             let to = view_to_plane(&st, &app, x, y);
+            let camera = crate::panel::viewport::camera_crop(&st);
             drop(st);
             let geometry = read_geometry(&app);
-            let (pw, ph) = geometry.plane_size(sw, sh);
-            let ratio = geometry.aspect.ratio(pw, ph, geometry.portrait);
+            let ratio = geometry.ratio(sw, sh, camera);
             let Some(drawn) = geometry.drawn(anchor, to, ratio, sw, sh) else {
                 return;
             };
@@ -823,18 +837,19 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let (sw, sh, settled) = {
+            let (sw, sh, settled, camera) = {
                 let st = state.borrow();
                 (
                     st.develop.source_size.0 as f32,
                     st.develop.source_size.1 as f32,
                     !st.develop.edit.needs_frame(),
+                    crate::panel::viewport::camera_crop(&st),
                 )
             };
-            if let Some(picked) = pick_aspect(&app, sw, sh) {
+            if let Some(picked) = pick_aspect(&app, sw, sh, camera) {
                 remember_last(&mut state.borrow_mut(), picked);
             }
-            refit_crop(&app, sw, sh, settled);
+            refit_crop(&app, sw, sh, settled, camera);
             app.invoke_view_changed();
         });
     }
@@ -868,16 +883,17 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let (sw, sh, settled) = {
+            let (sw, sh, settled, camera) = {
                 let st = state.borrow();
                 (
                     st.develop.source_size.0 as f32,
                     st.develop.source_size.1 as f32,
                     !st.develop.edit.needs_frame(),
+                    crate::panel::viewport::camera_crop(&st),
                 )
             };
             show_geometry(&read_geometry(&app).turned(quarters), &app);
-            refit_crop(&app, sw, sh, settled);
+            refit_crop(&app, sw, sh, settled, camera);
             app.invoke_view_changed();
         });
     }
@@ -887,16 +903,17 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let (sw, sh, settled) = {
+            let (sw, sh, settled, camera) = {
                 let st = state.borrow();
                 (
                     st.develop.source_size.0 as f32,
                     st.develop.source_size.1 as f32,
                     !st.develop.edit.needs_frame(),
+                    crate::panel::viewport::camera_crop(&st),
                 )
             };
             show_geometry(&read_geometry(&app).flipped(vertical), &app);
-            refit_crop(&app, sw, sh, settled);
+            refit_crop(&app, sw, sh, settled, camera);
             app.invoke_view_changed();
         });
     }
@@ -941,7 +958,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             let Some(axis) = Guide::from_name(app.get_guide_mode().as_str()) else {
                 return;
             };
-            let (sw, sh, settled, pair) = {
+            let (sw, sh, settled, camera, pair) = {
                 let mut st = state.borrow_mut();
                 let (sw, sh) = (
                     st.develop.source_size.0 as f32,
@@ -958,7 +975,14 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
                     (u * sw, v * sw)
                 };
                 let ends = [at(&st, x0, y0), at(&st, x1, y1)];
-                (sw, sh, settled, st.develop.guiding.stroke(axis, ends))
+                let camera = crate::panel::viewport::camera_crop(&st);
+                (
+                    sw,
+                    sh,
+                    settled,
+                    camera,
+                    st.develop.guiding.stroke(axis, ends),
+                )
             };
             let Some((a, b)) = pair else {
                 // The first of the two: it is drawn from now on.
@@ -980,7 +1004,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
                 Guide::Vertical => app.set_geo_vertical(got.tilt),
                 Guide::Horizontal => app.set_geo_horizontal(got.tilt),
             }
-            refit_crop(&app, sw, sh, settled);
+            refit_crop(&app, sw, sh, settled, camera);
             app.invoke_view_changed();
         });
     }
@@ -1620,7 +1644,7 @@ mod tests {
             ..Default::default()
         };
         show_geometry(&geometry, &app);
-        refit_crop(&app, 0.0, 0.0, true);
+        refit_crop(&app, 0.0, 0.0, true, None);
         assert!(!app.get_geo_has_crop(), "a crop was fitted into nothing");
         assert_eq!(app.get_crop_kept_area(), 0.0);
     }
@@ -1649,7 +1673,7 @@ mod tests {
         assert!(!edit.geometry.portrait);
 
         show_geometry(&edit.geometry, &app);
-        refit_crop(&app, sw, sh, true);
+        refit_crop(&app, sw, sh, true, None);
         let (w, h) = (app.get_geo_crop_w(), app.get_geo_crop_h());
         assert!(
             (w - 1.0).abs() < 1e-4 && (h - 1.0).abs() < 1e-4,
@@ -2097,7 +2121,7 @@ mod tests {
             );
             assert!(!app.get_portrait_shown());
             let g = super::read_geometry(&app);
-            let c = g.effective_crop(4000.0, 6000.0);
+            let c = g.effective_crop(4000.0, 6000.0, None);
             assert!(
                 c.h * 6000.0 > c.w * 4000.0,
                 "the whole tall frame went wide"
@@ -2118,7 +2142,7 @@ mod tests {
         pick(&app, "Original");
         assert!(!app.get_plane_tall() && !app.get_portrait_shown());
         let g = super::read_geometry(&app);
-        let c = g.effective_crop(4000.0, 6000.0);
+        let c = g.effective_crop(4000.0, 6000.0, None);
         let (pw, ph) = g.plane_size(4000.0, 6000.0);
         assert!(
             c.w * pw > c.h * ph,
@@ -2323,6 +2347,142 @@ mod tests {
         app.invoke_crop_released();
     }
 
+    /// The 3:2 frame an OM System body records of its 4:3 sensor, and
+    /// the band it is of a 5184 by 3888 develop.
+    fn camera_three_two() -> greycard_core::raw::CameraFrame {
+        use greycard_core::raw::{CameraFrame, Orientation, Rect};
+        CameraFrame {
+            area: Rect {
+                x: 8,
+                y: 8,
+                width: 5184,
+                height: 3888,
+            },
+            frame: Rect {
+                x: 8,
+                y: 224,
+                width: 5184,
+                height: 3456,
+            },
+            orientation: Orientation::Normal,
+        }
+    }
+
+    /// Frame `i` opened as its develop lands, the camera having framed
+    /// `camera` of it: the develop drawn is the frame's own.
+    fn open_framed(
+        app: &App,
+        state: &Rc<crate::Shared>,
+        i: i32,
+        size: (u32, u32),
+        camera: greycard_core::raw::CameraFrame,
+    ) {
+        app.invoke_select(i);
+        let mut st = state.borrow_mut();
+        st.develop.source_size = size;
+        st.develop.shown_size = size;
+        st.develop.shown_turn = Some((i as usize, 0));
+        st.develop.drawn_camera = Some((camera, camera.orientation));
+        super::start_landed(&mut st, app);
+    }
+
+    fn ratio_of(c: &Crop, (w, h): (f32, f32)) -> f32 {
+        (c.w * w) / (c.h * h)
+    }
+
+    /// A frame the camera framed at 3:2 of its 4:3 sensor, with no crop
+    /// of its own: the crop in force is the camera's frame; Crop opens
+    /// on it under Original, which holds its 3:2; Done untouched stores
+    /// nothing; a drag stores a 3:2 crop as any drag does; Reset is no
+    /// crop again, the camera's frame; and 4:3 picked reaches the whole
+    /// sensor, stored.
+    #[test]
+    fn a_frame_the_camera_framed_crops_from_the_cameras_frame() {
+        let dir = crate::testing::scratch_dir("crop-camera-frame");
+        let raw = dir.join("P0000001.ORF");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, vec![raw.clone()]);
+        state.borrow_mut().window.write_sidecars = true;
+        app.set_panel_tab("Crop".into());
+        let size = (5184.0f32, 3888.0f32);
+        open_framed(&app, &state, 0, (5184, 3888), camera_three_two());
+        state.borrow_mut().develop.zoom = 1.0;
+        let in_force = |state: &Rc<crate::Shared>| {
+            let st = state.borrow();
+            let camera = crate::panel::viewport::camera_crop(&st);
+            super::read_geometry(&app).effective_crop(size.0, size.1, camera)
+        };
+        let band = in_force(&state);
+        assert!((ratio_of(&band, size) - 1.5).abs() < 1e-3, "{band:?}");
+        assert!(
+            (band.y - 216.0 / 3888.0).abs() < 1e-5 && band.w == 1.0,
+            "{band:?}"
+        );
+        press_crop(&app);
+        assert_eq!(app.get_aspect_name(), "Original", "on the panel");
+        assert_eq!(
+            in_force(&state),
+            band,
+            "the box opens on the camera's frame"
+        );
+        rest();
+        press_done(&app);
+        rest();
+        {
+            let st = state.borrow();
+            assert_eq!(
+                st.develop.edit,
+                greycard_edit::Edit::default(),
+                "nothing stored"
+            );
+            assert!(st.sidecars[0].history.is_empty(), "no step");
+            assert!(
+                !crate::panel::cull::crop_stored(&st, 0),
+                "stands in cut to the camera's frame"
+            );
+        }
+        press_crop(&app);
+        drag_corner(&app);
+        rest();
+        {
+            let st = state.borrow();
+            let geometry = &st.sidecars[0].current.geometry;
+            let c = geometry.crop.expect("the drag made a crop");
+            assert!(
+                (ratio_of(&c, size) - 1.5).abs() < 1e-3,
+                "Original holds the camera's 3:2: {c:?}"
+            );
+            assert!(
+                c.y >= band.y - 1e-4 && c.y + c.h <= band.y + band.h + 1e-4,
+                "{c:?}"
+            );
+        }
+        // Reset: no crop, the camera's frame again.
+        app.invoke_geometry_reset();
+        rest();
+        assert!(!app.get_geo_has_crop());
+        assert_eq!(in_force(&state), band);
+        // The whole sensor, by 4:3 picked: a crop stored, all of it.
+        pick(&app, "4:3");
+        rest();
+        let st = state.borrow();
+        let c = st.sidecars[0]
+            .current
+            .geometry
+            .crop
+            .expect("4:3 stores a crop");
+        assert!(c.x.abs() < 1e-4 && c.y.abs() < 1e-4, "{c:?}");
+        assert!(
+            (c.w - 1.0).abs() < 1e-4 && (c.h - 1.0).abs() < 1e-4,
+            "{c:?}"
+        );
+        // A crop of its own: the camera's picture stands in whole.
+        assert!(crate::panel::cull::crop_stored(&st, 0));
+        drop(st);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// Original over no crop is the whole frame, so opening the crop
     /// under it stores nothing: no edit, no step, no sidecar, until a
     /// drag takes the aspect into the edit.
@@ -2399,7 +2559,7 @@ mod tests {
         // The box drawn is the held aspect's, as the list says: the
         // viewport draws the panel's geometry while it is held.
         assert!(app.get_aspect_held());
-        let shown = super::read_geometry(&app).effective_crop(6000.0, 4000.0);
+        let shown = super::read_geometry(&app).effective_crop(6000.0, 4000.0, None);
         assert!(
             ((shown.w * 6000.0) / (shown.h * 4000.0) - 1.0).abs() < 1e-3,
             "the box on show is a square: {shown:?}"
@@ -2622,12 +2782,13 @@ mod tests {
             // step does, and the export sheet's size is the same frame.
             let shown = super::super::edit::read_edit(&app, &st.develop.edit, None)
                 .geometry
-                .frame(4000.0, 3000.0)
+                .frame(4000.0, 3000.0, None)
                 .size;
             assert_eq!(shown, (4000.0, 2667.0));
-            let export = greycard_engine::stages::framed_size((4000, 3000), stored);
+            let export = greycard_engine::stages::framed_size((4000, 3000), stored, None);
             assert_eq!(export, (4000, 2667));
-            let (tw, th) = greycard_engine::edited_pictures::fitted_size((4000, 3000), stored);
+            let (tw, th) =
+                greycard_engine::edited_pictures::fitted_size((4000, 3000), stored, None);
             assert!(
                 (tw as f32 / th as f32 - 1.5).abs() < 0.01,
                 "the kept picture: {tw}x{th}"
@@ -2820,7 +2981,7 @@ mod tests {
                 assert_eq!(stored, greycard_edit::Edit::default(), "{start} {arrived}");
                 assert!(st.sidecars[0].history.is_empty(), "{start} {arrived}");
                 assert_eq!(
-                    stored.geometry.frame(4000.0, 3000.0).size,
+                    stored.geometry.frame(4000.0, 3000.0, None).size,
                     (4000.0, 3000.0),
                     "{start} {arrived}"
                 );

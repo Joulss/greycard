@@ -764,6 +764,7 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
         frame.orientation = o;
     }
     frame.shot = shot_of(&metadata);
+    frame.shot.camera_frame = camera_frame_of(source, frame.crop);
     log::info!(
         "decoded {} {}: {}x{} {}, black {}, white {}",
         frame.make,
@@ -987,6 +988,24 @@ fn level_text(p: &LevelPattern) -> String {
     }
 }
 
+/// The camera's frame of a raw (`style::frame_stream`), kept when its
+/// area is the crop the develop cuts to, which the fractions it gives
+/// are of; a file the reader cannot read has none.
+fn camera_frame_of(source: &RawSource, crop: Option<Rect>) -> Option<crate::raw::CameraFrame> {
+    match super::style::frame_stream(std::io::Cursor::new(source.buf())) {
+        Ok(Some(c)) if Some(c.area) == crop => Some(c),
+        Ok(Some(c)) => {
+            log::debug!("the camera's frame {c:?} is of another area than the crop {crop:?}");
+            None
+        }
+        Ok(None) => None,
+        Err(e) => {
+            log::debug!("the camera's frame: {e}");
+            None
+        }
+    }
+}
+
 /// What the frame was shot at, from the metadata: the EXIF tags, and
 /// rawler's own lens table for a lens name when the tag is empty.
 pub(crate) fn shot_of(metadata: &RawMetadata) -> Shot {
@@ -1012,6 +1031,7 @@ pub(crate) fn shot_of(metadata: &RawMetadata) -> Shot {
         focus_distance: exif.subject_distance.as_ref().and_then(rational),
         iso: iso_of(exif),
         exposure_time: exif.exposure_time.as_ref().and_then(rational),
+        camera_frame: None,
     }
 }
 
@@ -2608,7 +2628,7 @@ mod tests {
                 (probe.clone(), mosaic, len),
                 "{name}"
             );
-            let ((p, m, style), _) = index_read_counted(&path).unwrap();
+            let ((p, m, style, _), _) = index_read_counted(&path).unwrap();
             assert_eq!((p, m), (probe.clone(), mosaic), "{name}");
             assert_eq!(
                 format!("{style:?}"),
@@ -2689,7 +2709,7 @@ mod tests {
             mosaic.unwrap(),
             format!("{:?}", super::super::style::CameraStyle::read(&path)),
         );
-        let ((p, m, style), read) = index_read_counted(&path).unwrap();
+        let ((p, m, style, _), read) = index_read_counted(&path).unwrap();
         assert_eq!((p, m, format!("{style:?}")), whole);
         assert!(read < len / 2, "{read} of {len}");
 
@@ -2710,7 +2730,7 @@ mod tests {
             assert!(at > 0, "no compression tag");
             Ok(true)
         };
-        let ((p, m, style), read) = index_read_with(&path, unknown).unwrap();
+        let ((p, m, style, _), read) = index_read_with(&path, unknown).unwrap();
         assert_eq!((p, m, format!("{style:?}")), whole);
         assert!(read > len, "{read} of {len}");
 
@@ -2788,6 +2808,7 @@ mod tests {
         // the preview, read of them.
         let mut totals: std::collections::BTreeMap<String, (usize, u64, u64, u64, u64)> =
             Default::default();
+        let mut framed = 0usize;
         for path in &raws {
             let len = std::fs::metadata(path).unwrap().len();
             let format = path
@@ -2835,7 +2856,7 @@ mod tests {
             };
             // The index's read: the probe and the mosaic as the whole
             // file gives them, and the style as the file read whole.
-            let ((probe, mosaic, style), index_read) = index_read_counted(path).unwrap();
+            let ((probe, mosaic, style, frame), index_read) = index_read_counted(path).unwrap();
             let (whole_probe, whole_mosaic) = probe_and_mosaic_source(&whole(), path).unwrap();
             assert_eq!(probe, whole_probe, "{}", path.display());
             assert_eq!(
@@ -2850,6 +2871,19 @@ mod tests {
                 "{}",
                 path.display()
             );
+            // The camera's frame read from the same pieces after the
+            // style as read alone: a folder with a frame shot at a
+            // ratio says so (the count below), so this compares a frame
+            // and not two nothings.
+            assert_eq!(
+                frame,
+                super::super::camera_frame_path(path).ok().flatten(),
+                "{}",
+                path.display()
+            );
+            if frame.is_some() {
+                framed += 1;
+            }
             // The pieces alone, the blocks not read filled with 0x00 and
             // then 0xFF: rawler's metadata the same both ways, so it
             // looked at no byte it was not given.
@@ -2909,6 +2943,7 @@ mod tests {
                 100.0 * *p as f64 / *l as f64
             );
         }
+        println!("{framed} of {} framed by the camera", raws.len());
     }
 
     #[test]
@@ -3147,9 +3182,15 @@ fn probe_and_mosaic_with(path: &Path, ends: Ends) -> Result<(Probe, MosaicRead, 
 }
 
 /// What the library's index reads of a raw: its probe, its kind of
-/// mosaic, and the maker's style ([`CameraStyle::read`]), the style's failure
-/// apart, since the probe beside it stands.
-pub type IndexRead = (Probe, MosaicRead, Result<Option<super::style::CameraStyle>>);
+/// mosaic, the maker's style ([`CameraStyle::read`]), the style's failure
+/// apart, since the probe beside it stands, and the camera's frame
+/// (`decode::camera_frame_path`), none where it will not read.
+pub type IndexRead = (
+    Probe,
+    MosaicRead,
+    Result<Option<super::style::CameraStyle>>,
+    Option<crate::raw::CameraFrame>,
+);
 
 /// [`IndexRead`] from the pieces of the file its metadata is in (see
 /// `decode::sparse`): the style read from the file's own bytes as it
@@ -3180,7 +3221,11 @@ fn index_read_with(path: &Path, fetch: Pieces) -> Result<(IndexRead, u64)> {
     let len = file.metadata()?.len();
     let Some(mut sparse) = super::sparse::Sparse::new(file, len) else {
         let (probe, mosaic, read) = probe_and_mosaic_with(path, cr3_ends)?;
-        return Ok(((probe, mosaic, super::style::CameraStyle::read(path)), read));
+        let frame = super::camera_frame_path(path).ok().flatten();
+        return Ok((
+            (probe, mosaic, super::style::CameraStyle::read(path), frame),
+            read,
+        ));
     };
     // The head first, in one read: the style and the pieces both start
     // there.
@@ -3189,6 +3234,14 @@ fn index_read_with(path: &Path, fetch: Pieces) -> Result<(IndexRead, u64)> {
         || half_copy_at(path),
         || super::style::read_stream(&mut sparse),
     );
+    let frame = guarded(
+        || half_copy_at(path),
+        || super::style::frame_stream(&mut sparse),
+    )
+    .unwrap_or_else(|e| {
+        log::debug!("{}: the camera's frame: {e}", path.display());
+        None
+    });
     // rawler's box parser, which the CR3's walk runs, panics on some
     // damaged heads; that is a file read whole, as an error is.
     let pieces = match guarded(|| None, || Ok(fetch(&mut sparse)?)) {
@@ -3200,16 +3253,25 @@ fn index_read_with(path: &Path, fetch: Pieces) -> Result<(IndexRead, u64)> {
     };
     let (buf, tried) = sparse.into_parts();
     let source = RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path);
+    // As the decode takes the frame: not where the decoder says it
+    // develops another size than the note's valid area
+    // (`decode::camera_frame_path` says why).
+    let frame = frame.filter(|f| {
+        let size = guarded(|| None, || probe_and_stance_source(&source, path))
+            .ok()
+            .and_then(|(_, stance)| stance.1);
+        f.develops_at(size)
+    });
     // A file small enough that its pieces were all of it is whole.
     let whole = tried >= len;
     if pieces && !whole {
         match guarded(|| None, || probe_and_mosaic_source(&source, path)) {
-            Ok((probe, Ok(m))) => return Ok(((probe, m, style), tried)),
+            Ok((probe, Ok(m))) => return Ok(((probe, m, style, frame), tried)),
             // Told by the compression tag, which the pieces hold: the
             // whole file would end the same way.
             Ok((probe, Err(e))) if e.contains(NIKON_HE) => {
                 log::warn!("{}: its mosaic: {e}", path.display());
-                return Ok(((probe, MosaicRead::Unknown, style), tried));
+                return Ok(((probe, MosaicRead::Unknown, style, frame), tried));
             }
             Ok((_, Err(e))) => {
                 log::debug!(
@@ -3233,7 +3295,7 @@ fn index_read_with(path: &Path, fetch: Pieces) -> Result<(IndexRead, u64)> {
                 log::warn!("{}: its mosaic: {e}", path.display());
                 MosaicRead::Unknown
             });
-            Ok(((probe, mosaic, style), tried + read))
+            Ok(((probe, mosaic, style, frame), tried + read))
         },
     )
 }
