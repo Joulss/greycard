@@ -22,9 +22,9 @@ use crate::panel::edit::{read_edit, read_folds, save_edit, show_folds, time_move
 use crate::panel::mask::{ask_for, bake_locals, chosen_shape, show_shape};
 use crate::panel::retouch::{patch_handles, pending_outlines, shown_outlines};
 use crate::panel::viewport::{
-    display_key, drawn_kind, drawn_picture, effective_zoom, picture_up, proof_settings,
-    schedule_snapshot, settle_source_size, show_crop_on_view, show_hover, show_source_shape,
-    source_known, source_to_view, sync_display, write_screenshot, zoom_label,
+    display_key, drawn_kind, effective_zoom, picture_up, proof_settings, schedule_snapshot,
+    settle_source_size, show_crop_on_view, show_hover, show_source_shape, source_known,
+    source_to_view, sync_display, write_screenshot, zoom_label,
 };
 use crate::render::{Renderer, View};
 use crate::worker::{Job, WhiteBase, Worker};
@@ -1282,35 +1282,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             show_thumb(st, &app, i, turns, flip);
                         }
                     }
-                    // The picture on screen: this frame's develop
-                    // once it has landed, and until then the one
-                    // still on the GPU, which the edit above is the
-                    // held one for. A select clears this frame's
-                    // size, and reading it here would draw whatever
-                    // is on screen into a one-pixel frame — the
-                    // canvas over the whole viewport.
-                    // A frame turned since is drawn turned from that
-                    // develop (`drawn_picture`).
-                    let ((dw, dh), lag) = drawn_picture(st);
-                    let (sw, sh) = (dw as f32, dh as f32);
-                    // An edit with no crop on a frame the camera framed
-                    // is framed to the camera's frame, as its export.
-                    let camera = crate::panel::viewport::camera_crop(st);
-                    let frame = if app.get_crop_mode() {
-                        edit.geometry.bounds(sw, sh)
-                    } else {
-                        edit.geometry.frame(sw, sh, camera)
-                    };
-                    let frame_size = (frame.size.0 as u32, frame.size.1 as u32);
-                    // The picture's size as an export writes it, for
-                    // the sheet's arithmetic.
-                    let exported = panel.geometry.frame(sw, sh, camera).size;
-                    app.set_frame_width(exported.0 as i32);
-                    app.set_frame_height(exported.1 as i32);
-                    if frame_size != st.develop.image_size {
-                        st.develop.image_size = frame_size;
-                        st.develop.center = (frame.size.0 / 2.0, frame.size.1 / 2.0);
-                    }
+                    // The frame on show, laid out (`viewport::frame_on_show`).
+                    let crate::panel::viewport::OnShow {
+                        source: (sw, sh),
+                        lag,
+                        frame,
+                    } = crate::panel::viewport::frame_on_show(st, &app, &edit, &panel);
                     // A focus point that came with this develop, after
                     // the zoom key went to 1:1 about the middle.
                     crate::panel::viewport::focus_arrived(st, &app);

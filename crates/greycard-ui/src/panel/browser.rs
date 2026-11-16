@@ -2409,6 +2409,9 @@ pub(crate) fn current_moved(st: &mut State) {
         crate::open_note::moved_to(file);
     }
     st.culling.tags.opened(file.as_deref());
+    // A zoom noted from a stand-in is for the frame it stood in for
+    // (`viewport::frame_on_show`).
+    st.develop.stood_view = None;
     if st.develop.open_sent.as_ref().map(|(_, frame)| frame)
         != crate::panel::edit::develop_of(st).as_ref()
     {

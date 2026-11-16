@@ -177,6 +177,124 @@ pub(crate) fn focus_arrived(st: &mut State, app: &App) {
     }
 }
 
+/// The develop's frame on show, as the render lays it out each frame:
+/// the source it is of, the quarter turns the develop on the GPU lags
+/// the open frame by, and the frame (the crop, or the turned source's
+/// bounds while cropping).
+pub(crate) struct OnShow {
+    pub(crate) source: (f32, f32),
+    pub(crate) lag: u8,
+    pub(crate) frame: greycard_edit::geometry::Frame,
+}
+
+/// The frame on show under `edit` (the edit the view draws; `panel`
+/// the panel's), laid out: the picture's size as an export writes it
+/// goes to the sheet, a frame of a new size is centered, and a develop
+/// that replaces a picture standing in for it takes on the zoom chosen
+/// there (`cull::stood_view`) about the same place in the picture.
+///
+/// The picture is this frame's develop once it has landed, and until
+/// then the one still on the GPU, which `edit` is the held one for. A
+/// select clears this frame's size, and reading it here would draw
+/// whatever is on screen into a one-pixel frame, the canvas over the
+/// whole viewport. A frame turned since is drawn turned from that
+/// develop ([`drawn_picture`]).
+pub(crate) fn frame_on_show(
+    st: &mut State,
+    app: &App,
+    edit: &greycard_edit::Edit,
+    panel: &greycard_edit::Edit,
+) -> OnShow {
+    let ((dw, dh), lag) = drawn_picture(st);
+    let (sw, sh) = (dw as f32, dh as f32);
+    // An edit with no crop on a frame the camera framed is framed to
+    // the camera's frame, as its export.
+    let camera = camera_crop(st);
+    let frame = if app.get_crop_mode() {
+        edit.geometry.bounds(sw, sh)
+    } else {
+        edit.geometry.frame(sw, sh, camera)
+    };
+    // The picture's size as an export writes it, for the sheet's
+    // arithmetic.
+    let exported = panel.geometry.frame(sw, sh, camera).size;
+    app.set_frame_width(exported.0 as i32);
+    app.set_frame_height(exported.1 as i32);
+    let size = (frame.size.0 as u32, frame.size.1 as u32);
+    // Only onto the develop it was noted for, of the open frame: a
+    // frame chosen since clears it (`browser::current_moved`), and a
+    // picture held from another frame is not this one's.
+    let stood = st
+        .develop
+        .stood_view
+        .take()
+        .filter(|v| v.generation == st.develop.drawn_generation && own_develop(st).is_some());
+    if let Some(stood) = stood {
+        let (zoom, center) = stood_onto(&stood, &edit.geometry, (sw, sh), &frame, camera);
+        st.develop.image_size = size;
+        st.develop.zoom = zoom;
+        st.develop.center = center;
+    } else if size != st.develop.image_size {
+        st.develop.image_size = size;
+        st.develop.center = (frame.size.0 / 2.0, frame.size.1 / 2.0);
+    }
+    OnShow {
+        source: (sw, sh),
+        lag,
+        frame,
+    }
+}
+
+/// A view on a picture standing in, as the zoom and center of the
+/// develop's `frame` (of a source `sw` by `sh` under `geometry`,
+/// `camera` its camera's frame) on the same place in the picture. A
+/// named level (a key, a click to 1:1, the zoom menu) stays that level
+/// of the develop; a free zoom (the wheel, a pinch) keeps its scale on
+/// screen. The stand-in may be another size than the develop, and the
+/// camera's JPEG all of the sensor where the edit crops.
+fn stood_onto(
+    stood: &crate::owners::StoodView,
+    geometry: &Geometry,
+    (sw, sh): (f32, f32),
+    frame: &greycard_edit::geometry::Frame,
+    camera: Option<greycard_edit::geometry::Crop>,
+) -> (f32, (f32, f32)) {
+    use crate::owners::Stood;
+    let (fx, fy) = stood.at;
+    let (center, width) = match stood.shows {
+        Stood::Frame => ((fx * frame.size.0, fy * frame.size.1), frame.size.0),
+        Stood::Camera { cut } => {
+            // The camera's picture is the source turned and mirrored
+            // as the frame is, cut to the camera's frame or not, and
+            // nothing else: the point through it to the source, and
+            // through the edit's geometry to its frame.
+            let plain = Geometry {
+                turns: geometry.turns,
+                flip: geometry.flip,
+                ..Geometry::default()
+            };
+            let whole = plain.frame(sw, sh, camera.filter(|_| cut));
+            let on = (
+                whole.origin.0 + fx * whole.size.0,
+                whole.origin.1 + fy * whole.size.1,
+            );
+            let source = plain.to_source(on, sw, sh);
+            let r = geometry.to_plane(source, sw, sh);
+            ((r.0 - frame.origin.0, r.1 - frame.origin.1), whole.size.0)
+        }
+    };
+    let center = (
+        center.0.clamp(0.0, frame.size.0),
+        center.1.clamp(0.0, frame.size.1),
+    );
+    let zoom = if stood.named {
+        stood.zoom
+    } else {
+        stood.zoom * stood.width / width.max(1.0)
+    };
+    (zoom, center)
+}
+
 /// Whether the picture the viewport draws has said where its camera
 /// focused, a point or none: the loupe's picture in hand with its
 /// file's head read (or of a file no read can find a point in), the
@@ -2415,6 +2533,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             st.develop.center.0 += px / old - px / new;
             st.develop.center.1 += py / old - py / new;
             st.develop.zoom = new;
+            st.develop.zoom_free = true;
             st.develop.zoom_back = None;
             app.window().request_redraw();
         });
@@ -2446,6 +2565,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 st.develop.center.0 += px / old - px / level;
                 st.develop.center.1 += py / old - py / level;
                 st.develop.zoom = level;
+                st.develop.zoom_free = false;
             }
             app.window().request_redraw();
         };
@@ -2541,6 +2661,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     Some(back) if back.frame == frame => {
                         tracing::info!("middle click: back from 200% to {}", back.zoom);
                         st.develop.zoom = back.zoom;
+                        st.develop.zoom_free = back.free;
                         st.develop.center = back.center;
                         app.window().request_redraw();
                     }
@@ -2554,6 +2675,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 let back = crate::owners::ZoomBack {
                     frame,
                     zoom: st.develop.zoom,
+                    free: st.develop.zoom_free,
                     center: st.develop.center,
                 };
                 tracing::info!("middle click: 200% from {}", st.develop.zoom);
@@ -2594,6 +2716,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         tracing::info!("zoom key: {level}:1 on the camera's focus point");
                         st.develop.zoom_back = None;
                         st.develop.zoom = level;
+                        st.develop.zoom_free = false;
                         st.develop.center = center;
                         app.window().request_redraw();
                         return;
@@ -2751,6 +2874,91 @@ pub(crate) mod tests {
     use greycard_edit::{Edit, WhiteBalance};
 
     use crate::testing::{click, window};
+
+    /// A point of the camera's picture standing in, under random turns,
+    /// mirrors, straightening, keystones, crops, and camera frames, cut
+    /// or not, lands within a pixel of the same source point on the
+    /// develop's frame wherever the frame holds it.
+    #[test]
+    fn a_stand_ins_point_lands_on_the_same_source_point() {
+        use crate::owners::{Stood, StoodView};
+        use greycard_edit::geometry::Crop;
+        let mut seed = 12345u64;
+        let mut rnd = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f32 / (1u64 << 53) as f32
+        };
+        let (sw, sh) = (6000.0f32, 4000.0f32);
+        for i in 0..2000 {
+            let g = Geometry {
+                turns: (rnd() * 4.0) as u8 % 4,
+                flip: rnd() < 0.5,
+                angle: if i % 3 == 0 {
+                    0.0
+                } else {
+                    (rnd() - 0.5) * 20.0
+                },
+                vertical: if i % 4 == 0 {
+                    (rnd() - 0.5) * 60.0
+                } else {
+                    0.0
+                },
+                horizontal: if i % 5 == 0 {
+                    (rnd() - 0.5) * 30.0
+                } else {
+                    0.0
+                },
+                crop: (rnd() < 0.5).then(|| {
+                    let (w, h) = (0.2 + rnd() * 0.5, 0.2 + rnd() * 0.5);
+                    Crop {
+                        x: rnd() * (1.0 - w),
+                        y: rnd() * (1.0 - h),
+                        w,
+                        h,
+                    }
+                }),
+                ..Geometry::default()
+            };
+            let camera = (rnd() < 0.5).then_some(Crop {
+                x: 0.0625,
+                y: 0.0,
+                w: 0.875,
+                h: 1.0,
+            });
+            let cut = rnd() < 0.5;
+            let frame = g.frame(sw, sh, camera);
+            let plain = Geometry {
+                turns: g.turns,
+                flip: g.flip,
+                ..Geometry::default()
+            };
+            let whole = plain.frame(sw, sh, camera.filter(|_| cut));
+            let at = (rnd(), rnd());
+            let stood = StoodView {
+                generation: 1,
+                zoom: 1.0,
+                named: true,
+                at,
+                width: whole.size.0,
+                shows: Stood::Camera { cut },
+            };
+            let (zoom, c) = stood_onto(&stood, &g, (sw, sh), &frame, camera);
+            assert!(zoom == 1.0 && c.0.is_finite() && c.1.is_finite(), "{i}");
+            let inside = c.0 > 0.0 && c.0 < frame.size.0 && c.1 > 0.0 && c.1 < frame.size.1;
+            if inside {
+                let on = (
+                    whole.origin.0 + at.0 * whole.size.0,
+                    whole.origin.1 + at.1 * whole.size.1,
+                );
+                let want = plain.to_source(on, sw, sh);
+                let got = g.to_source((c.0 + frame.origin.0, c.1 + frame.origin.1), sw, sh);
+                let miss = ((got.0 - want.0).powi(2) + (got.1 - want.1).powi(2)).sqrt();
+                assert!(miss < 1.0, "case {i}: {miss} px off");
+            }
+        }
+    }
 
     fn press_key(app: &App, text: &str) {
         use slint::platform::WindowEvent;

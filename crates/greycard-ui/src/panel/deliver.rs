@@ -714,8 +714,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if take_sources(&mut st, &sources) {
                 show_history(&st, app);
             }
-            // The picture held from the last file gives way, fitted.
-            if st.develop.held.take().is_some() {
+            // A zoom chosen on this frame's picture standing in stays,
+            // on the same place, when the develop's frame is laid out.
+            st.develop.stood_view = crate::panel::cull::stood_view(&st, generation);
+            // The picture held from the last file gives way, fitted,
+            // unless this frame was zoomed into since.
+            if st.develop.held.take().is_some() && st.develop.stood_view.is_none() {
                 st.develop.zoom = 0.0;
             }
             // A new source, or a fit view, is centered on the next
@@ -5126,6 +5130,7 @@ mod tests {
         st.develop.zoom_back = Some(crate::owners::ZoomBack {
             frame: Some((key, (60, 40))),
             zoom: 0.5,
+            free: false,
             center: (0.5, 0.5),
         });
         st.move_file(0, to.clone());

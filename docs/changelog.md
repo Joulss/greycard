@@ -240,6 +240,9 @@ design note behind it.
 - A frame full of fine texture (mesh, fabric, foliage) no longer reads
   as noisy, which had the profiled denoise smooth it far too much
   ([§694](https://github.com/jessolmstead/greycard/blob/master/docs/notes/694-a-mosaics-noise-line-past-texture.md)).
+- Zooming in while a frame is still developing no longer snaps back
+  to fit when the develop finishes
+  ([§697](https://github.com/jessolmstead/greycard/blob/master/docs/notes/697-a-zoom-over-the-stand-in-survives-the-develop.md)).
 - The right panel no longer stays scrolled past its last section,
   hiding the sections above, after a section gets shorter (issue 157,
   [§693](https://github.com/jessolmstead/greycard/blob/master/docs/notes/693-the-panel-keeps-to-its-sections.md)).

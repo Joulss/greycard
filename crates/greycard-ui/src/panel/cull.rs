@@ -278,6 +278,7 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     drop_placeholder(st, app);
     st.culling.hold = None;
     st.develop.generation += 1;
+    st.develop.stood_view = None;
     app.set_busy(false);
     app.set_navigator(slint::Image::default());
     app.set_scope_picture(slint::Image::default());
@@ -407,6 +408,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
         st.develop.held = st.line(drawn).map(|l| l.current.clone());
     }
     st.develop.generation += 1;
+    st.develop.stood_view = None;
     st.develop.zoom = 0.0;
     st.develop.image_size = (0, 0);
     crate::panel::viewport::settle_source_size(st);
@@ -1074,6 +1076,54 @@ pub(crate) fn standing_in(st: &State) -> Option<usize> {
     let file = st.culling.placeholder.as_ref()?.showing?;
     st.culling.hold.as_ref()?.cache.best(file)?;
     Some(file)
+}
+
+/// The zoom chosen on the open frame's own picture standing in, for
+/// the develop of `generation` that replaces it to take on
+/// (`viewport::frame_on_show`): a frame the user zoomed into while it
+/// developed stays zoomed on the same place. None at a fit, which the
+/// develop lands at anyway, and while another frame's picture stands
+/// in, whose zoom is not this frame's.
+pub(crate) fn stood_view(st: &State, generation: u64) -> Option<crate::owners::StoodView> {
+    use crate::owners::{Stood, StoodView};
+    let file = standing_in(st)?;
+    let replaced = st
+        .culling
+        .placeholder
+        .as_ref()
+        .is_some_and(|w| w.replaced_by(generation));
+    let (iw, ih) = st.develop.image_size;
+    if st.culling.cull.is_some()
+        || !replaced
+        || Some(file) != st.current
+        || st.develop.zoom <= 0.0
+        || iw == 0
+        || ih == 0
+    {
+        return None;
+    }
+    let (cx, cy) = st.develop.center;
+    // The command line's zoom about the middle stands into the
+    // develop as it is, centered (`placeholder_arrived`).
+    let middle = (cx - iw as f32 / 2.0).abs() < 0.5 && (cy - ih as f32 / 2.0).abs() < 0.5;
+    if st.launch.zoom_stands && middle {
+        return None;
+    }
+    let preview = st.culling.hold.as_ref()?.cache.best(file)?;
+    Some(StoodView {
+        generation,
+        zoom: st.develop.zoom,
+        named: !st.develop.zoom_free,
+        at: (cx / iw as f32, cy / ih as f32),
+        width: iw as f32,
+        shows: if preview.edited {
+            Stood::Frame
+        } else {
+            Stood::Camera {
+                cut: preview.cut || preview.companion,
+            }
+        },
+    })
 }
 
 /// The camera's picture of the frame being waited on is in hand: it
@@ -4061,6 +4111,375 @@ pub(crate) mod tests {
         let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(&app, developed(generation, (6000, 4000)));
         assert_eq!(state.borrow().develop.zoom, 0.0, "and under the develop");
+    }
+
+    /// Frame `file` chosen in Develop after a developed one, so the
+    /// picture on screen is held, with its camera picture of `source`
+    /// standing in (and its focus point told), laid out as `cull_frame`
+    /// lays it: fitted, centered.
+    fn stand_in_for(
+        app: &App,
+        state: &Rc<Shared>,
+        file: usize,
+        source: (u32, u32),
+        point: Option<(
+            greycard_core::raw::FocusPoint,
+            greycard_core::raw::Orientation,
+        )>,
+    ) {
+        app.invoke_select(file as i32);
+        let mut st = state.borrow_mut();
+        assert!(st.develop.held.is_some(), "the last frame is held");
+        focus_frame(&mut st, file, source, point);
+        assert_eq!(standing_in(&st), Some(file));
+        st.develop.zoom = 0.0;
+        st.develop.image_size = source;
+        st.develop.center = (source.0 as f32 / 2.0, source.1 as f32 / 2.0);
+    }
+
+    /// A frame drawn by the render as far as a window without a GPU
+    /// goes: a develop that landed taken up (`land_pending`), and the
+    /// develop's frame laid out by the render's own layout
+    /// (`viewport::frame_on_show`) when no stand-in draws.
+    fn draw_laid_out(app: &App, state: &Rc<Shared>) {
+        draw(app, state);
+        let mut st = state.borrow_mut();
+        if loupe_draws(&st) {
+            return;
+        }
+        let panel = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
+        let edit = crate::panel::startup::view_edit(&st, &panel);
+        crate::panel::viewport::frame_on_show(&mut st, app, &edit, &panel);
+    }
+
+    /// The open frame's develop of `size` landing and drawn.
+    fn land_and_lay_out(app: &App, state: &Rc<Shared>, size: (u32, u32)) {
+        let generation = state.borrow().develop.generation;
+        crate::panel::deliver::deliver(app, developed(generation, size));
+        draw_laid_out(app, state);
+        assert_eq!(
+            standing_in(&state.borrow()),
+            None,
+            "the develop replaced the stand-in"
+        );
+    }
+
+    fn view_of(state: &Rc<Shared>) -> (f32, (f32, f32)) {
+        let st = state.borrow();
+        (st.develop.zoom, st.develop.center)
+    }
+
+    fn near_view(got: (f32, (f32, f32)), want: (f32, (f32, f32)), what: &str) {
+        assert!(
+            (got.0 - want.0).abs() < 1e-3
+                && (got.1.0 - want.1.0).abs() < 1.0
+                && (got.1.1 - want.1.1).abs() < 1.0,
+            "{what}: {got:?}, not {want:?}"
+        );
+    }
+
+    /// A window with frame 0 developed and its white known, so the
+    /// next frame chosen holds it while it develops.
+    fn developed_window(count: usize, names: Option<&str>) -> (App, Rc<Shared>, Rc<Worker>) {
+        let app = window(count);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let files = match names {
+            Some(dir) => (0..count)
+                .map(|i| format!("/nowhere/{dir}/IMG_{i:04}.CR3").into())
+                .collect(),
+            None => folder(count),
+        };
+        let (state, worker) = state_for(&app, files);
+        app.invoke_select(0);
+        land_and_lay_out(&app, &state, (6000, 4000));
+        state.borrow_mut().develop.base_white = Some(crate::worker::WhiteBase::IDENTITY);
+        (app, state, worker)
+    }
+
+    /// A frame zoomed into by Space or Z while its camera picture
+    /// stands in stays zoomed on the same place when its develop
+    /// lands, at the level the key named: Space on the camera's focus
+    /// point at 1:1, Z at 3:1 about the middle and a pan on a JPEG half
+    /// the frame's size. It once snapped to fit.
+    #[test]
+    fn a_zoom_key_pressed_over_the_stand_in_stays_when_the_develop_lands() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let (app, state, _worker) = developed_window(4, Some("stood-zoom"));
+
+        // Space: 1:1 on the camera's point.
+        let point = FocusPoint {
+            area: [0.7, 0.2, 0.1, 0.1],
+            aspect: 1.5,
+        };
+        stand_in_for(
+            &app,
+            &state,
+            1,
+            (6000, 4000),
+            Some((point, Orientation::Normal)),
+        );
+        press(&app, " ");
+        near_view(view_of(&state), (1.0, (4500.0, 1000.0)), "Space");
+        land_and_lay_out(&app, &state, (6024, 4016));
+        near_view(
+            view_of(&state),
+            (1.0, (4518.0, 1004.0)),
+            "Space, the develop landed",
+        );
+
+        // Z: 3:1 about the middle, then a pan, on a JPEG half the
+        // frame's size: 3:1 of the develop, on the same place.
+        stand_in_for(&app, &state, 2, (3000, 2000), None);
+        press(&app, "z");
+        near_view(view_of(&state), (3.0, (1500.0, 1000.0)), "Z");
+        app.invoke_pan(30.0, -60.0);
+        let (_, (cx, cy)) = view_of(&state);
+        land_and_lay_out(&app, &state, (6000, 4000));
+        near_view(
+            view_of(&state),
+            (3.0, (cx * 2.0, cy * 2.0)),
+            "Z, the develop landed",
+        );
+    }
+
+    /// On a camera JPEG a quarter of the frame's width (the small
+    /// preview some raws carry), Space stays 1:1 of the develop on the
+    /// focus point, while a wheel's zoom keeps its scale on screen.
+    #[test]
+    fn a_small_stand_in_keeps_a_named_level_and_a_wheels_scale() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let (app, state, _worker) = developed_window(4, Some("stood-small"));
+        let point = FocusPoint {
+            area: [0.7, 0.2, 0.1, 0.1],
+            aspect: 1.5,
+        };
+        stand_in_for(
+            &app,
+            &state,
+            1,
+            (1500, 1000),
+            Some((point, Orientation::Normal)),
+        );
+        press(&app, " ");
+        near_view(view_of(&state), (1.0, (1125.0, 250.0)), "Space");
+        land_and_lay_out(&app, &state, (6000, 4000));
+        near_view(
+            view_of(&state),
+            (1.0, (4500.0, 1000.0)),
+            "1:1 of the develop",
+        );
+
+        stand_in_for(&app, &state, 2, (1500, 1000), None);
+        app.invoke_zoom(1.25, 500.0, 300.0);
+        app.invoke_zoom(4.0, 500.0, 300.0);
+        let (z, (cx, cy)) = view_of(&state);
+        land_and_lay_out(&app, &state, (6000, 4000));
+        near_view(
+            view_of(&state),
+            (z / 4.0, (cx * 4.0, cy * 4.0)),
+            "the wheel's scale on screen",
+        );
+    }
+
+    /// The wheel and a click to 1:1 over the stand-in are kept as the
+    /// keys are; a crop in the edit takes the place through it, the
+    /// camera's picture being of the whole sensor; and the next frame,
+    /// chosen while zoomed, still opens fitted under its stand-in and
+    /// its develop.
+    #[test]
+    fn a_wheel_or_click_zoom_over_the_stand_in_stays_through_a_crop() {
+        let (app, state, _worker) = developed_window(4, None);
+
+        // The wheel, about a point off the middle.
+        stand_in_for(&app, &state, 1, (6000, 4000), None);
+        app.invoke_zoom(1.25, 500.0, 300.0);
+        app.invoke_zoom(8.0, 500.0, 300.0);
+        let wheeled = view_of(&state);
+        assert!(wheeled.0 > 0.0, "the wheel zoomed");
+        land_and_lay_out(&app, &state, (6000, 4000));
+        near_view(view_of(&state), wheeled, "the wheel");
+
+        // A click to 1:1, with the edit's crop the right half.
+        stand_in_for(&app, &state, 2, (6000, 4000), None);
+        app.set_geo_has_crop(true);
+        app.set_geo_crop_x(0.5);
+        app.set_geo_crop_y(0.0);
+        app.set_geo_crop_w(0.5);
+        app.set_geo_crop_h(1.0);
+        let (vx, vy) = (
+            app.get_view_width() as f32 / 2.0,
+            app.get_view_height() as f32 / 2.0,
+        );
+        app.invoke_toggle_zoom(vx + 150.0, vy - 50.0);
+        let (zoom, (cx, cy)) = view_of(&state);
+        assert_eq!(zoom, 1.0, "the click went to 1:1");
+        assert!(
+            cx > 3500.0 && cy < 2000.0,
+            "on the crop, off its middle: {cx}, {cy}"
+        );
+        land_and_lay_out(&app, &state, (6000, 4000));
+        assert_eq!(state.borrow().develop.image_size, (3000, 4000));
+        near_view(
+            view_of(&state),
+            (1.0, (cx - 3000.0, cy)),
+            "1:1 through the crop",
+        );
+        app.set_geo_has_crop(false);
+
+        // The next frame, chosen at that zoom: fitted, as ever.
+        app.invoke_select(3);
+        let loaded = camera_picture(&state.borrow(), 3, (6000, 4000));
+        deliver_preview(&app, loaded);
+        assert_eq!(
+            state.borrow().develop.zoom,
+            0.0,
+            "fitted under the stand-in"
+        );
+        land_and_lay_out(&app, &state, (6000, 4000));
+        assert_eq!(state.borrow().develop.zoom, 0.0, "and under the develop");
+    }
+
+    /// A zoom on the stand-in noted as its develop lands is for that
+    /// frame alone: the next frame chosen before the window draws,
+    /// whose own develop then fails, shows the held picture fitted,
+    /// not at the last frame's place.
+    #[test]
+    fn a_frame_chosen_before_the_draw_takes_no_zoom_from_the_last() {
+        let (app, state, _worker) = developed_window(4, None);
+        stand_in_for(&app, &state, 1, (3000, 2000), None);
+        press(&app, "z");
+        app.invoke_pan(30.0, -60.0);
+        let generation = state.borrow().develop.generation;
+        crate::panel::deliver::deliver(&app, developed(generation, (6000, 4000)));
+        assert!(state.borrow().develop.stood_view.is_some(), "noted");
+        app.invoke_select(2);
+        assert!(
+            state.borrow().develop.stood_view.is_none(),
+            "gone with its frame"
+        );
+        let loaded = camera_picture(&state.borrow(), 2, (6000, 4000));
+        deliver_preview(&app, loaded);
+        draw_laid_out(&app, &state);
+        let generation = state.borrow().develop.generation;
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::Failed {
+                generation,
+                message: "unreadable".into(),
+            },
+        );
+        draw_laid_out(&app, &state);
+        assert_eq!(state.borrow().current, Some(2));
+        assert_eq!(view_of(&state).0, 0.0, "fitted");
+    }
+
+    /// Leaving Cull for Develop, the loupe's picture stands in for the
+    /// develop: a zoom and a pan on it are kept when it lands.
+    #[test]
+    fn a_zoom_on_the_loupes_picture_after_cull_stays_into_develop() {
+        let (app, state, worker) = developed_window(4, None);
+        {
+            let mut st = state.borrow_mut();
+            enter_cull(&mut st, &app, 1);
+            cull_select(&mut st, &app, 1);
+            focus_frame(&mut st, 1, (6000, 4000), None);
+            leave_cull(&mut st, &app, &worker, None);
+            assert!(st.develop.held.is_some(), "the last develop is held");
+            assert_eq!(standing_in(&st), Some(1), "the loupe's picture stands in");
+            st.develop.image_size = (6000, 4000);
+            st.develop.center = (3000.0, 2000.0);
+        }
+        press(&app, "z");
+        app.invoke_pan(30.0, -60.0);
+        let before = view_of(&state);
+        assert!(before.0 > 0.0);
+        land_and_lay_out(&app, &state, (6000, 4000));
+        near_view(view_of(&state), before, "from Cull");
+    }
+
+    /// A zoom on the stand-in taken back to fit before the develop
+    /// lands leaves it fitted and centered.
+    #[test]
+    fn a_zoom_taken_back_to_fit_over_the_stand_in_lands_fitted() {
+        let (app, state, _worker) = developed_window(4, None);
+        stand_in_for(&app, &state, 1, (6000, 4000), None);
+        press(&app, "z");
+        assert!(view_of(&state).0 > 0.0);
+        press(&app, "z");
+        assert_eq!(view_of(&state).0, 0.0, "Z again fits");
+        land_and_lay_out(&app, &state, (6000, 4000));
+        assert_eq!(view_of(&state), (0.0, (3000.0, 2000.0)));
+    }
+
+    /// Arrows taken while zoomed open each frame fitted: a late develop
+    /// of a frame left notes nothing, and a develop that lands while
+    /// the frame before's picture still stands in is fitted.
+    #[test]
+    fn frames_arrowed_through_while_zoomed_open_fitted() {
+        let (app, state, _worker) = developed_window(5, None);
+        stand_in_for(&app, &state, 1, (6000, 4000), None);
+        press(&app, "z");
+        let left = state.borrow().develop.generation;
+        app.invoke_select(2);
+        let loaded = camera_picture(&state.borrow(), 2, (6000, 4000));
+        deliver_preview(&app, loaded);
+        assert_eq!(view_of(&state).0, 0.0, "2 fitted under its stand-in");
+        crate::panel::deliver::deliver(&app, developed(left, (6000, 4000)));
+        assert!(
+            state.borrow().develop.stood_view.is_none(),
+            "a late develop notes nothing"
+        );
+        {
+            let mut st = state.borrow_mut();
+            st.develop.image_size = (6000, 4000);
+            st.develop.center = (3000.0, 2000.0);
+        }
+        press(&app, "z");
+        assert!(view_of(&state).0 > 0.0);
+        app.invoke_select(3);
+        let generation = state.borrow().develop.generation;
+        crate::panel::deliver::deliver(&app, developed(generation, (6000, 4000)));
+        draw_laid_out(&app, &state);
+        assert_eq!(view_of(&state).0, 0.0, "3 opens fitted");
+    }
+
+    /// The whole sensor's camera picture onto a crop, under each of the
+    /// edit's four quarter turns, mirrored and not: the same place.
+    #[test]
+    fn the_stand_ins_place_goes_through_every_turn_and_mirror_to_a_crop() {
+        for turns in 0..4i32 {
+            for flip in [false, true] {
+                let (app, state, _worker) = developed_window(4, None);
+                app.invoke_select(1);
+                app.set_geo_turns(turns);
+                app.set_geo_flip(flip);
+                let plane = if turns % 2 == 1 {
+                    (4000u32, 6000u32)
+                } else {
+                    (6000, 4000)
+                };
+                {
+                    let mut st = state.borrow_mut();
+                    focus_frame(&mut st, 1, (6000, 4000), None);
+                    st.develop.zoom = 1.0;
+                    st.develop.image_size = plane;
+                    st.develop.center = (0.7 * plane.0 as f32, 0.3 * plane.1 as f32);
+                }
+                app.set_geo_has_crop(true);
+                app.set_geo_crop_x(0.5);
+                app.set_geo_crop_y(0.0);
+                app.set_geo_crop_w(0.5);
+                app.set_geo_crop_h(1.0);
+                land_and_lay_out(&app, &state, (6000, 4000));
+                let want = (0.2 * plane.0 as f32, 0.3 * plane.1 as f32);
+                near_view(
+                    view_of(&state),
+                    (1.0, want),
+                    &format!("{turns} turns, mirrored {flip}"),
+                );
+            }
+        }
     }
 
     /// A develop as the worker delivers one: a picture of `size` and

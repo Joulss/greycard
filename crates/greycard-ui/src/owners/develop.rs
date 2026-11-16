@@ -111,6 +111,13 @@ pub(crate) struct Develop {
     /// Where a middle click's 200% came from, until any other change
     /// of the zoom.
     pub(crate) zoom_back: Option<ZoomBack>,
+    /// A zoom chosen on the picture standing in for the open frame's
+    /// develop, carried onto that develop's frame when it is first
+    /// laid out (`viewport::frame_on_show`).
+    pub(crate) stood_view: Option<StoodView>,
+    /// The zoom came from the wheel, a pinch, or the + and - keys, not
+    /// a named level (a key, a click to 1:1, the zoom menu).
+    pub(crate) zoom_free: bool,
     pub(crate) renderer: Option<Renderer>,
     /// The viewport's adapter as the log names it, for a report; none
     /// until the rendering setup has run.
@@ -478,5 +485,35 @@ pub(crate) struct FocusPending {
 pub(crate) struct ZoomBack {
     pub(crate) frame: Option<(crate::versions::Key, (u32, u32))>,
     pub(crate) zoom: f32,
+    /// That zoom came from the wheel or a pinch (`Develop::zoom_free`).
+    pub(crate) free: bool,
     pub(crate) center: (f32, f32),
+}
+
+/// The view on a picture standing in for a develop
+/// (`cull::stood_view`), for the develop of `generation` to take on.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct StoodView {
+    pub(crate) generation: u64,
+    /// Display pixels per pixel of the picture standing in.
+    pub(crate) zoom: f32,
+    /// A named level, which the develop takes as that level of itself;
+    /// a free zoom keeps its scale on screen.
+    pub(crate) named: bool,
+    /// The view's center, as fractions of the picture standing in.
+    pub(crate) at: (f32, f32),
+    /// The picture standing in's width, in the units of `zoom`.
+    pub(crate) width: f32,
+    /// What the picture standing in shows of the frame.
+    pub(crate) shows: Stood,
+}
+
+/// What a picture standing in for a develop shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Stood {
+    /// The edit's picture: the frame as the develop shows it.
+    Frame,
+    /// The camera's: its frame where `cut`, else the whole sensor,
+    /// turned and mirrored as the frame is, and nothing else.
+    Camera { cut: bool },
 }

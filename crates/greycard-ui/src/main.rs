@@ -985,6 +985,8 @@ impl State {
                 mat: false,
                 center: (0.0, 0.0),
                 zoom_back: None,
+                stood_view: None,
+                zoom_free: false,
                 renderer: None,
                 gpu: None,
                 start_note: None,
