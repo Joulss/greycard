@@ -140,7 +140,8 @@ export component Filmstrip inherits Rectangle {
                 // every frame in the set wears the selection's
                 // ground and a full ring, the set's the accent at
                 // 60%, the current one's the accent itself (Light's
-                // darker blue on Light). The ground alone is the
+                // darker blue on Light) and a pixel wider, over the
+                // picture's edge. The ground alone is the
                 // ring's 2 px under a picture that fills the cell,
                 // too little to find a set by, as the grid's plate
                 // round its smaller pictures is not.
@@ -193,6 +194,14 @@ export component Filmstrip inherits Rectangle {
                             horizontal-alignment: center;
                             vertical-alignment: center;
                         }
+                    }
+                    // The current frame's ring, a pixel wider than the
+                    // set's: drawn over the picture's edge, so nothing
+                    // moves.
+                    if on: Rectangle {
+                        border-radius: Theme.radius-sm;
+                        border-width: ring + 1px;
+                        border-color: Theme.accent-text;
                     }
                     // Over the picture's bottom corner, not in
                     // the row with the name: the badges must
