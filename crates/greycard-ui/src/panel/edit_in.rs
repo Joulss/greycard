@@ -1426,7 +1426,8 @@ mod tests {
         /// What the worker says taken in until `until` holds, as the
         /// window's event loop would take it.
         fn pump(&self, until: &dyn Fn(&Heard) -> bool, what: &str) {
-            let deadline = Instant::now() + Duration::from_secs(30);
+            // Long, for a loaded CI runner: a pass never waits it out.
+            let deadline = Instant::now() + Duration::from_secs(120);
             while !until(self) {
                 assert!(Instant::now() < deadline, "waiting for {what}");
                 self.take(Duration::from_millis(50));

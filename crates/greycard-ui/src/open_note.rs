@@ -666,7 +666,8 @@ pub(crate) mod tests {
     }
 
     /// A path comes back from the note as it went in: spaces at its
-    /// ends, a newline in it, and (on Unix) bytes that are not UTF-8.
+    /// ends, a newline in it, and (where the file system takes them)
+    /// bytes that are not UTF-8.
     #[test]
     fn a_noted_path_comes_back_byte_for_byte() {
         let (_root, config, frame) = setup("lossless");
@@ -677,11 +678,12 @@ pub(crate) mod tests {
         #[cfg(unix)]
         let names = {
             use std::os::unix::ffi::OsStrExt;
-            vec![
-                dir.join(" spaced .jpg "),
-                dir.join("two\nlines.jpg"),
-                dir.join(std::ffi::OsStr::from_bytes(b"latin-\xe9t\xe9.jpg")),
-            ]
+            let mut names = vec![dir.join(" spaced .jpg "), dir.join("two\nlines.jpg")];
+            // APFS refuses a name that is not UTF-8.
+            if !cfg!(target_os = "macos") {
+                names.push(dir.join(std::ffi::OsStr::from_bytes(b"latin-\xe9t\xe9.jpg")));
+            }
+            names
         };
         for name in names {
             std::fs::write(&name, b"x").unwrap();
