@@ -716,3 +716,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§702. The parity sweep names every field](notes/702-the-parity-sweep-names-every-field.md) (2026-11-15)
 - [§703. Spacing evened across the panels](notes/703-spacing-evened-across-the-panels.md) (2026-11-16)
 - [§704. The GPU marker held to the renderer's setup](notes/704-the-gpu-marker-held-to-the-renderers-setup.md) (2026-11-16)
+- [§705. Lightroom's .lrtemplate presets](notes/705-lightrooms-lrtemplate-presets.md) (2026-11-16)

@@ -149,15 +149,20 @@ fn unreadable_words(n: usize) -> String {
     }
 }
 
+/// The preset of the list called `name`, compared as a name is shown
+/// ([`preset::shown_name`]) on both sides.
+fn named<'a>(st: &'a State, name: &str) -> Option<&'a preset::Entry> {
+    let wanted = preset::shown_name(name);
+    st.develop
+        .presets
+        .iter()
+        .find(|e| preset::shown_name(&e.preset.name) == wanted)
+}
+
 /// The options the sheet makes, when it makes any.
 fn options(st: &State, app: &App) -> Option<Options> {
     let preset_name = app.get_import_preset();
-    let preset = st
-        .develop
-        .presets
-        .iter()
-        .find(|e| e.preset.name == preset_name.as_str())
-        .map(|e| e.preset.clone());
+    let preset = named(st, &preset_name).map(|e| e.preset.clone());
     Some(Options {
         source: st.import.source.clone()?,
         destination: st.import.destination.clone()?,
@@ -491,10 +496,14 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         }
         app.set_import_subfolder(kept.subfolder.into());
         app.set_import_name(kept.name.into());
+        // The list's own spelling of it: a name remembered before the
+        // list's names lost their control characters is still found.
         app.set_import_preset(if kept.preset.is_empty() {
             NONE.into()
         } else {
-            kept.preset.into()
+            named(st, &kept.preset)
+                .map_or(kept.preset, |e| e.preset.name.clone())
+                .into()
         });
     }
     let mut names = vec![slint::SharedString::from(NONE)];
@@ -1661,5 +1670,46 @@ mod tests {
             before.is_none_or(|(was, _)| after < was),
             "the wheel scrolled nothing: {after} from {before:?}"
         );
+    }
+
+    /// A preset remembered by a name with a control character in it,
+    /// from before the list's names lost theirs, is still the one the
+    /// sheet offers, in the list's spelling, and the one it uses.
+    #[test]
+    fn a_remembered_preset_is_found_by_its_shown_name() {
+        let dir =
+            std::env::temp_dir().join(format!("greycard-import-named-{}", std::process::id()));
+        crate::testing::remove_dir_retry(&dir);
+        let file = dir.join("greycard").join("settings.json");
+        settings::Settings {
+            import: settings::ImportChoices {
+                preset: "Warm\tOne".into(),
+                ..settings::ImportChoices::default()
+            },
+            ..settings::Settings::default()
+        }
+        .save_to(&file);
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.3;
+        let warm = Preset::from_edit("Warm\tOne", &edit, &[Section::Light]);
+        assert_eq!(warm.name, "Warm One");
+        {
+            let mut st = state.borrow_mut();
+            st.window.settings_file = Some(file.clone());
+            st.develop.presets = vec![Entry {
+                path: PathBuf::from("x.gcp"),
+                preset: warm,
+            }];
+        }
+        ask(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_import_preset(), "Warm One");
+        let st = state.borrow();
+        assert!(named(&st, "Warm\tOne").is_some());
+        assert!(named(&st, "Warm\u{1b}One").is_none(), "a dropped one joins");
+        assert!(named(&st, "Warm\u{1b} One").is_some());
+        drop(st);
+        crate::testing::remove_dir_retry(&dir);
     }
 }

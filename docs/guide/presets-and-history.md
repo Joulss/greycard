@@ -99,7 +99,8 @@ look's file has to be on the machine where you use the preset.
 Press **Import...** and choose one file or several:
 
 - a greycard preset (`.gcp`), from another machine or another user;
-- a Lightroom or Camera Raw preset (`.xmp`).
+- a Lightroom or Camera Raw preset (`.xmp`), or an older Lightroom
+  develop preset (`.lrtemplate`, from before Lightroom Classic 7.3).
 
 A Lightroom preset comes across as a starting point, not an exact
 match, because Lightroom's sliders work on a different tone pipeline.
@@ -111,7 +112,10 @@ or off only), luminance noise reduction, the post-crop vignette, grain
 and the lens profile switch.
 
 These do not: color noise reduction, defringe, the global color grade,
-calibration, a camera profile that is not Adobe's, and masks. Once the
+calibration, a camera profile that is not Adobe's, masks, and, in a
+preset of Lightroom's 2010 or 2003 process, Brightness, Contrast,
+Recovery, Fill Light, and Blacks (named as Lightroom's file names them,
+Shadows). Once the
 import is done, greycard names any of them the file set, so you can do
 them by hand: on the status line for one short preset, or on a small
 sheet when you chose several or the list is long.

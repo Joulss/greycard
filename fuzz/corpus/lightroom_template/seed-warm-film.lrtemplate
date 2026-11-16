@@ -1,0 +1,38 @@
+-- a comment before it
+s = {
+	id = "6A1C2E00-0000-4000-8000-000000000001",
+	internalName = "Warm Film",
+	title = "Warm \"Film\"\t\065",
+	type = "Develop",
+	value = {
+		settings = {
+			Exposure2012 = 0.35, -- in stops
+			Contrast2012 = 10,
+			WhiteBalance = "Custom",
+			Temperature = 4800,
+			Tint = 15,
+			ConvertToGrayscale = true,
+			GrayMixerRed = 40,
+			ToneCurveName2012 = "Custom",
+			ToneCurvePV2012 = { 0, 0, 64, 60, 255, 255, },
+			EnableSplitToning = true,
+			SplitToningShadowHue = 220,
+			SplitToningShadowSaturation = 20,
+			Sharpness = 40,
+			LensProfileEnable = 1,
+			CameraProfile = nil,
+			--[==[ a long comment
+			Exposure2012 = 3, ]] still in it ]==]
+			GradientBasedCorrections = {
+				{
+					CorrectionAmount = 1,
+					CorrectionMasks = { { What = "Mask/Gradient", ZeroX = 0.5, }, },
+					LocalExposure2012 = -0.4,
+				},
+			},
+			ProcessVersion = "6.7",
+		},
+		uuid = "6A1C2E00-0000-4000-8000-000000000002",
+	},
+	version = 0,
+}

@@ -89,6 +89,11 @@ fn short_is_its(raw: &Path) -> bool {
         )
 }
 
+/// The most of an XMP beside a raw read: one with many brush strokes
+/// or masks runs to some megabytes, and this is read on every open of
+/// a folder, from files anyone may have put there.
+const BESIDE_MOST: usize = 64 << 20;
+
 /// An XMP beside a raw that holds `crs:` settings, read.
 struct Beside {
     path: PathBuf,
@@ -101,8 +106,16 @@ struct Beside {
 fn read_beside(raw: &Path) -> Option<Beside> {
     let mut found: Vec<(Option<std::time::SystemTime>, Beside)> = Vec::new();
     for path in candidates(raw) {
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
+        let bytes = match crate::preset::bytes_at_most(&path, BESIDE_MOST) {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                log::warn!(
+                    "{}: larger than {} MB, not read",
+                    path.display(),
+                    BESIDE_MOST >> 20
+                );
+                continue;
+            }
             Err(e) => {
                 log::debug!("{}: {e}", path.display());
                 continue;
@@ -193,7 +206,7 @@ const AS_IT_CAME: &[(&str, f32)] = &[
     ("Exposure", 0.0),
     ("Contrast", 25.0),
     ("Brightness", 50.0),
-    ("Blacks", 5.0),
+    ("Shadows", 5.0),
     ("FillLight", 0.0),
     ("HighlightRecovery", 0.0),
     ("Clarity", 0.0),
@@ -313,6 +326,23 @@ fn take_over(raw: &Path, sidecar: &mut Sidecar, disk: &Meta) -> Option<Taken> {
         lightroom,
         sidecar.turn,
     );
+    // Settings moved from Lightroom's start that carry nothing here (an
+    // old process's sliders, a stray old key in a later file): nothing
+    // taken, so nothing written, and the next open finds it the same.
+    // The packet's meta is an open's adoption's, as for any XMP.
+    if edit == starting {
+        log::debug!(
+            "{}: the Lightroom develop in {} carries nothing here{}",
+            on_disk::file_name(raw),
+            on_disk::file_name(&path),
+            if imported.unmapped.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", imported.unmapped.join(", "))
+            }
+        );
+        return None;
+    }
     let mut unmapped = imported.unmapped;
     if let Cropped::Carried { .. } = cropped {
         unmapped.retain(|n| n != "crop");
@@ -738,6 +768,70 @@ pub(crate) mod tests {
             assert!(s.line.history.is_empty(), "{}", f.display());
             assert!(Sidecar::find(f).is_none(), "{}", f.display());
         }
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Settings moved from Lightroom's start that carry nothing here
+    /// (an old process's sliders, a stray old key in a later file) are
+    /// no take: nothing written, open after open, and not counted;
+    /// the packet's rating still comes as an open adopts it. A real
+    /// develop still takes.
+    #[test]
+    fn a_develop_that_carries_nothing_is_not_taken() {
+        let dir = folder("carries-nothing");
+        let packet = |attrs: &str| {
+            format!(
+                r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+                <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+                  xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" xmp:Rating="2" {attrs}/>
+                </rdf:RDF></x:xmpmeta>"#
+            )
+        };
+        for (name, attrs) in [
+            ("shadows.CR2", r#"crs:ProcessVersion="5.7" crs:Shadows="9""#),
+            (
+                "brightness.CR2",
+                r#"crs:ProcessVersion="5.7" crs:Brightness="70""#,
+            ),
+            (
+                "stray.CR2",
+                r#"crs:ProcessVersion="11.0" crs:Exposure2012="0" crs:Brightness="70""#,
+            ),
+        ] {
+            let raw = raw_in(&dir, name);
+            std::fs::write(xmp::long_path(&raw), packet(attrs)).unwrap();
+            assert!(waits(&raw), "{name}: moved from Lightroom's start");
+            for _ in 0..2 {
+                let (sidecar, _) = load_sidecar_said(&raw, BESIDE);
+                assert!(sidecar.line.history.is_empty(), "{name}");
+                assert_eq!(sidecar.meta.rating, 2, "{name}: the meta adopted");
+                assert!(Sidecar::find(&raw).is_none(), "{name}: nothing written");
+                let mut fresh = Sidecar::default();
+                assert_eq!(take_and_save(&raw, &mut fresh, Placement::Beside), None);
+                assert!(Sidecar::find(&raw).is_none(), "{name}: not counted");
+            }
+        }
+        // A develop that moves something still takes.
+        let real = raw_in(&dir, "real.CR2");
+        std::fs::write(
+            xmp::long_path(&real),
+            packet(r#"crs:ProcessVersion="5.7" crs:Shadows="9" crs:Exposure="+0.5""#),
+        )
+        .unwrap();
+        let mut fresh = Sidecar::default();
+        let taken = take_and_save(&real, &mut fresh, Placement::Beside).expect("taken");
+        assert!(taken.saved);
+        assert_eq!(taken.unmapped, ["Shadows"]);
+        assert!(Sidecar::find(&real).is_some());
+
+        // An XMP past the most read beside a raw is not read: no take,
+        // no panic.
+        let long = raw_in(&dir, "long.CR2");
+        let file = std::fs::File::create(xmp::long_path(&long)).unwrap();
+        file.set_len(BESIDE_MOST as u64 + 1).unwrap();
+        drop(file);
+        assert!(!waits(&long));
+        assert_eq!(path_for(&long), None);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

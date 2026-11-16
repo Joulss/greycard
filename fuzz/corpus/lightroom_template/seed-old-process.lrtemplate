@@ -1,0 +1,20 @@
+s = {
+	title = "Old Process",
+	type = "Develop",
+	value = {
+		settings = {
+			Exposure = 0.5,
+			Brightness = 50,
+			Contrast = 25,
+			Shadows = 5,
+			FillLight = 10,
+			HighlightRecovery = 20,
+			Clarity = 30,
+			ToneCurve = { 0, 0, 128, 140, 255, 255 },
+			WhiteBalance = "Tungsten",
+			Temperature = 0x12C0,
+			ProcessVersion = "5.7",
+		},
+	},
+	version = 0,
+}

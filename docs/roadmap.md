@@ -7,6 +7,9 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The XMP beside a raw is read whole, with no bound, by the
+      open's adoption (`xmp::adopt_own`) and the index's pass; the
+      take's own read stops at 64 MB (§705)
 - [ ] The GPU marker never gives up on a backend that keeps dying: a
       machine pinned to DX12 whose DX12 later dies at every start, or
       one with both backends counted dead, stays put until the file
@@ -1298,9 +1301,6 @@ clears or a tester asks for it.
 
 #### User Requests
 
-- [ ] Lightroom's older `.lrtemplate` presets load as the `.xmp` ones
-      do: a Lua table of the same settings, from before Lightroom
-      Classic 7.3; today they are passed over without a word
 - [ ] MIDI Controller support
 - [ ] HEIC/HEIF as pictures: HEVC is patent-encumbered, so nothing of
       ours ships a decoder; macOS through ImageIO, Linux and Windows

@@ -862,7 +862,7 @@ impl Preset {
         };
         Self {
             version: VERSION,
-            name: name.trim().to_string(),
+            name: shown_name(name).trim().to_string(),
             sections,
             parts,
             masks,
@@ -1007,6 +1007,7 @@ impl Preset {
         }
         obj.insert("version".into(), VERSION.into());
         let mut preset: Preset = serde_json::from_value(value)?;
+        preset.name = shown_name(&preset.name);
         preset.sections = Section::ALL
             .iter()
             .copied()
@@ -1051,6 +1052,70 @@ pub fn plain(e: &Error) -> String {
         Error::Io(e) => e.to_string(),
         e => e.to_string(),
     }
+}
+
+/// A name as a list or a terminal may show it: without control
+/// characters (C0, DEL, C1), which a file from anywhere can put in one
+/// and a terminal would take as orders. Tab, LF, VT, FF, CR, and NEL
+/// become an ASCII space and any other is dropped. A run of ASCII
+/// spaces the change made or touched (one holding such a space, or
+/// where a control was dropped) becomes one space, or none at either
+/// end. Every other character, other Unicode spaces and runs of spaces
+/// the change did not touch among them, stays as it was; a name
+/// without control characters is untouched.
+pub fn shown_name(name: &str) -> String {
+    if !name.chars().any(char::is_control) {
+        return name.to_string();
+    }
+    // What each character comes to: itself, a space it became, or
+    // nothing where it was dropped.
+    enum Kept {
+        Char(char),
+        Became,
+        Dropped,
+    }
+    let kept: Vec<Kept> = name
+        .chars()
+        .map(|c| match c {
+            '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | '\u{85}' => Kept::Became,
+            c if c.is_control() => Kept::Dropped,
+            c => Kept::Char(c),
+        })
+        .collect();
+    let mut out = String::with_capacity(name.len());
+    let mut i = 0;
+    while i < kept.len() {
+        if let Kept::Char(c) = kept[i]
+            && c != ' '
+        {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        // A run of ASCII spaces, spaces become, and drops.
+        let start = i;
+        let (mut spaces, mut touched) = (0, false);
+        while let Some(k) = kept.get(i) {
+            match k {
+                Kept::Char(' ') => spaces += 1,
+                Kept::Became => {
+                    spaces += 1;
+                    touched = true;
+                }
+                Kept::Dropped => touched = true,
+                Kept::Char(_) => break,
+            }
+            i += 1;
+        }
+        let at_an_end = start == 0 || i == kept.len();
+        match (touched, spaces) {
+            (false, n) => out.extend(std::iter::repeat_n(' ', n)),
+            (true, 0) => {}
+            (true, _) if at_an_end => {}
+            (true, _) => out.push(' '),
+        }
+    }
+    out
 }
 
 /// A file's stem as a name.
@@ -1317,8 +1382,10 @@ impl Store {
         }
     }
 
-    /// The preset called `name`, case aside; or, for a path that is a
-    /// file, that file.
+    /// The preset called `name`, case aside, compared as names are
+    /// shown ([`shown_name`]), so a name given with the control
+    /// characters a list's name lost still finds it; or, for a path
+    /// that is a file, that file.
     pub fn find(&self, name: &str) -> Option<Entry> {
         let path = Path::new(name);
         if path.is_file() {
@@ -1327,10 +1394,11 @@ impl Store {
                 preset,
             });
         }
-        let wanted = name.trim().to_lowercase();
+        let key = |n: &str| shown_name(n).trim().to_lowercase();
+        let wanted = key(name);
         self.list()
             .into_iter()
-            .find(|e| e.preset.name.to_lowercase() == wanted)
+            .find(|e| key(&e.preset.name) == wanted)
     }
 
     /// Write `preset` under its name, over one of the same name.
@@ -2747,6 +2815,49 @@ mod tests {
         assert_eq!(slug("Warm Film, v2"), "warm-film-v2");
         assert_eq!(slug("  --  "), "preset");
         assert_eq!(slug("Été/été"), "été-été");
+    }
+
+    /// A name with control characters in it, from a preset's JSON or
+    /// made from an edit, comes without them: no terminal escape
+    /// reaches the list or the command line. One without is as it was.
+    #[test]
+    fn a_name_loses_its_control_characters() {
+        assert_eq!(shown_name("a\0b\n\x1b[31mred"), "ab [31mred");
+        assert_eq!(shown_name("Warm\tFilm\r\n"), "Warm Film");
+        // DEL and CSI dropped; NEL, a line's end, a space.
+        assert_eq!(shown_name("\u{7f}x\u{85}y\u{9b}z"), "x yz");
+        assert_eq!(shown_name("\n\0\t"), "");
+        // Only the spaces the change made or touched run together;
+        // other spaces, Unicode's or a double one elsewhere, stay.
+        assert_eq!(shown_name("東京\u{3000}夜\t"), "東京\u{3000}夜");
+        assert_eq!(shown_name("a  b\tc"), "a  b c");
+        assert_eq!(shown_name("a \t b"), "a b");
+        assert_eq!(shown_name("a \0 b"), "a b");
+        assert_eq!(shown_name("\u{a0}x\u{2009}y\n"), "\u{a0}x\u{2009}y");
+        assert_eq!(shown_name("  a\u{1b}"), "  a");
+        assert_eq!(shown_name("  Two  spaces  "), "  Two  spaces  ");
+        assert_eq!(shown_name("Été"), "Été");
+        let made = Preset::from_edit("\u{1b}]0;title\u{7}Mine", &Edit::default(), &[]);
+        assert_eq!(made.name, "]0;titleMine");
+        let read =
+            Preset::from_json(r#"{"name": "a\u001b[2Jb", "sections": [], "edit": {}}"#).unwrap();
+        assert_eq!(read.name, "a[2Jb");
+        assert_eq!(Preset::from_json(&read.to_json()).unwrap(), read);
+
+        // The store finds it by the name as given before it lost them.
+        let d = dir("shown-name");
+        let store = Store::at(d.clone());
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        store
+            .save(&Preset::from_edit("Warm\tOne", &edit, &[Section::Light]))
+            .unwrap();
+        for asked in ["Warm\tOne", "warm one", "WARM\u{1b} one\n"] {
+            let found = store.find(asked).map(|e| e.preset.name);
+            assert_eq!(found.as_deref(), Some("Warm One"), "{asked:?}");
+        }
+        assert!(store.find("Warm\u{1b}One").is_none());
+        greycard_core::testing::remove_dir_retry(&d);
     }
 
     #[test]

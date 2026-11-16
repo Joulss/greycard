@@ -111,6 +111,9 @@ design note behind it.
 
 ### Develop
 
+- Lightroom's older `.lrtemplate` presets import as its `.xmp` ones do, from
+  the window, a folder, or the command line
+  ([§705](https://github.com/jessolmstead/greycard/blob/master/docs/notes/705-lightrooms-lrtemplate-presets.md)).
 - "Fit this camera's look" reads Olympus and OM System raws, taking an
   ORF's Picture Mode as its style. Thanks to the tester who shot the
   five modes (issue 139,
@@ -169,6 +172,12 @@ design note behind it.
 
 ### Fixes
 
+- An old-process Lightroom preset no longer imports its default Contrast as
+  +25, and names the older sliders it cannot carry
+  ([§705](https://github.com/jessolmstead/greycard/blob/master/docs/notes/705-lightrooms-lrtemplate-presets.md)).
+- A Lightroom sidecar that carries nothing greycard uses no longer leaves an
+  empty `.gcd` beside the raw at every open
+  ([§705](https://github.com/jessolmstead/greycard/blob/master/docs/notes/705-lightrooms-lrtemplate-presets.md)).
 - On Windows, a start killed by a graphics driver while the window is set
   up sends the next start through Direct3D 12, where an Intel driver had
   been missed

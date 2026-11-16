@@ -44,6 +44,7 @@ use greycard_core::image::WorkingImage;
 use greycard_core::raw::Orientation;
 use greycard_edit::Edit;
 use greycard_edit::look::{LookLut, LutChoice};
+use greycard_edit_io::lightroom::PROCESS_2012;
 use greycard_library::lightroom_exports::{self as lx, Confidence, Crop, Pairing};
 use greycard_match::color::{decode3, oklab};
 use greycard_match::register::{NCC_MIN, register};
@@ -87,10 +88,6 @@ const GROUPS: [&str; 14] = [
     "texture",
     "dehaze",
 ];
-
-/// The process version from which the sliders are the current ones,
-/// as the import has it.
-const PROCESS_2012: f32 = 6.7;
 
 /// A cut's shape and the export's may differ by this share and still be
 /// one turn of the other.

@@ -7,19 +7,20 @@ XMP, or filter text) and reads back the same, so a value the editor
 can read but not write again, such as a float that is not finite, is a
 crash.
 
-| Target            | Reads                                                      |
-|-------------------|------------------------------------------------------------|
-| `sidecar_json`    | an edit sidecar, `.gcd`                                    |
-| `edit_json`       | one edit, migrated from its schema                         |
-| `preset_json`     | a preset, `.gcp`, and the edit it makes                    |
-| `lightroom_xmp`   | a Lightroom preset or XMP sidecar, through the mapper      |
-| `lightroom_table` | a catalog's develop settings table, its curves, and crop   |
-| `pp3`             | a RawTherapee profile                                      |
-| `xmp_meta`        | the rating, flag, label, keywords, and text of an XMP      |
-| `filter`          | the filter language, printed back and parsed again         |
-| `dng_opcodes`     | a DNG's opcode list, its gain maps applied to a buffer     |
-| `dcp`             | a DCP camera profile, its map and look table on pixels     |
-| `focus_point`     | a raw's head to its focus point, every maker read          |
+| Target               | Reads                                                        |
+|----------------------|--------------------------------------------------------------|
+| `sidecar_json`       | an edit sidecar, `.gcd`                                      |
+| `edit_json`          | one edit, migrated from its schema                           |
+| `preset_json`        | a preset, `.gcp`, and the edit it makes                      |
+| `lightroom_xmp`      | a Lightroom preset or XMP sidecar, through the mapper        |
+| `lightroom_template` | an older Lightroom preset, `.lrtemplate`, through the mapper |
+| `lightroom_table`    | a catalog's develop settings table, its curves, and crop     |
+| `pp3`                | a RawTherapee profile                                        |
+| `xmp_meta`           | the rating, flag, label, keywords, and text of an XMP        |
+| `filter`             | the filter language, printed back and parsed again           |
+| `dng_opcodes`        | a DNG's opcode list, its gain maps applied to a buffer       |
+| `dcp`                | a DCP camera profile, its map and look table on pixels       |
+| `focus_point`        | a raw's head to its focus point, every maker read            |
 
 The seeds in `corpus/<target>/seed-*` are taken from the crates' own
 tests and fixtures. What a run adds to a corpus is ignored by git.

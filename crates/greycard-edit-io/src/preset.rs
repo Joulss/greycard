@@ -1,5 +1,5 @@
-//! Preset files brought in: a Lightroom `.xmp` or one of ours, read
-//! and written into a preset store.
+//! Preset files brought in: a Lightroom `.xmp` or `.lrtemplate`, or
+//! one of ours, read and written into a preset store.
 
 use std::path::{Path, PathBuf};
 
@@ -8,16 +8,63 @@ use greycard_edit::{Error, Result};
 
 use crate::lightroom::{self, Imported};
 
-/// Read a preset file of either kind: Lightroom's `.xmp`, or this
-/// engine's; the name from inside, or the file's stem.
+/// The extension of a Lightroom preset from before 7.3.
+pub const LRTEMPLATE: &str = "lrtemplate";
+
+/// Whether `path`'s extension is `ext`, case aside.
+fn has_extension(path: &Path, ext: &str) -> bool {
+    path.extension()
+        .and_then(|x| x.to_str())
+        .is_some_and(|x| x.eq_ignore_ascii_case(ext))
+}
+
+/// The most of one of our presets read, `.gcp` or a file of another
+/// name taken as one: its JSON holds no image and no look table (a
+/// look is named, its file found on the machine), the most of it a
+/// mask's brush strokes, some tens of bytes a point, so this is some
+/// two million points, past any preset painted by hand.
+pub const GCP_MOST: usize = 64 << 20;
+
+/// The bytes of `path`, read no further than a byte past `most`; none
+/// when there are more, whatever its size says (a pipe, a device, a
+/// file still growing), and nothing past it held.
+pub(crate) fn bytes_at_most(path: &Path, most: usize) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(most as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    Ok((bytes.len() <= most).then_some(bytes))
+}
+
+/// The text of `path`, read as [`bytes_at_most`] reads it; one longer
+/// than `most` is refused.
+fn read_at_most(path: &Path, most: usize) -> Result<String> {
+    let Some(bytes) = bytes_at_most(path, most)? else {
+        return Err(lightroom::too_large(most));
+    };
+    String::from_utf8(bytes).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "stream did not contain valid UTF-8",
+        )
+        .into()
+    })
+}
+
+/// Read a preset file of any kind: Lightroom's `.xmp` or older
+/// `.lrtemplate`, or this engine's; the name from inside, or the
+/// file's stem.
 pub fn import(path: &Path) -> Result<Imported> {
-    let text = std::fs::read_to_string(path)?;
-    if path
-        .extension()
-        .is_some_and(|x| x.eq_ignore_ascii_case("xmp"))
-    {
+    if has_extension(path, LRTEMPLATE) {
+        let text = read_at_most(path, lightroom::TEMPLATE_MOST)?;
+        return lightroom::read_template(&text, &stem_name(path));
+    }
+    if has_extension(path, "xmp") {
+        let text = read_at_most(path, lightroom::XMP_MOST)?;
         return lightroom::read(&text, &stem_name(path));
     }
+    let text = read_at_most(path, GCP_MOST)?;
     let mut preset = Preset::from_json(&text)?;
     if preset.name.is_empty() {
         preset.name = stem_name(path);
@@ -36,9 +83,9 @@ pub enum ImportError {
     /// The file would not read.
     #[error("{0}")]
     Unreadable(std::io::Error),
-    /// It read, and is not a preset: not XMP with Camera Raw settings
-    /// in it, not a preset's JSON, or one that carries nothing this
-    /// engine has. Why, in words.
+    /// It read, and is not a preset: not XMP or a `.lrtemplate` with
+    /// Camera Raw settings in it, not a preset's JSON, or one that
+    /// carries nothing this engine has. Why, in words.
     #[error("not a preset: {0}")]
     NotAPreset(String),
     /// A preset of ours from a build newer than this one: its schema.
@@ -56,8 +103,8 @@ pub enum ImportError {
     Unsaved(String, Error),
 }
 
-/// Bring a preset file into the store: Lightroom's `.xmp` or this
-/// engine's `.gcp`, read as [`import`] reads it, with what did not
+/// Bring a preset file into the store: Lightroom's `.xmp` or
+/// `.lrtemplate`, or this engine's `.gcp`, read as [`import`] reads it, with what did not
 /// come across. The editor's Import and the command line's
 /// `--import` both come here.
 ///
@@ -159,14 +206,13 @@ pub fn import_into_group(
     Ok((written, imported))
 }
 
-/// Whether a path names a preset file of either kind, by its
+/// Whether a path names a preset file of any kind, by its
 /// extension, case aside.
 fn is_preset_file(path: &Path) -> bool {
     path.is_file()
-        && path
-            .extension()
-            .and_then(|x| x.to_str())
-            .is_some_and(|x| x.eq_ignore_ascii_case("xmp") || x.eq_ignore_ascii_case(EXTENSION))
+        && ["xmp", LRTEMPLATE, EXTENSION]
+            .iter()
+            .any(|x| has_extension(path, x))
 }
 
 /// The files an import of `paths` brings in, each with the group its
@@ -395,6 +441,157 @@ mod tests {
             r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
           <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="{ev}">{group}</rdf:Description></rdf:RDF></x:xmpmeta>"#
         )
+    }
+
+    /// A `.lrtemplate` with the exposure at `ev`, titled `title`.
+    fn template(title: &str, ev: &str) -> String {
+        format!(
+            "s = {{\n\ttitle = \"{title}\",\n\ttype = \"Develop\",\n\tvalue = {{\n\t\tsettings = {{\n\
+             \t\t\tExposure2012 = {ev},\n\t\t\tRedHue = 10,\n\t\t}},\n\t}},\n\tversion = 0,\n}}\n"
+        )
+    }
+
+    /// Lightroom's older presets come in wherever its XMP ones do: a
+    /// file named, in any case, and a folder's, beside XMP and ours;
+    /// one of another type is no preset; one past the most a template
+    /// may be is refused unread.
+    #[test]
+    fn an_lrtemplate_imports_as_an_xmp_does() {
+        let d = dir("lrtemplate");
+        let pack = d.join("Old Pack");
+        std::fs::create_dir_all(pack.join("Mono")).unwrap();
+        std::fs::write(pack.join("warm.lrtemplate"), template("Warm", "0.5")).unwrap();
+        std::fs::write(pack.join("cool.xmp"), lightroom("-0.5", None)).unwrap();
+        std::fs::write(
+            pack.join("Mono").join("Tri-X.LRTEMPLATE"),
+            template("Tri-X", "1"),
+        )
+        .unwrap();
+        let got = import(&pack.join("warm.lrtemplate")).unwrap();
+        assert_eq!(got.preset.name, "Warm");
+        assert_eq!(got.preset.edit.light.exposure, 0.5);
+        assert_eq!(got.unmapped, vec!["RedHue"]);
+        let g = |s: &str| Some(s.to_string());
+        let gathered = gather(std::slice::from_ref(&pack));
+        assert_eq!(
+            gathered,
+            [
+                (pack.join("cool.xmp"), g("Old Pack")),
+                (pack.join("warm.lrtemplate"), g("Old Pack")),
+                (pack.join("Mono").join("Tri-X.LRTEMPLATE"), g("Mono")),
+            ]
+        );
+        let store = Store::at(d.join("store"));
+        for (path, folder) in &gathered {
+            import_into_group(&store, path, false, folder.as_deref()).unwrap();
+        }
+        let listed: Vec<(Option<String>, String)> = store
+            .list()
+            .into_iter()
+            .map(|e| (store.group_of(&e.path), e.preset.name))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (g("Mono"), "Tri-X".to_string()),
+                (g("Old Pack"), "cool".into()),
+                (g("Old Pack"), "Warm".into()),
+            ]
+        );
+
+        let export = d.join("export.lrtemplate");
+        std::fs::write(
+            &export,
+            "s = { title = \"Web\", type = \"Export\", value = { settings = { Exposure2012 = 1 } } }",
+        )
+        .unwrap();
+        match import_into(&store, &export, false) {
+            Err(ImportError::NotAPreset(why)) => {
+                assert_eq!(why, "no Camera Raw settings in the file")
+            }
+            other => panic!("{other:?}"),
+        }
+        let large = d.join("large.lrtemplate");
+        let file = std::fs::File::create(&large).unwrap();
+        file.set_len(crate::lightroom::TEMPLATE_MOST as u64 + 1)
+            .unwrap();
+        drop(file);
+        match import_into(&store, &large, false) {
+            Err(ImportError::NotAPreset(why)) => assert_eq!(why, "larger than 2 MB"),
+            other => panic!("{other:?}"),
+        }
+        greycard_core::testing::remove_dir_retry(&d);
+    }
+
+    /// A preset file is read no further than a byte past its kind's
+    /// most, whatever its size says: an XMP past its own, a template
+    /// one byte past, one that is a pipe fed without end, and one that
+    /// is a device saying it is empty are refused there; one at the
+    /// most still reads.
+    #[test]
+    fn a_preset_file_is_read_no_further_than_its_most() {
+        let d = dir("bounded");
+        std::fs::create_dir_all(&d).unwrap();
+        let refused = |path: &Path, most: usize| match import(path) {
+            Err(Error::Preset(why)) => assert_eq!(why, format!("larger than {} MB", most >> 20)),
+            other => panic!("{}: {other:?}", path.display()),
+        };
+        let xmp = d.join("long.xmp");
+        let mut text = lightroom("+0.5", None);
+        text.push_str(&" ".repeat(crate::lightroom::XMP_MOST + 1 - text.len()));
+        std::fs::write(&xmp, &text).unwrap();
+        refused(&xmp, crate::lightroom::XMP_MOST);
+        text.pop();
+        std::fs::write(&xmp, &text).unwrap();
+        assert_eq!(import(&xmp).unwrap().preset.edit.light.exposure, 0.5);
+
+        let most = crate::lightroom::TEMPLATE_MOST;
+        let at = d.join("at.lrtemplate");
+        let mut text = template("At", "1");
+        text.push_str(&" ".repeat(most - text.len()));
+        std::fs::write(&at, &text).unwrap();
+        assert_eq!(import(&at).unwrap().preset.name, "At");
+        text.push(' ');
+        std::fs::write(&at, &text).unwrap();
+        refused(&at, most);
+
+        #[cfg(unix)]
+        {
+            // A device that says it is empty and never ends.
+            let zero = d.join("zero.lrtemplate");
+            std::os::unix::fs::symlink("/dev/zero", &zero).unwrap();
+            refused(&zero, most);
+            // Ours, and a file of no kind taken as ours, the same.
+            for name in ["zero.gcp", "zero"] {
+                let zero = d.join(name);
+                std::os::unix::fs::symlink("/dev/zero", &zero).unwrap();
+                refused(&zero, GCP_MOST);
+            }
+            // A pipe, fed four times the most by a writer that stops
+            // when the reading end goes.
+            let fifo = d.join("fifo.lrtemplate");
+            let made = std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap();
+            assert!(made.success());
+            let writer = {
+                let fifo = fifo.clone();
+                std::thread::spawn(move || {
+                    use std::io::Write;
+                    let mut pipe = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
+                    let chunk = vec![b' '; 1 << 16];
+                    let mut sent = 0;
+                    while sent < 4 * most && pipe.write_all(&chunk).is_ok() {
+                        sent += chunk.len();
+                    }
+                    sent
+                })
+            };
+            refused(&fifo, most);
+            assert!(writer.join().unwrap() < 4 * most, "stopped by the reader");
+        }
+        greycard_core::testing::remove_dir_retry(&d);
     }
 
     /// A Lightroom preset folder imported is a group of its name, and

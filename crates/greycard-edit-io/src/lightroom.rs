@@ -15,7 +15,9 @@
 //!
 //! A Lightroom catalog keeps the same keys for each image as a Lua
 //! table rather than XMP ([`read_table`]), and its smart collections'
-//! rules in the same form ([`parse_table`]).
+//! rules in the same form ([`parse_table`]). A preset from before
+//! Lightroom 7.3, a `.lrtemplate`, is that table too, around a title
+//! and a type ([`read_template`]).
 
 use std::collections::BTreeMap;
 
@@ -25,7 +27,7 @@ pub mod crop;
 use greycard_edit::curve::Point;
 use greycard_edit::grading::Wheel;
 use greycard_edit::mixer::BANDS;
-use greycard_edit::preset::{Preset, Section};
+use greycard_edit::preset::{Preset, Section, shown_name};
 use greycard_edit::{Edit, Error, Result, WhiteBalance};
 
 /// The Camera Raw settings namespace.
@@ -252,6 +254,7 @@ pub fn read_with(xml: &str, fallback: &str, scales: &Scales, offset: f32) -> Res
         group,
     } = settings_in(xml)?;
     let name = name
+        .map(|n| shown_name(&n))
         .filter(|n| !n.trim().is_empty())
         .unwrap_or_else(|| fallback.to_string());
     let mut imported = map(name, &keys, &curves, scales, offset);
@@ -348,13 +351,110 @@ pub fn read_table_for(text: &str, name: &str, camera: Option<&str>) -> Result<Im
 /// Exposure slider: the fit's way in, and the two above.
 pub fn read_table_with(text: &str, name: &str, scales: &Scales, offset: f32) -> Result<Imported> {
     let top = parse_table(text).map_err(Error::Preset)?;
+    let (keys, curves) = table_settings(&top);
+    if keys.is_empty() && curves.is_empty() {
+        return Err(Error::Preset("no Camera Raw settings in the table".into()));
+    }
+    Ok(map(name.to_string(), &keys, &curves, scales, offset))
+}
+
+/// The most of a `.lrtemplate` read: Lightroom's run to tens of
+/// kilobytes, a few hundred with many brush strokes in them. A table
+/// takes many times its text in memory, so the bound is kept close.
+pub const TEMPLATE_MOST: usize = 2 << 20;
+
+/// The most of an XMP preset read: Lightroom's run to tens of
+/// kilobytes, a megabyte or two with many brush strokes or a mask's
+/// points in them.
+pub const XMP_MOST: usize = 16 << 20;
+
+/// The refusal of a file past `most` bytes.
+pub(crate) fn too_large(most: usize) -> Error {
+    Error::Preset(format!("larger than {} MB", most >> 20))
+}
+
+/// Read a Lightroom develop preset of the kind Lightroom wrote before
+/// 7.3, a `.lrtemplate`: a Lua table, `s = { title = "...", type =
+/// "Develop", value = { settings = { ... } } }`, whose settings are the
+/// Camera Raw keys a catalog's table holds, mapped as [`read`] maps an
+/// XMP's. The name is the title, or `fallback` when it is blank. Read
+/// strictly ([`parse_lua`]): this is a file from anywhere. A preset of
+/// another type (an export's, a metadata one) is refused, as an XMP
+/// with no Camera Raw settings is.
+pub fn read_template(text: &str, fallback: &str) -> Result<Imported> {
+    read_template_with(text, fallback, &Scales::DEFAULT, 0.0)
+}
+
+/// [`read_template`] under `scales` with `offset` stops added to the
+/// Exposure slider.
+pub fn read_template_with(
+    text: &str,
+    fallback: &str,
+    scales: &Scales,
+    offset: f32,
+) -> Result<Imported> {
+    if text.len() > TEMPLATE_MOST {
+        return Err(too_large(TEMPLATE_MOST));
+    }
+    let top = parse_lua(text, true).map_err(Error::Preset)?;
+    // The last of a key written twice, as Lua takes it.
+    fn entry<'a>(items: &'a [(Option<String>, Value)], k: &str) -> Option<&'a Value> {
+        items
+            .iter()
+            .rev()
+            .find(|(key, _)| key.as_deref() == Some(k))
+            .map(|(_, v)| v)
+    }
+    let no_settings = || Error::Preset("no Camera Raw settings in the file".into());
+    match entry(&top, "type") {
+        Some(Value::Word(t)) if t == "Develop" => {}
+        other => {
+            let kind = match other {
+                Some(Value::Word(t)) => format!("{:?}", t.chars().take(40).collect::<String>()),
+                Some(Value::Table(_)) => "a table".into(),
+                None => "none".into(),
+            };
+            log::debug!("lrtemplate of type {kind}, not Develop");
+            return Err(no_settings());
+        }
+    }
+    let Some(Value::Table(value)) = entry(&top, "value") else {
+        return Err(no_settings());
+    };
+    let Some(Value::Table(settings)) = entry(value, "settings") else {
+        return Err(no_settings());
+    };
+    let (keys, curves) = table_settings(settings);
+    if keys.is_empty() && curves.is_empty() {
+        return Err(no_settings());
+    }
+    let name = match entry(&top, "title") {
+        Some(Value::Word(t)) => shown_name(&localized(t.trim())),
+        _ => String::new(),
+    };
+    let name = if name.trim().is_empty() {
+        fallback.to_string()
+    } else {
+        name
+    };
+    Ok(map(name, &keys, &curves, scales, offset))
+}
+
+/// The keys and point curves of a settings table, as [`map`] takes
+/// them from an XMP: a word as written, a curve's flat list as its
+/// points, and a table that is not a curve (the masks, the spots
+/// healed, the Enhance filters) as its key alone, so what it holds is
+/// named among what did not come across.
+fn table_settings(
+    top: &[(Option<String>, Value)],
+) -> (BTreeMap<String, String>, BTreeMap<String, Vec<Point>>) {
     let mut keys: BTreeMap<String, String> = BTreeMap::new();
     let mut curves: BTreeMap<String, Vec<Point>> = BTreeMap::new();
     for (key, value) in top {
-        let Some(key) = key else { continue };
+        let Some(key) = key.clone() else { continue };
         match value {
             Value::Word(word) => {
-                keys.insert(key, word);
+                keys.insert(key, word.clone());
             }
             Value::Table(items) if key.starts_with("ToneCurve") && !key.ends_with("Name") => {
                 // The points flat, x then y, on 0..255. A word that is
@@ -382,10 +482,7 @@ pub fn read_table_with(text: &str, name: &str, scales: &Scales, offset: f32) -> 
             Value::Table(_) => {}
         }
     }
-    if keys.is_empty() && curves.is_empty() {
-        return Err(Error::Preset("no Camera Raw settings in the table".into()));
-    }
-    Ok(map(name.to_string(), &keys, &curves, scales, offset))
+    (keys, curves)
 }
 
 /// One value of a serialized table: a word as written (a string's
@@ -399,12 +496,32 @@ pub enum Value {
 
 /// The entries of a Lua table as Lightroom writes one, `name = { ...
 /// }` or the bare table: keys as names or `["quoted"]`, values strings,
-/// numbers, booleans, `nil` and tables. Nothing else of Lua is read.
+/// numbers, booleans, `nil` and tables. Comments (`--`) and a byte-order
+/// mark are passed over; nothing else of Lua is read.
 pub fn parse_table(text: &str) -> std::result::Result<Vec<(Option<String>, Value)>, String> {
+    parse_lua(text, false)
+}
+
+/// [`parse_table`], or with `strict` the same subset read as Lua
+/// reads it, for a file from anywhere (a `.lrtemplate`): a bare word
+/// is `true`, `false`, `nil`, or a number, else an error; a string's
+/// escapes are Lua's and no line ends inside one; and an entry set to
+/// `nil` is no entry. A catalog's text is read without, as it always
+/// was.
+fn parse_lua(
+    text: &str,
+    strict: bool,
+) -> std::result::Result<Vec<(Option<String>, Value)>, String> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut p = Lua {
         s: text.as_bytes(),
         at: 0,
         depth: 0,
+        strict,
+        nil: false,
+        named: false,
+        unclosed: false,
+        entries: 0,
     };
     p.space();
     // `s = ` before the table, when there is one.
@@ -420,6 +537,9 @@ pub fn parse_table(text: &str) -> std::result::Result<Vec<(Option<String>, Value
         return Err("the settings are not a table".into());
     };
     p.space();
+    if p.unclosed {
+        return Err("a comment runs to the end".into());
+    }
     if p.at < p.s.len() {
         return Err(format!("text after the table, at byte {}", p.at));
     }
@@ -430,11 +550,32 @@ pub fn parse_table(text: &str) -> std::result::Result<Vec<(Option<String>, Value
 /// damaged or hostile text nested further would run the stack out.
 const DEEPEST: usize = 64;
 
+/// The most entries, in all its tables together, a strict reading
+/// takes: a template with many brush strokes holds some tens of
+/// thousands, and each costs some tens of bytes held.
+const MOST_ENTRIES: usize = 250_000;
+
+/// The most `=` a long string's or comment's brackets may hold
+/// (`[==[ ... ]==]`): Lightroom writes two at most, and a long run of
+/// them would make each `]` inside a long search.
+const LONGEST: usize = 16;
+
 struct Lua<'a> {
     s: &'a [u8],
     at: usize,
     /// The tables open around the reader.
     depth: usize,
+    /// Read as Lua reads it ([`parse_lua`]).
+    strict: bool,
+    /// The value just read was the bare word `nil`.
+    nil: bool,
+    /// The value next read is a preset's `title` or `internalName`,
+    /// which Adobe's own presets write as `ZSTR "..."`.
+    named: bool,
+    /// A long comment ran to the end of the text.
+    unclosed: bool,
+    /// The entries read so far, in every table.
+    entries: usize,
 }
 
 impl Lua<'_> {
@@ -450,9 +591,27 @@ impl Lua<'_> {
         ate
     }
 
+    /// Past white space and comments: `--` to the end of the line, or
+    /// `--[[ ... ]]` as long as it runs.
     fn space(&mut self) {
-        while self.peek().is_some_and(|c| c.is_ascii_whitespace()) {
-            self.at += 1;
+        loop {
+            while self.peek().is_some_and(|c| c.is_ascii_whitespace()) {
+                self.at += 1;
+            }
+            if !self.s[self.at..].starts_with(b"--") {
+                return;
+            }
+            self.at += 2;
+            if let Some(level) = self.long_open() {
+                if self.long_close(level).is_none() {
+                    self.unclosed = true;
+                    self.at = self.s.len();
+                }
+            } else {
+                while self.peek().is_some_and(|c| c != b'\n') {
+                    self.at += 1;
+                }
+            }
         }
     }
 
@@ -475,8 +634,15 @@ impl Lua<'_> {
 
     fn value(&mut self) -> std::result::Result<Value, String> {
         self.space();
+        self.nil = false;
+        let named = std::mem::take(&mut self.named);
         match self.peek() {
-            Some(b'{') => self.table(),
+            Some(b'{') => {
+                let table = self.table();
+                // A `nil` inside is not this value.
+                self.nil = false;
+                table
+            }
             Some(q @ (b'"' | b'\'')) => {
                 self.at += 1;
                 self.quoted(q).map(Value::Word)
@@ -491,9 +657,34 @@ impl Lua<'_> {
                 }) {
                     self.at += 1;
                 }
-                Ok(Value::Word(
-                    String::from_utf8_lossy(&self.s[start..self.at]).into_owned(),
-                ))
+                let word = String::from_utf8_lossy(&self.s[start..self.at]).into_owned();
+                if !self.strict {
+                    return Ok(Value::Word(word));
+                }
+                match word.as_str() {
+                    "true" | "false" => Ok(Value::Word(word)),
+                    // `ZSTR "$$$/Key=Name"`, a call Lightroom makes to
+                    // look the name up: the string, the one call read.
+                    "ZSTR" if named => {
+                        self.space();
+                        match self.peek() {
+                            Some(q @ (b'"' | b'\'')) => {
+                                self.at += 1;
+                                self.quoted(q).map(Value::Word)
+                            }
+                            Some(b'[') => self.long().map(Value::Word),
+                            _ => Err(format!("\"ZSTR\" at byte {start}")),
+                        }
+                    }
+                    "nil" => {
+                        self.nil = true;
+                        Ok(Value::Word(word))
+                    }
+                    _ => lua_number(&word).map(Value::Word).ok_or_else(|| {
+                        let shown: String = word.chars().take(24).collect();
+                        format!("{shown:?} at byte {start}")
+                    }),
+                }
             }
             Some(c) => Err(format!("{:?} at byte {}", c as char, self.at)),
             None => Err("the text ends inside the table".into()),
@@ -549,8 +740,21 @@ impl Lua<'_> {
             } else {
                 None
             };
+            self.named = self.strict
+                && self.depth == 1
+                && matches!(key.as_deref(), Some("title" | "internalName"));
             let value = self.value()?;
-            items.push((key, value));
+            // `Key = nil` is no key, to Lua; a list's nil keeps its
+            // place, so the pairs after it stay paired.
+            if !(self.strict && self.nil && key.is_some()) {
+                items.push((key, value));
+            }
+            if self.strict {
+                self.entries += 1;
+                if self.entries > MOST_ENTRIES {
+                    return Err(format!("more than {MOST_ENTRIES} entries"));
+                }
+            }
             self.space();
             if !self.eat(b',') && !self.eat(b';') {
                 self.space();
@@ -572,6 +776,12 @@ impl Lua<'_> {
             self.at += 1;
             match c {
                 c if c == q => break,
+                b'\n' | b'\r' if self.strict => {
+                    return Err(format!(
+                        "a line ends inside a string, at byte {}",
+                        self.at - 1
+                    ));
+                }
                 b'\\' => {
                     let Some(e) = self.peek() else {
                         return Err("a string runs to the end".into());
@@ -581,6 +791,18 @@ impl Lua<'_> {
                         b'n' => out.push(b'\n'),
                         b'r' => out.push(b'\r'),
                         b't' => out.push(b'\t'),
+                        b'a' => out.push(0x07),
+                        b'b' => out.push(0x08),
+                        b'f' => out.push(0x0c),
+                        b'v' => out.push(0x0b),
+                        b'\\' | b'"' | b'\'' => out.push(e),
+                        // A backslash before a line's end is the line's
+                        // end, `\r\n` one.
+                        b'\n' | b'\r' => {
+                            let pair = if e == b'\n' { b'\r' } else { b'\n' };
+                            self.eat(pair);
+                            out.push(b'\n');
+                        }
                         b'0'..=b'9' => {
                             // Up to three digits, a byte.
                             let mut n = u32::from(e - b'0');
@@ -593,7 +815,17 @@ impl Lua<'_> {
                                     _ => break,
                                 }
                             }
+                            if n > 255 && self.strict {
+                                return Err(format!("an escape past 255, at byte {}", self.at));
+                            }
                             out.push(n.min(255) as u8);
+                        }
+                        other if self.strict => {
+                            return Err(format!(
+                                "an escape {:?} at byte {}",
+                                other as char,
+                                self.at - 1
+                            ));
                         }
                         other => out.push(other),
                     }
@@ -604,31 +836,109 @@ impl Lua<'_> {
         Ok(String::from_utf8_lossy(&out).into_owned())
     }
 
-    /// A long string, `[[...]]` or `[==[...]==]`.
-    fn long(&mut self) -> std::result::Result<String, String> {
-        self.at += 1;
+    /// At a `[`, a long bracket's opening (`[[`, `[=[`, ...) read, and
+    /// its level, the `=` in it; none, and nothing read, for another
+    /// `[` or one past [`LONGEST`].
+    fn long_open(&mut self) -> Option<usize> {
+        let mark = self.at;
+        if !self.eat(b'[') {
+            return None;
+        }
         let mut level = 0;
         while self.eat(b'=') {
             level += 1;
         }
-        if !self.eat(b'[') {
-            return Err(format!("a [ that opens nothing, at byte {}", self.at));
+        if level <= LONGEST && self.eat(b'[') {
+            Some(level)
+        } else {
+            self.at = mark;
+            None
         }
-        let close: Vec<u8> = std::iter::once(b']')
-            .chain(std::iter::repeat_n(b'=', level))
-            .chain(std::iter::once(b']'))
-            .collect();
+    }
+
+    /// Past the closing bracket of `level`, its opening read: what it
+    /// holds; none, and nothing read, when no close comes.
+    fn long_close(&mut self, level: usize) -> Option<std::ops::Range<usize>> {
         let start = self.at;
-        let len = self.s[start..]
-            .windows(close.len())
-            .position(|w| w == close.as_slice())
+        let mut from = start;
+        while let Some(off) = self.s[from..].iter().position(|&c| c == b']') {
+            let close = from + off;
+            let end = close + 1 + level;
+            if self
+                .s
+                .get(close + 1..end)
+                .is_some_and(|e| e.iter().all(|&c| c == b'='))
+                && self.s.get(end) == Some(&b']')
+            {
+                self.at = end + 1;
+                return Some(start..close);
+            }
+            from = close + 1;
+        }
+        None
+    }
+
+    /// A long string, `[[...]]` or `[==[...]==]`.
+    fn long(&mut self) -> std::result::Result<String, String> {
+        let Some(level) = self.long_open() else {
+            return Err(format!("a [ that opens nothing, at byte {}", self.at));
+        };
+        let body = self
+            .long_close(level)
             .ok_or("a long string runs to the end")?;
-        self.at = start + len + close.len();
         // A newline straight after the opening is not part of it.
-        let body = &self.s[start..start + len];
-        let body = body.strip_prefix(b"\n").unwrap_or(body);
+        let body = &self.s[body];
+        let body = body
+            .strip_prefix(b"\r\n")
+            .or_else(|| body.strip_prefix(b"\n"))
+            .unwrap_or(body);
         Ok(String::from_utf8_lossy(body).into_owned())
     }
+}
+
+/// A Lua number as written, decimal or hexadecimal, a minus before it
+/// or not: as text [`finite`] reads, or none for a word that is no
+/// number. One too large for a float is still a number, and reads as
+/// absent.
+fn lua_number(word: &str) -> Option<String> {
+    let negative = word.starts_with('-');
+    let digits = word.strip_prefix('-').unwrap_or(word);
+    if let Some(hex) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        if hex.is_empty() || !hex.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        let v = hex.chars().fold(0f64, |v, c| {
+            v * 16.0 + f64::from(c.to_digit(16).unwrap_or(0))
+        });
+        return Some(format!("{:e}", if negative { -v } else { v }));
+    }
+    let b = digits.as_bytes();
+    let run = |i: usize| b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+    let whole = run(0);
+    let mut i = whole;
+    let mut fraction = 0;
+    if b.get(i) == Some(&b'.') {
+        fraction = run(i + 1);
+        i += 1 + fraction;
+    }
+    if whole + fraction == 0 {
+        return None;
+    }
+    if matches!(b.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        if matches!(b.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        let exponent = run(i);
+        if exponent == 0 {
+            return None;
+        }
+        i += exponent;
+    }
+    (i == b.len()).then(|| word.to_string())
 }
 
 /// The `x-default` (or the first) text of an `rdf:Alt`.
@@ -701,7 +1011,17 @@ fn map(
     // Light: exposure in stops as it is, the rest scaled onto the
     // tone curve's shifts.
     let exposure = either("Exposure2012", "Exposure");
-    let contrast = either("Contrast2012", "Contrast");
+    // The 2010 process's Contrast is on a scale of its own (+25 is its
+    // default, no contrast added): in settings of that process it is
+    // named below rather than read as the 2012 slider. In later ones
+    // that lack `Contrast2012`, which Adobe always writes there, it is
+    // another writer's word for it and read as before.
+    let old = old_process(keys, curves);
+    let contrast = if old {
+        num("Contrast2012")
+    } else {
+        either("Contrast2012", "Contrast")
+    };
     let highlights = num("Highlights2012");
     let shadows = num("Shadows2012");
     let whites = num("Whites2012");
@@ -989,6 +1309,24 @@ fn map(
             unmapped.push(k.to_string());
         }
     }
+    // The 2003 and 2010 processes' tone sliders, which mean other
+    // things than the 2012 ones and have no counterpart here: named
+    // when set off their defaults. Read only for settings of those
+    // processes: a later file can carry them at their defaults, inert.
+    if old {
+        for (k, default) in [
+            ("Brightness", 50.0),
+            ("Contrast", 25.0),
+            ("HighlightRecovery", 0.0),
+            ("FillLight", 0.0),
+            // Its blacks.
+            ("Shadows", 5.0),
+        ] {
+            if num(k).is_some_and(|v| v != default) {
+                unmapped.push(k.to_string());
+            }
+        }
+    }
     // The crop is the frame's, not a preset's. An XMP says so with
     // `HasCrop`; a catalog's table has the edges only when cropped. A
     // crop whose keys do not read is named too: it is not carried.
@@ -1035,6 +1373,22 @@ fn map(
         unmapped,
         offset,
         group: None,
+    }
+}
+
+/// The process version from which the sliders are the current ones:
+/// Camera Raw's 2012 process, 6.7 (6.6 was Camera Raw 6.6, of
+/// Lightroom 3.6, the 2010 process still). Settings from before it, the
+/// 2003 and 2010 processes, carry sliders of other meanings.
+pub const PROCESS_2012: f32 = 6.7;
+
+/// Whether settings are of the 2003 or 2010 process: a
+/// `ProcessVersion` before [`PROCESS_2012`], or, with none, no key or
+/// curve of the 2012 process's (`Exposure2012`, `ToneCurvePV2012Red`).
+fn old_process(keys: &BTreeMap<String, String>, curves: &BTreeMap<String, Vec<Point>>) -> bool {
+    match keys.get("ProcessVersion").and_then(|v| finite(v)) {
+        Some(v) => v < PROCESS_2012,
+        None => !keys.keys().chain(curves.keys()).any(|k| k.contains("2012")),
     }
 }
 
@@ -1815,5 +2169,504 @@ mod tests {
             let imported = map("x".into(), &keys, &curves, &Scales::DEFAULT, offset);
             round_trips(&imported, &format!("offset {offset}"));
         }
+    }
+
+    /// A `.lrtemplate` as Lightroom wrote one before 7.3, hand-written:
+    /// a byte-order mark, comments of both kinds, escapes in the
+    /// title, trailing commas, and a gradient's nested tables.
+    const TEMPLATE: &str = "\u{feff}-- a comment before it\n\
+        s = {\n\
+        \tid = \"6A1C2E00-0000-4000-8000-000000000001\",\n\
+        \tinternalName = \"Warm Film\",\n\
+        \ttitle = \"Warm \\\"Film\\\"\\t\\065\",\n\
+        \ttype = \"Develop\",\n\
+        \tvalue = {\n\
+        \t\tsettings = {\n\
+        \t\t\tExposure2012 = 0.35, -- in stops\n\
+        \t\t\tContrast2012 = 10,\n\
+        \t\t\tWhiteBalance = \"Custom\",\n\
+        \t\t\tTemperature = 4800,\n\
+        \t\t\tTint = 15,\n\
+        \t\t\tConvertToGrayscale = true,\n\
+        \t\t\tGrayMixerRed = 40,\n\
+        \t\t\tToneCurveName2012 = \"Custom\",\n\
+        \t\t\tToneCurvePV2012 = { 0, 0, 64, 60, 255, 255, },\n\
+        \t\t\tEnableSplitToning = true,\n\
+        \t\t\tSplitToningShadowHue = 220,\n\
+        \t\t\tSplitToningShadowSaturation = 20,\n\
+        \t\t\tSharpness = 40,\n\
+        \t\t\tLensProfileEnable = 1,\n\
+        \t\t\tCameraProfile = nil,\n\
+        \t\t\t--[==[ a long comment\n\
+        \t\t\tExposure2012 = 3, ]] still in it ]==]\n\
+        \t\t\tGradientBasedCorrections = {\n\
+        \t\t\t\t{\n\
+        \t\t\t\t\tCorrectionAmount = 1,\n\
+        \t\t\t\t\tCorrectionMasks = { { What = \"Mask/Gradient\", ZeroX = 0.5, }, },\n\
+        \t\t\t\t\tLocalExposure2012 = -0.4,\n\
+        \t\t\t\t},\n\
+        \t\t\t},\n\
+        \t\t\tProcessVersion = \"6.7\",\n\
+        \t\t},\n\
+        \t\tuuid = \"6A1C2E00-0000-4000-8000-000000000002\",\n\
+        \t},\n\
+        \tversion = 0,\n\
+        }\n";
+
+    /// The same settings as an XMP preset says them.
+    const TEMPLATE_AS_XMP: &str = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+      <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+        crs:Exposure2012="+0.35" crs:Contrast2012="+10" crs:WhiteBalance="Custom"
+        crs:Temperature="4800" crs:Tint="+15" crs:ConvertToGrayscale="True"
+        crs:GrayMixerRed="+40" crs:ToneCurveName2012="Custom" crs:EnableSplitToning="True"
+        crs:SplitToningShadowHue="220" crs:SplitToningShadowSaturation="20"
+        crs:Sharpness="40" crs:LensProfileEnable="1" crs:ProcessVersion="6.7">
+       <crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Warm "Film"&#9;A</rdf:li></rdf:Alt></crs:Name>
+       <crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>64, 60</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>
+       <crs:GradientBasedCorrections><rdf:Seq><rdf:li rdf:parseType="Resource">
+        <crs:CorrectionAmount>1</crs:CorrectionAmount></rdf:li></rdf:Seq></crs:GradientBasedCorrections>
+      </rdf:Description></rdf:RDF></x:xmpmeta>"#;
+
+    /// A template comes across as the XMP of the same settings does:
+    /// one mapping serves both.
+    #[test]
+    fn a_template_maps_as_the_same_xmp_does() {
+        let from_template = read_template(TEMPLATE, "file").unwrap();
+        let from_xmp = read(TEMPLATE_AS_XMP, "file").unwrap();
+        assert_eq!(from_template, from_xmp);
+        let Imported {
+            preset, unmapped, ..
+        } = from_template;
+        // The tab a space, as a name is shown.
+        assert_eq!(preset.name, "Warm \"Film\" A");
+        let e = &preset.edit;
+        assert!(
+            (e.light.exposure - 0.35).abs() < 1e-6,
+            "not the comment's 3"
+        );
+        assert!(e.bw.enabled);
+        assert!((e.bw.weights[0] - 0.4).abs() < 1e-6);
+        assert_eq!(e.curves.rgb.len(), 3);
+        assert!((e.curves.rgb[1][1] - 60.0 / 255.0).abs() < 1e-6);
+        assert!(e.sharpen.enabled && e.lens.profile);
+        // The gradient is named; `CameraProfile = nil` is no profile.
+        assert_eq!(unmapped, vec!["masks"]);
+    }
+
+    /// The title's name, or the file's when blank; Adobe's localized
+    /// title as its English.
+    #[test]
+    fn a_templates_name_is_its_title() {
+        let titled = |t: &str| {
+            format!(
+                "s = {{ title = {t}, type = \"Develop\", value = {{ settings = {{ Exposure2012 = 1 }} }} }}"
+            )
+        };
+        let name = |t: &str| read_template(&titled(t), "stem").unwrap().preset.name;
+        assert_eq!(name("\"  \""), "stem");
+        assert_eq!(name("'Single'"), "Single");
+        assert_eq!(name("\"$$$/AgDevelop/Name=Soft\""), "Soft");
+        assert_eq!(name("[[Long]]"), "Long");
+        let untitled = "s = { type = \"Develop\", value = { settings = { Exposure2012 = 1 } } }";
+        assert_eq!(read_template(untitled, "stem").unwrap().preset.name, "stem");
+        // Control characters, a terminal's escapes among them, go;
+        // a title of nothing else is the stem's.
+        assert_eq!(name("\"a\\0b\\n\\27[31mred\""), "ab [31mred");
+        assert_eq!(name("\"\\0\\n\\t\\127\""), "stem");
+        // The last of a key written twice, as Lua takes it.
+        let twice = "s = { title = \"First\", type = \"Export\", title = \"Second\", \
+             type = \"Develop\", value = { settings = { Exposure2012 = 1 } } }";
+        assert_eq!(read_template(twice, "stem").unwrap().preset.name, "Second");
+        // An XMP's name the same.
+        let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="+1">
+           <crs:Name><rdf:Alt><rdf:li xml:lang="x-default">a&#155;[2Jb&#10;c&#127;</rdf:li></rdf:Alt></crs:Name>
+          </rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        assert_eq!(read(xmp, "stem").unwrap().preset.name, "a[2Jb c");
+        let blank = xmp.replace("a&#155;[2Jb&#10;c&#127;", "&#155;&#127;");
+        assert_eq!(read(&blank, "stem").unwrap().preset.name, "stem");
+    }
+
+    /// Another type of preset, or a template with no settings, is
+    /// refused as an XMP with none is.
+    #[test]
+    fn a_template_of_another_type_is_refused() {
+        let refused = |text: &str| match read_template(text, "x") {
+            Err(Error::Preset(why)) => why,
+            other => panic!("{other:?}"),
+        };
+        for text in [
+            "s = { title = \"Export\", type = \"Export\", value = { settings = { Exposure2012 = 1 } } }",
+            "s = { title = \"Typeless\", value = { settings = { Exposure2012 = 1 } } }",
+            "s = { type = 3, value = { settings = { Exposure2012 = 1 } } }",
+            "s = { type = \"Develop\", value = { uuid = \"x\" } }",
+            "s = { type = \"Develop\", value = { settings = 1 } }",
+            "s = { type = \"Develop\", value = { settings = { } } }",
+            "s = { type = \"Develop\" }",
+        ] {
+            assert_eq!(
+                refused(text),
+                "no Camera Raw settings in the file",
+                "{text}"
+            );
+        }
+    }
+
+    /// What is not the subset is an error, never a panic: a file cut
+    /// short anywhere, nesting past reason, a call, a name where a
+    /// value belongs, an escape Lua does not have, a line inside a
+    /// string.
+    #[test]
+    fn a_template_outside_the_subset_is_an_error() {
+        let end = TEMPLATE.rfind('}').unwrap();
+        for cut in (0..=end).filter(|&i| TEMPLATE.is_char_boundary(i)) {
+            assert!(
+                read_template(&TEMPLATE[..cut], "x").is_err(),
+                "cut at {cut}"
+            );
+        }
+        let deep = format!(
+            "s = {{ type = \"Develop\", value = {} }}",
+            "{ a = ".repeat(10_000)
+        );
+        assert!(parse_lua(&deep, true).unwrap_err().contains("nested"));
+        let settings = |inside: &str| {
+            format!("s = {{ type = \"Develop\", value = {{ settings = {{ {inside} }} }} }}")
+        };
+        for bad in [
+            "Exposure2012 = foo",
+            "Exposure2012 = print(\"a\")",
+            "Exposure2012 = +5",
+            "Exposure2012 = 1e",
+            "Exposure2012 = 1.2.3",
+            "Exposure2012 = 0x",
+            "Exposure2012 = - 1",
+            "Exposure2012 = 1 .. 2",
+            "Exposure2012 = 1 Contrast2012 = 2",
+            "[1] = 2",
+            "Name = \"\\q\"",
+            "Name = \"\\300\"",
+            "Name = \"a\nb\"",
+            "Name = [=[open",
+            "Name = [==================[x]==================]",
+            "Exposure2012 = 1 --[[ never closed",
+        ] {
+            assert!(read_template(&settings(bad), "x").is_err(), "{bad}");
+        }
+        // Text after the table, and none at all.
+        assert!(read_template(&format!("{TEMPLATE} t = {{}}"), "x").is_err());
+        assert!(read_template("", "x").is_err());
+        assert!(read_template("\u{feff}", "x").is_err());
+        // Past the most a template may be, unread.
+        let large = format!(
+            "{}{}",
+            settings("Exposure2012 = 1"),
+            " ".repeat(TEMPLATE_MOST)
+        );
+        assert_eq!(
+            read_template(&large, "x").unwrap_err().to_string(),
+            too_large(TEMPLATE_MOST).to_string()
+        );
+        // Lua's own escapes, a backslash before a line's end, and a
+        // list's nil keeping its place.
+        let got = read_template(
+            &settings(
+                "WhiteBalance = \"Cus\\\ntom\", \
+                 ToneCurvePV2012 = { 0, 0, nil, 9, 255, 255 }, \
+                 ShadowTint = \"\\a\\b\\f\\v\\r\\n\\\\\\'\"",
+            ),
+            "x",
+        )
+        .unwrap();
+        // "Cus\ntom" is no white balance, so it is named.
+        assert_eq!(got.unmapped, vec!["WhiteBalance"]);
+        assert_eq!(
+            got.preset.edit.curves.rgb,
+            vec![[0.0, 0.0], [1.0, 1.0]],
+            "the pair with a nil in it is dropped, the rest stay paired"
+        );
+        // A hexadecimal number.
+        let wb = read_template(
+            &settings("WhiteBalance = \"Custom\", Temperature = 0x12C0"),
+            "x",
+        )
+        .unwrap();
+        assert!(matches!(
+            wb.preset.edit.white_balance,
+            WhiteBalance::Custom { temperature, .. } if temperature == 4800.0
+        ));
+    }
+
+    /// A number too large for a float is absent, one merely large is
+    /// held to the slider, and a long run of digits is no trouble.
+    #[test]
+    fn a_templates_huge_numbers_are_held_or_dropped() {
+        let exposure = |inside: &str| {
+            let text =
+                format!("s = {{ type = \"Develop\", value = {{ settings = {{ {inside} }} }} }}");
+            read_template(&text, "x")
+                .unwrap()
+                .preset
+                .edit
+                .light
+                .exposure
+        };
+        assert_eq!(exposure("Exposure2012 = 1e30"), 5.0);
+        assert_eq!(exposure("Exposure2012 = -1e30"), -5.0);
+        assert_eq!(exposure("Exposure2012 = 1e400, Contrast2012 = 1"), 0.0);
+        let nines = "9".repeat(5000);
+        assert_eq!(
+            exposure(&format!("Exposure2012 = {nines}, Contrast2012 = 1")),
+            0.0
+        );
+        let effs = "F".repeat(5000);
+        assert_eq!(
+            exposure(&format!("Exposure2012 = 0x{effs}, Contrast2012 = 1")),
+            0.0
+        );
+        assert_eq!(exposure("Exposure2012 = .5"), 0.5);
+        assert_eq!(exposure("Exposure2012 = 5E-1"), 0.5);
+    }
+
+    /// A template of the 2010 process (or older) reads through the
+    /// older names that mean what the 2012 ones do: Exposure, Clarity,
+    /// and the curve. Brightness, Contrast (on its own scale, +25 its
+    /// default), Recovery, Fill Light, and the old Shadows (its blacks)
+    /// have no counterpart: named when off their defaults, never
+    /// mapped. The XMP of the same settings comes across the same.
+    #[test]
+    fn an_old_process_preset_names_its_older_sliders() {
+        let text = "s = { title = \"Old\", type = \"Develop\", value = { settings = {\n\
+            Exposure = 0.5, Brightness = 60, Contrast = 40, Shadows = 9,\n\
+            FillLight = 10, HighlightRecovery = 20, Clarity = 30,\n\
+            ToneCurve = { 0, 0, 128, 140, 255, 255 }, ProcessVersion = \"5.7\",\n\
+            } } }";
+        let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+            crs:Exposure="+0.50" crs:Brightness="+60" crs:Contrast="+40" crs:Shadows="9"
+            crs:FillLight="10" crs:HighlightRecovery="20" crs:Clarity="+30"
+            crs:ProcessVersion="5.7">
+           <crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Old</rdf:li></rdf:Alt></crs:Name>
+           <crs:ToneCurve><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>128, 140</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurve>
+          </rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        let imported = read_template(text, "x").unwrap();
+        assert_eq!(imported, read(xmp, "x").unwrap());
+        let Imported {
+            preset, unmapped, ..
+        } = imported;
+        let e = &preset.edit;
+        assert_eq!(e.light.exposure, 0.5);
+        assert_eq!(e.light.tone.contrast, 1.0, "the old Contrast is not ours");
+        assert_eq!(e.light.tone.highlights, 0.0);
+        assert_eq!(e.light.tone.shadows, 0.0);
+        assert_eq!(e.light.tone.blacks, 0.0);
+        assert!((e.detail.clarity - 0.3).abs() < 1e-6);
+        assert!((e.curves.rgb[1][1] - 140.0 / 255.0).abs() < 1e-6);
+        assert_eq!(
+            unmapped,
+            [
+                "Brightness",
+                "Contrast",
+                "HighlightRecovery",
+                "FillLight",
+                "Shadows"
+            ]
+        );
+
+        // At their defaults, nothing is named; the old Contrast's 25
+        // adds no contrast here either.
+        let defaults = |pv: &str| {
+            format!(
+                "s = {{ type = \"Develop\", value = {{ settings = {{ Exposure = 0.5, \
+                 Brightness = 50, Contrast = 25, Shadows = 5, FillLight = 0, \
+                 HighlightRecovery = 0{pv} }} }} }}"
+            )
+        };
+        let at = read_template(&defaults(", ProcessVersion = \"5.0\""), "x").unwrap();
+        assert!(at.unmapped.is_empty(), "{:?}", at.unmapped);
+        assert_eq!(at.preset.edit.light.tone.contrast, 1.0);
+        // No process named and no 2012 key: the old process.
+        let unnamed = defaults("").replace("Brightness = 50", "Brightness = 70");
+        assert_eq!(
+            read_template(&unnamed, "x").unwrap().unmapped,
+            ["Brightness"]
+        );
+        // A 2012 file that carries the old keys, off their defaults or
+        // not, is read by its 2012 sliders alone.
+        let new = "s = { type = \"Develop\", value = { settings = { Exposure2012 = 0.5, \
+             Contrast2012 = 20, Brightness = 70, Contrast = 40, Shadows = 9, \
+             ProcessVersion = \"6.7\" } } }";
+        let new = read_template(new, "x").unwrap();
+        assert!(new.unmapped.is_empty(), "{:?}", new.unmapped);
+        let want = 1.0 + 0.2 * Scales::DEFAULT.contrast;
+        assert!((new.preset.edit.light.tone.contrast - want).abs() < 1e-6);
+        let unversioned = "s = { type = \"Develop\", value = { settings = { \
+             Exposure2012 = 0.5, Brightness = 70 } } }";
+        assert!(read_template(unversioned, "x").unwrap().unmapped.is_empty());
+        // A 2012 curve alone says the process too.
+        let curved = "s = { type = \"Develop\", value = { settings = { Brightness = 70, \
+             ToneCurvePV2012Red = { 0, 0, 255, 250 } } } }";
+        assert!(read_template(curved, "x").unwrap().unmapped.is_empty());
+        // 6.6 was Camera Raw's last of the 2010 process.
+        let six_six =
+            defaults(", ProcessVersion = \"6.6\"").replace("Brightness = 50", "Brightness = 70");
+        assert_eq!(
+            read_template(&six_six, "x").unwrap().unmapped,
+            ["Brightness"]
+        );
+
+        // Another writer's `Contrast` in a 2012 file without
+        // `Contrast2012` is read as that, as before; in an old file it
+        // is the old scale, named, and a preset of that alone carries
+        // nothing.
+        let contrast = |pv: &str| {
+            format!(
+                "s = {{ type = \"Develop\", value = {{ settings = {{ Contrast = 40, \
+                 ProcessVersion = \"{pv}\" }} }} }}"
+            )
+        };
+        let new = read_template(&contrast("11.0"), "x").unwrap();
+        let want = 1.0 + 0.4 * Scales::DEFAULT.contrast;
+        assert!((new.preset.edit.light.tone.contrast - want).abs() < 1e-6);
+        assert!(new.unmapped.is_empty());
+        let old = read_template(&contrast("5.7"), "x").unwrap();
+        assert!(old.preset.is_empty());
+        assert_eq!(old.unmapped, ["Contrast"]);
+        let xmp = |pv: &str| {
+            format!(
+                r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+              <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+                crs:Contrast="+40" crs:ProcessVersion="{pv}"/></rdf:RDF></x:xmpmeta>"#
+            )
+        };
+        assert_eq!(read(&xmp("11.0"), "x").unwrap(), new);
+        assert_eq!(read(&xmp("5.7"), "x").unwrap(), old);
+    }
+
+    /// A strict reading takes no more than its most entries, in all
+    /// its tables together: the guard on what a small text can hold.
+    #[test]
+    fn a_template_of_too_many_entries_is_refused() {
+        let with = |n: usize| {
+            format!(
+                "s = {{ type = \"Develop\", value = {{ settings = {{ Exposure2012 = 1, \
+                 Many = {{ {} }} }} }} }}",
+                "{},".repeat(n)
+            )
+        };
+        // Its own entries and the five around them.
+        assert!(read_template(&with(MOST_ENTRIES - 5), "x").is_ok());
+        assert!(
+            read_template(&with(MOST_ENTRIES - 4), "x")
+                .unwrap_err()
+                .to_string()
+                .contains("entries")
+        );
+        assert!(
+            parse_table(&with(MOST_ENTRIES)).is_ok(),
+            "a catalog's is not counted"
+        );
+    }
+
+    /// The peak memory of the worst template within the bounds, for the
+    /// notes: run alone under `/usr/bin/time -v`, the entry's shape in
+    /// `GREYCARD_TEMPLATE_SHAPE` (`{},` unless set; `"…",` for a
+    /// string's).
+    #[test]
+    #[ignore = "a measurement, not a test"]
+    fn the_worst_template_within_the_bound_timed() {
+        let each = std::env::var("GREYCARD_TEMPLATE_SHAPE").unwrap_or_else(|_| "{},".into());
+        let mut text = String::from(
+            "s = { type = \"Develop\", value = { settings = { Exposure2012 = 1, Many = { ",
+        );
+        let room = TEMPLATE_MOST - text.len() - 16;
+        text.push_str(&each.repeat((room / each.len()).min(MOST_ENTRIES - 10)));
+        text.push_str("} } } }");
+        // The peak resident size so far, where Linux says it.
+        let peak = || {
+            std::fs::read_to_string("/proc/self/status")
+                .ok()
+                .and_then(|s| {
+                    s.lines()
+                        .find(|l| l.starts_with("VmHWM"))
+                        .map(str::to_string)
+                })
+                .unwrap_or_default()
+        };
+        let before = peak();
+        let at = std::time::Instant::now();
+        let read = read_template(&text, "x");
+        eprintln!(
+            "{each} {} bytes: {:?} in {:?}; peak {before} before, {} after",
+            text.len(),
+            read.map(|_| ()),
+            at.elapsed(),
+            peak()
+        );
+    }
+
+    /// Adobe's presets write the title as a call, `ZSTR "$$$/Key=Name"`:
+    /// read for the title and the internal name, the English after the
+    /// last `=`, and nowhere else; any other call is still an error.
+    #[test]
+    fn a_zstr_title_is_its_string() {
+        let with = |title: &str, settings: &str| {
+            format!(
+                "s = {{ id = \"x\", internalName = ZSTR \"$$$/AgDevelop/Internal=In\", \
+                 title = {title}, type = \"Develop\", value = {{ settings = {{ {settings} }} }} }}"
+            )
+        };
+        let name = |title: &str| {
+            read_template(&with(title, "Exposure2012 = 1"), "stem")
+                .unwrap()
+                .preset
+                .name
+        };
+        assert_eq!(
+            name("ZSTR \"$$$/AgSettingNames/Name=Aged Photo\""),
+            "Aged Photo"
+        );
+        assert_eq!(name("ZSTR \"$$$/A/B=C=Last Part\""), "Last Part");
+        assert_eq!(name("ZSTR 'Plain'"), "Plain");
+        assert_eq!(name("ZSTR [[Long]]"), "Long");
+        assert_eq!(name("ZSTR \"$$$/NoEnglish\""), "stem");
+        assert_eq!(name("ZSTR \"  \""), "stem");
+        for bad in [
+            "ZSTR",
+            "ZSTR 5",
+            "ZSTR(\"x\")",
+            "LOC \"$$$/A=B\"",
+            "zstr \"x\"",
+            "ZSTR \"x\" .. \"y\"",
+        ] {
+            assert!(
+                read_template(&with(bad, "Exposure2012 = 1"), "stem").is_err(),
+                "{bad}"
+            );
+        }
+        // Not a value elsewhere: in the settings, or a nested title.
+        assert!(read_template(&with("\"T\"", "CameraProfile = ZSTR \"x\""), "s").is_err());
+        assert!(read_template(&with("\"T\"", "title = ZSTR \"x\""), "s").is_err());
+        // The lenient catalog reading is as it was.
+        assert!(parse_table("s = { title = ZSTR \"x\" }").is_err());
+    }
+
+    /// A catalog's table reads leniently as it always has, comments
+    /// and a byte-order mark aside; a template's reading is strict.
+    #[test]
+    fn a_catalog_table_is_read_leniently_and_a_template_strictly() {
+        let text = "\u{feff}s = { -- a note\n A = bare, B = nil, C = \"\\q\" }";
+        let items = parse_table(text).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[2].1, Value::Word("q".into()));
+        assert!(parse_lua(text, true).is_err());
+        let word = |w: &str| Value::Word(w.into());
+        assert_eq!(
+            parse_lua("s = { B = nil, L = { nil, 1 } }", true).unwrap(),
+            vec![(
+                Some("L".into()),
+                Value::Table(vec![(None, word("nil")), (None, word("1"))])
+            )]
+        );
     }
 }

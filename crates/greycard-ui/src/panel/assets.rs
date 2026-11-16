@@ -1867,6 +1867,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     vec![
                         "*.xmp".into(),
                         "*.XMP".into(),
+                        "*.lrtemplate".into(),
+                        "*.LRTEMPLATE".into(),
                         "*.gcp".into(),
                         "*.GCP".into(),
                     ],

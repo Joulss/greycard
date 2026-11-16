@@ -3904,7 +3904,7 @@ msgid "Filter the folder by rating, flag, label or words"
 msgstr "Filtrer le dossier par note, marqueur, étiquette ou mots"
 
 #: crates/greycard-ui/src/keys.rs:455
-#: crates/greycard-ui/src/panel/startup.rs:1816
+#: crates/greycard-ui/src/panel/startup.rs:1826
 msgid "Open a folder"
 msgstr "Ouvrir un dossier"
 
@@ -5225,7 +5225,7 @@ msgstr "Importer des paramètres prédéfinis"
 msgid "Presets"
 msgstr "Paramètres prédéfinis"
 
-#: crates/greycard-ui/src/panel/assets.rs:1887
+#: crates/greycard-ui/src/panel/assets.rs:1889
 #: crates/greycard-ui/src/panel/lightroom.rs:662
 msgid "import canceled"
 msgstr "importation annulée"
@@ -6423,75 +6423,75 @@ msgid_plural "; {n} folders could not be read"
 msgstr[0] "; {n} dossier illisible"
 msgstr[1] "; {n} dossiers illisibles"
 
-#: crates/greycard-ui/src/panel/import.rs:207
+#: crates/greycard-ui/src/panel/import.rs:212
 msgid "Not a pattern: {e}"
 msgstr "Motif invalide : {e}"
 
-#: crates/greycard-ui/src/panel/import.rs:210
-#: crates/greycard-ui/src/panel/import.rs:214
+#: crates/greycard-ui/src/panel/import.rs:215
+#: crates/greycard-ui/src/panel/import.rs:219
 msgid "{} becomes {}"
 msgstr "{} devient {}"
 
-#: crates/greycard-ui/src/panel/import.rs:239
+#: crates/greycard-ui/src/panel/import.rs:244
 msgid "Destination missing; is the drive connected?"
 msgstr "Destination introuvable ; le disque est-il connecté ?"
 
-#: crates/greycard-ui/src/panel/import.rs:241
+#: crates/greycard-ui/src/panel/import.rs:246
 msgid "Backup missing; is the drive connected?"
 msgstr "Sauvegarde introuvable ; le disque est-il connecté ?"
 
-#: crates/greycard-ui/src/panel/import.rs:243
+#: crates/greycard-ui/src/panel/import.rs:248
 msgid "Backup is on the same drive."
 msgstr "La sauvegarde est sur le même disque."
 
-#: crates/greycard-ui/src/panel/import.rs:331
-#: crates/greycard-ui/src/panel/import.rs:359
+#: crates/greycard-ui/src/panel/import.rs:336
+#: crates/greycard-ui/src/panel/import.rs:364
 msgid "reading {}..."
 msgstr "lecture de {}..."
 
-#: crates/greycard-ui/src/panel/import.rs:516
+#: crates/greycard-ui/src/panel/import.rs:525
 msgid "looking for a card..."
 msgstr "recherche d'une carte..."
 
-#: crates/greycard-ui/src/panel/import.rs:558
+#: crates/greycard-ui/src/panel/import.rs:567
 msgid "no card found; choose the folder to import from"
 msgstr "aucune carte trouvée ; choisissez le dossier source de l'importation"
 
-#: crates/greycard-ui/src/panel/import.rs:605
+#: crates/greycard-ui/src/panel/import.rs:614
 msgid "importing {n} frame..."
 msgid_plural "importing {n} frames..."
 msgstr[0] "importation de {n} photo..."
 msgstr[1] "importation de {n} photos..."
 
-#: crates/greycard-ui/src/panel/import.rs:662
+#: crates/greycard-ui/src/panel/import.rs:671
 msgid "; open {} to see them"
 msgstr "; ouvrez {} pour les voir"
 
-#: crates/greycard-ui/src/panel/import.rs:740
+#: crates/greycard-ui/src/panel/import.rs:749
 msgid "finishing {}... the window closes once it has landed"
 msgstr "finalisation de {}... la fenêtre se fermera une fois terminé"
 
-#: crates/greycard-ui/src/panel/import.rs:849
+#: crates/greycard-ui/src/panel/import.rs:858
 msgid "stopping the import after the frame in hand..."
 msgstr "arrêt de l'importation après la photo en cours..."
 
 #. The folder chooser's title for the import sheet's row
-#: crates/greycard-ui/src/panel/import.rs:861
+#: crates/greycard-ui/src/panel/import.rs:870
 msgid "Import from"
 msgstr "Importer depuis"
 
 #. The folder chooser's title for the import sheet's row
-#: crates/greycard-ui/src/panel/import.rs:863
+#: crates/greycard-ui/src/panel/import.rs:872
 msgid "Import to"
 msgstr "Importer vers"
 
 #. The folder chooser's title for the import sheet's row
-#: crates/greycard-ui/src/panel/import.rs:865
+#: crates/greycard-ui/src/panel/import.rs:874
 msgid "Add to the library in place"
 msgstr "Ajouter à la bibliothèque sans copier"
 
 #. The folder chooser's title for the import sheet's row
-#: crates/greycard-ui/src/panel/import.rs:867
+#: crates/greycard-ui/src/panel/import.rs:876
 msgid "Back up to"
 msgstr "Sauvegarder vers"
 
@@ -7653,28 +7653,28 @@ msgstr "comparaison de la pile de {name}"
 msgid "{left} more of the stack left out"
 msgstr "{left} autres photos de la pile exclues"
 
-#: crates/greycard-ui/src/panel/startup.rs:2198
+#: crates/greycard-ui/src/panel/startup.rs:2210
 msgid "{}'s profile from {}"
 msgstr "profil de {} depuis {}"
 
-#: crates/greycard-ui/src/panel/startup.rs:2202
+#: crates/greycard-ui/src/panel/startup.rs:2214
 msgid "{} knows no display profile"
 msgstr "{} ne connaît aucun profil d'écran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2234
+#: crates/greycard-ui/src/panel/startup.rs:2246
 msgid "{from}: nothing changed on the way to the screen"
 msgstr "{from} : aucune modification avant l'affichage à l'écran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2246
+#: crates/greycard-ui/src/panel/startup.rs:2258
 msgid "{from}: up to {d} of 255 from sRGB"
 msgstr "{from} : écart jusqu'à {d} sur 255 par rapport à sRGB"
 
-#: crates/greycard-ui/src/panel/startup.rs:2257
+#: crates/greycard-ui/src/panel/startup.rs:2269
 msgid "{from}: cannot be read; nothing changed on the way to the screen"
 msgstr ""
 "{from} : lecture impossible ; aucune modification avant l'affichage à l'écran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2821
+#: crates/greycard-ui/src/panel/startup.rs:2833
 msgid ""
 "Library and Loupe, top left (or G), switch between the grid and one frame; "
 "Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"

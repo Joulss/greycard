@@ -59,6 +59,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "lightroom_template"
+path = "fuzz_targets/lightroom_template.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "lightroom_table"
 path = "fuzz_targets/lightroom_table.rs"
 test = false

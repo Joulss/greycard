@@ -744,6 +744,13 @@ mod tests {
         };
         std::fs::write(pack.join("soft one.xmp"), xmp("+0.3")).unwrap();
         std::fs::write(pack.join("soft two.xmp"), xmp("-0.3")).unwrap();
+        // Lightroom's older kind in the same pack, its title its name.
+        std::fs::write(
+            pack.join("old.lrtemplate"),
+            "s = { title = \"soft three\", type = \"Develop\", \
+             value = { settings = { Exposure2012 = 0.1 } } }",
+        )
+        .unwrap();
         let store = Store::at(d.join("presets"));
         state.borrow_mut().develop.preset_store = Some(store.clone());
         crate::panel::assets::import_presets(&mut state.borrow_mut(), &app, &[pack]);
@@ -753,6 +760,7 @@ mod tests {
             [
                 (true, "Soft Pack".to_string(), false, false),
                 (false, "soft one".into(), true, false),
+                (false, "soft three".into(), true, false),
                 (false, "soft two".into(), true, false),
             ]
         );

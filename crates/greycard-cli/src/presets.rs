@@ -48,7 +48,7 @@ pub(crate) fn presets(
     for dir in import.iter().filter(|p| p.is_dir()) {
         if !gathered.iter().any(|(p, _)| p.starts_with(dir)) {
             eprintln!(
-                "no presets    {}: no .xmp or .gcp files in it",
+                "no presets    {}: no .xmp, .lrtemplate, or .gcp files in it",
                 dir.display()
             );
         }
@@ -342,6 +342,37 @@ mod tests {
         import(std::slice::from_ref(&gcp), true).unwrap();
         assert_eq!(amount(), 0.5);
         assert_eq!(std::fs::read_dir(&store).unwrap().count(), 2);
+        greycard_core::testing::remove_dir_retry(&d);
+    }
+
+    /// `--import` takes Lightroom's older `.lrtemplate` presets, named
+    /// or in a folder, as it takes its XMP ones.
+    #[test]
+    fn a_preset_import_takes_an_lrtemplate() {
+        let d = std::env::temp_dir().join(format!(
+            "greycard-cli-preset-lrtemplate-{}",
+            std::process::id()
+        ));
+        greycard_core::testing::remove_dir_retry(&d);
+        let pack = d.join("Old Pack");
+        std::fs::create_dir_all(&pack).unwrap();
+        let template = |title: &str| {
+            format!(
+                "s = {{ title = \"{title}\", type = \"Develop\", \
+                 value = {{ settings = {{ Exposure2012 = 0.5, ToneCurvePV2012 = {{ 0, 0, 255, 240 }}, }} }}, }}"
+            )
+        };
+        let loose = d.join("loose.lrtemplate");
+        std::fs::write(&loose, template("Loose")).unwrap();
+        std::fs::write(pack.join("faded.lrtemplate"), template("Faded")).unwrap();
+        let store = d.join("store");
+        super::presets(&[], &[loose, pack], false, None, Some(store.clone())).unwrap();
+        let open = greycard_edit::preset::Store::at(store);
+        let faded = open.find("Faded").unwrap();
+        assert_eq!(open.group_of(&faded.path).as_deref(), Some("Old Pack"));
+        assert_eq!(faded.preset.edit.light.exposure, 0.5);
+        assert_eq!(faded.preset.edit.curves.rgb[1][1], 240.0 / 255.0);
+        assert!(open.find("Loose").is_some());
         greycard_core::testing::remove_dir_retry(&d);
     }
 }

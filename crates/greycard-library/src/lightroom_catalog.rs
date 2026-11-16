@@ -60,7 +60,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use greycard_edit::meta::{Flag, Label, Meta, STARS};
 use greycard_edit::{Edit, Placement, Sidecar};
-use greycard_edit_io::lightroom::{self, Value};
+use greycard_edit_io::lightroom::{self, PROCESS_2012, Value};
 use greycard_edit_io::on_disk::starting_of;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
@@ -84,11 +84,6 @@ pub const KNOWN: [(i64, &str); 2] = [
 
 /// How many of a root's files are looked for to take a mapping.
 const CHECKED: usize = 5;
-
-/// The process version from which the sliders are the current ones:
-/// Camera Raw's 2012 process. Settings from before it, the 2003 and
-/// 2010 processes, map through the same keys and are further off.
-const PROCESS_2012: f32 = 6.7;
 
 /// Why a catalog could not be imported.
 #[derive(Debug, thiserror::Error)]

@@ -85,16 +85,16 @@ enum Command {
         #[command(subcommand)]
         action: library::LibraryAction,
     },
-    /// The presets: list them; import Lightroom (.xmp) or greycard
-    /// (.gcp) preset files; lay one over files' edits
+    /// The presets: list them; import Lightroom (.xmp, .lrtemplate) or
+    /// greycard (.gcp) preset files; lay one over files' edits
     Presets {
         /// Files whose sidecars take the preset named by --apply; with
         /// no --apply, the versions each sidecar holds are listed
         files: Vec<PathBuf>,
         /// Preset files to bring into the store, Lightroom's .xmp or
-        /// this engine's .gcp, or a Lightroom preset folder, which
-        /// becomes a group of its name; a name the store has already
-        /// is refused without --replace
+        /// .lrtemplate or this engine's .gcp, or a Lightroom preset
+        /// folder, which becomes a group of its name; a name the store
+        /// has already is refused without --replace
         #[arg(long, value_name = "FILE", num_args = 1..)]
         import: Vec<PathBuf>,
         /// With --import, write over a preset of the same name rather
