@@ -2892,6 +2892,44 @@ export component ScrollPane {
     preferred-width: 100%;
     property <length> max-x: max(0px, flick.content-width - flick.width);
     property <length> max-y: max(0px, flick.content-height - flick.height);
+    // Content that gets shorter under a scroll near its foot (a section
+    // folded, a mask's body changed) or a view that gets taller leaves
+    // the scroll past the content's reach: room empty below it and its
+    // top out of reach above. Slint's Flickable puts itself back only
+    // while its content-y has no binding. The alias above is merged
+    // away, but an owner's two-way binding from outside the component
+    // (the right pane's `panel-scroll`, from inside an `if`) is one, so
+    // we put it back here, once a change has taken it out. Where no
+    // owner binds it, Slint does the same, and whichever runs first
+    // leaves the other nothing to do.
+    // An owner's pane on its way out (hidden, squeezed to its least
+    // width until its `if` is torn down) is not kept: its content,
+    // rewrapped, is shorter for a frame, and a pull then would move the
+    // owner's scroll the next pane is built with.
+    in property <bool> keep-in-reach: true;
+    property <bool> past-y: flick.content-y < -root.max-y || flick.content-y > 0px;
+    property <bool> past-x: flick.content-x < -root.max-x || flick.content-x > 0px;
+    changed past-y => {
+        if (self.past-y && root.keep-in-reach) { flick.content-y = clamp(flick.content-y, -root.max-y, 0px); }
+    }
+    changed past-x => {
+        if (self.past-x && root.keep-in-reach) { flick.content-x = clamp(flick.content-x, -root.max-x, 0px); }
+    }
+    // Built anew (a pane hidden and shown) with an owner's scroll that
+    // its content no longer reaches: a first value is no change, so we
+    // look once, after the first layout has given the content its
+    // height. At build its height is not laid out yet, and a look then
+    // would take a good scroll back to the top.
+    property <bool> looked;
+    Timer {
+        interval: 1ms;
+        running: !root.looked && root.keep-in-reach;
+        triggered => {
+            root.looked = true;
+            if (root.past-y) { flick.content-y = clamp(flick.content-y, -root.max-y, 0px); }
+            if (root.past-x) { flick.content-x = clamp(flick.content-x, -root.max-x, 0px); }
+        }
+    }
     pure function track(span: length) -> length {
         return max(0px, span - 8px);
     }

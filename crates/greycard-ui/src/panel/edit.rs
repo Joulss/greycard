@@ -2108,4 +2108,323 @@ mod tests {
         assert!(app.get_collapsed_folders());
         assert_eq!(folders(&app), ["folders-library"]);
     }
+
+    /// The panel at its sections' foot keeps to their reach when they
+    /// get shorter under it (sections folded, a mask deleted) or the
+    /// view gets taller (a taller window): never scrolled past their
+    /// foot with room left empty under it (issue 157).
+    #[test]
+    fn the_panel_keeps_to_its_sections_when_they_shrink_or_the_view_grows() {
+        use crate::testing::{assert_panel_in_range, panel_to_end, settle};
+        for (w, h) in [(1683.0, 1000.0), (1500.0, 800.0)] {
+            let at = format!("{w}x{h}");
+            let app = window(3);
+            app.window().set_size(slint::LogicalSize::new(w, h));
+            let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+            for (_, _, set) in FOLDS {
+                set(&app, false);
+            }
+            settle(&app);
+
+            // A tall section folded.
+            panel_to_end(&app);
+            app.set_collapsed_light(true);
+            assert_panel_in_range(&app, &format!("{at}: LIGHT folded"));
+            // Every section folded.
+            panel_to_end(&app);
+            for (_, _, set) in FOLDS {
+                set(&app, true);
+            }
+            assert_panel_in_range(&app, &format!("{at}: all folded"));
+            for (_, _, set) in FOLDS {
+                set(&app, false);
+            }
+
+            // A taller window.
+            panel_to_end(&app);
+            app.window().set_size(slint::LogicalSize::new(w, h + 400.0));
+            assert_panel_in_range(&app, &format!("{at}: taller"));
+            app.window().set_size(slint::LogicalSize::new(w, h));
+
+            // A mask deleted, with three of them, from the Masks tab's foot.
+            app.set_panel_tab("Masks".into());
+            for _ in 0..3 {
+                app.invoke_new_mask();
+            }
+            settle(&app);
+            panel_to_end(&app);
+            app.invoke_delete_adjustment();
+            assert_panel_in_range(&app, &format!("{at}: a mask deleted"));
+            // Global chosen from a mask, from the foot.
+            app.invoke_target_changed(1);
+            settle(&app);
+            panel_to_end(&app);
+            app.invoke_target_changed(0);
+            assert_panel_in_range(&app, &format!("{at}: Global chosen"));
+
+            // A short tab after a long one starts at its top.
+            app.set_panel_tab("Develop".into());
+            settle(&app);
+            panel_to_end(&app);
+            app.set_panel_tab("Crop".into());
+            assert_panel_in_range(&app, &format!("{at}: Crop after Develop"));
+            drop(state);
+        }
+    }
+
+    /// Shrinks one after another, several in one frame, and a view
+    /// grown twice, with no scroll between them: each keeps the panel
+    /// in its sections' reach.
+    #[test]
+    fn the_panel_keeps_to_its_sections_through_shrinks_in_a_row() {
+        use crate::testing::{assert_panel_in_range, panel_to_end, settle};
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 800.0));
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        for (_, _, set) in FOLDS {
+            set(&app, false);
+        }
+        settle(&app);
+        panel_to_end(&app);
+        app.set_collapsed_light(true);
+        assert_panel_in_range(&app, "first shrink");
+        app.set_collapsed_color(true);
+        assert_panel_in_range(&app, "second shrink");
+        app.set_collapsed_curves(true);
+        app.set_collapsed_mixer(true);
+        app.set_collapsed_grading(true);
+        assert_panel_in_range(&app, "three shrinks in one frame");
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 1000.0));
+        assert_panel_in_range(&app, "then taller");
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 1300.0));
+        assert_panel_in_range(&app, "then taller again");
+    }
+
+    /// One section open at a time, scrolled to the foot with LIGHT
+    /// open: a section below it opened by its header is brought into
+    /// view as LIGHT folds, though the panel, shorter, is pulled back
+    /// into its reach in the same frames.
+    #[test]
+    fn a_section_opened_at_the_foot_under_one_at_a_time_comes_into_view() {
+        use crate::testing::{click, panel_scroll_and_end, panel_to_end, settle};
+        use i_slint_backend_testing::ElementHandle;
+        let mut missed = Vec::new();
+        // The header that sits in the view at the foot, under LIGHT,
+        // at each size: the one a click can reach there.
+        for (w, h, name) in [(1500.0, 800.0, "DETAIL"), (1683.0, 1000.0, "COLOR")] {
+            let app = window(3);
+            app.window().set_size(slint::LogicalSize::new(w, h));
+            let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+            for (_, _, set) in FOLDS {
+                set(&app, true);
+            }
+            app.set_collapsed_light(false);
+            app.set_one_section(true);
+            settle(&app);
+            panel_to_end(&app);
+            let view = ElementHandle::find_by_element_id(&app, "App::panel-view")
+                .next()
+                .expect("the panel's view");
+            let (top, bottom) = (
+                view.absolute_position().y,
+                view.absolute_position().y + view.size().height,
+            );
+            let header = ElementHandle::find_by_accessible_label(&app, name)
+                .next()
+                .unwrap_or_else(|| panic!("{w}x{h}: {name}'s header"));
+            let y = header.absolute_position().y + header.size().height / 2.0;
+            assert!(
+                y > top && y < bottom,
+                "{w}x{h}: {name}'s header in the view at the foot, at {y} in {top}..{bottom}"
+            );
+            click(
+                &app,
+                header.absolute_position().x + header.size().width / 2.0,
+                y,
+            );
+            for _ in 0..10 {
+                settle(&app);
+            }
+            let (scroll, end) = panel_scroll_and_end(&app);
+            let at = ElementHandle::find_by_accessible_label(&app, name)
+                .next()
+                .map_or(f32::NAN, |h| h.absolute_position().y);
+            if !(at >= top - 0.5 && at < bottom) {
+                missed.push(format!(
+                        "{w}x{h} {name}: header at {at}, view {top}..{bottom}, scroll {scroll}, reach {end}"
+                    ));
+            }
+        }
+        assert!(
+            missed.is_empty(),
+            "sections not brought into view: {missed:#?}"
+        );
+    }
+
+    /// The right pane hidden (Tab, F8) at its sections' foot, the
+    /// sections folded meanwhile, then brought back: the pane, built
+    /// anew, keeps to what its sections now reach (issue 157, by way
+    /// of another photo with fewer masks).
+    #[test]
+    fn a_pane_hidden_and_back_keeps_to_its_sections() {
+        use crate::testing::{assert_panel_in_range, panel_to_end, settle};
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 800.0));
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        for (_, _, set) in FOLDS {
+            set(&app, false);
+        }
+        settle(&app);
+        panel_to_end(&app);
+        app.set_right_hidden(true);
+        settle(&app);
+        for (_, _, set) in FOLDS {
+            set(&app, true);
+        }
+        settle(&app);
+        app.set_right_hidden(false);
+        for _ in 0..5 {
+            settle(&app);
+        }
+        assert_panel_in_range(&app, "the pane back after folds while hidden");
+    }
+
+    /// A scroll the sections still reach comes back with the pane
+    /// unchanged, at their foot and short of it.
+    #[test]
+    fn a_pane_hidden_and_back_keeps_a_scroll_in_reach() {
+        use crate::testing::{panel_scroll_and_end, panel_to_end, settle};
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 800.0));
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        for (_, _, set) in FOLDS {
+            set(&app, false);
+        }
+        settle(&app);
+        panel_to_end(&app);
+        let (foot, _) = panel_scroll_and_end(&app);
+        for kept in [foot, foot / 2.0] {
+            app.set_panel_scroll(kept);
+            settle(&app);
+            app.set_right_hidden(true);
+            settle(&app);
+            app.set_right_hidden(false);
+            for _ in 0..5 {
+                settle(&app);
+            }
+            assert_eq!(app.get_panel_scroll(), kept, "the scroll kept");
+        }
+    }
+
+    /// The right pane hidden and shown with only time between (the
+    /// lightbox and F8 set it from a timer, with no event to tear the
+    /// pane down first): the pane on its way out, squeezed for a frame,
+    /// is not kept in a reach it has only then, and the scroll comes
+    /// back exactly as it was, at the foot and short of it.
+    #[test]
+    fn a_pane_hidden_by_timers_alone_keeps_its_scroll() {
+        use crate::testing::{panel_scroll_and_end, panel_to_end, settle};
+        let step = |ms: u64| {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(ms));
+            slint::platform::update_timers_and_animations();
+        };
+        for (w, h) in [(1500.0, 800.0), (1683.0, 1000.0)] {
+            for part in [1.0f32, 0.99, 0.5, 0.1] {
+                let app = window(3);
+                app.window().set_size(slint::LogicalSize::new(w, h));
+                let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+                for (_, _, set) in FOLDS {
+                    set(&app, false);
+                }
+                settle(&app);
+                panel_to_end(&app);
+                let (foot, _) = panel_scroll_and_end(&app);
+                let kept = (foot * part).round();
+                app.set_panel_scroll(kept);
+                settle(&app);
+                app.set_right_hidden(true);
+                step(16);
+                assert_eq!(app.get_panel_scroll(), kept, "{w}x{h} {part}: hidden");
+                app.set_right_hidden(false);
+                for ms in [1, 1, 16, 16] {
+                    step(ms);
+                }
+                assert_eq!(app.get_panel_scroll(), kept, "{w}x{h} {part}: shown");
+                let (now, _) = panel_scroll_and_end(&app);
+                assert_eq!(now, kept, "{w}x{h} {part}: laid out");
+            }
+        }
+    }
+
+    /// The pane shown and its look made with no event and no read of
+    /// the window between: the content is laid out by then, and the
+    /// foot is kept.
+    #[test]
+    fn a_pane_rebuilt_by_timers_alone_keeps_its_foot() {
+        use crate::testing::{panel_scroll_and_end, panel_to_end, settle};
+        let step = |ms: u64| {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(ms));
+            slint::platform::update_timers_and_animations();
+        };
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 800.0));
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        for (_, _, set) in FOLDS {
+            set(&app, false);
+        }
+        settle(&app);
+        panel_to_end(&app);
+        let (foot, _) = panel_scroll_and_end(&app);
+        app.set_right_hidden(true);
+        step(20);
+        app.set_right_hidden(false);
+        for ms in [1, 1, 1, 20, 20] {
+            step(ms);
+        }
+        let (now, _) = panel_scroll_and_end(&app);
+        assert_eq!(now, foot, "kept with timers alone");
+    }
+
+    /// Into the lightbox and back out, the grid open before and after:
+    /// the right pane's scroll is where it was, at the foot and short
+    /// of it.
+    #[test]
+    fn the_lightbox_in_and_out_keeps_the_panels_scroll() {
+        use crate::testing::{panel_scroll_and_end, panel_to_end, settle};
+        let step = |ms: u64| {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(ms));
+            slint::platform::update_timers_and_animations();
+        };
+        for (w, h) in [(1500.0, 800.0), (1683.0, 1000.0)] {
+            for part in [1.0f32, 0.99, 0.5, 0.1] {
+                let app = window(3);
+                app.window().set_size(slint::LogicalSize::new(w, h));
+                let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+                app.set_grid_open(true);
+                for (_, _, set) in FOLDS {
+                    set(&app, false);
+                }
+                settle(&app);
+                panel_to_end(&app);
+                let (foot, _) = panel_scroll_and_end(&app);
+                let kept = (foot * part).round();
+                app.set_panel_scroll(kept);
+                settle(&app);
+                app.invoke_lightbox_enter();
+                step(16);
+                app.invoke_lightbox_leave();
+                for ms in [1, 1, 16, 16] {
+                    step(ms);
+                }
+                let (now, _) = panel_scroll_and_end(&app);
+                assert_eq!(now, kept, "{w}x{h} {part}: back from the lightbox");
+            }
+        }
+    }
 }

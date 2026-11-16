@@ -359,6 +359,42 @@ pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint:
     panic!("nothing labeled {label:?}");
 }
 
+/// The panel's scroll after the layout has settled, and how far its
+/// sections can scroll: their height less the view's.
+pub(crate) fn panel_scroll_and_end(app: &App) -> (f32, f32) {
+    use i_slint_backend_testing::ElementHandle;
+    settle(app);
+    let find = |id: &str| ElementHandle::find_by_element_id(app, id).next();
+    let view = find("App::panel-view").expect("the panel's view");
+    // Scrolled wholly out of the view, the sections are not found:
+    // they reach nowhere the scroll is.
+    let Some(sections) = find("App::panel-sections") else {
+        return (app.get_panel_scroll(), f32::NAN);
+    };
+    let end = (sections.size().height - view.size().height).max(0.0);
+    (app.get_panel_scroll(), end)
+}
+
+/// The panel scrolled no further than its sections reach: never past
+/// their foot, with room left empty under it and their top out of
+/// reach above, and never above their top.
+pub(crate) fn assert_panel_in_range(app: &App, what: &str) {
+    let (scroll, end) = panel_scroll_and_end(app);
+    assert!(
+        scroll <= 0.0 && scroll >= -end - 0.5,
+        "{what}: the panel scrolled to {scroll}, its sections reach {}",
+        -end
+    );
+}
+
+/// The panel scrolled to its sections' foot.
+pub(crate) fn panel_to_end(app: &App) {
+    let (_, end) = panel_scroll_and_end(app);
+    assert!(!end.is_nan(), "the sections are out of the view");
+    app.set_panel_scroll(-end);
+    settle(app);
+}
+
 /// A rectangle of the window: its top left and its size, in logical
 /// pixels from the window's top left.
 pub(crate) type Bounds = (slint::LogicalPosition, slint::LogicalSize);

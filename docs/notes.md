@@ -704,3 +704,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§690. Section headers in one look in both panes](notes/690-section-headers-in-one-look-in-both-panes.md) (2026-11-15)
 - [§691. The profiled denoise's Strength from 0.1](notes/691-the-profiled-denoises-strength-from-0-1.md) (2026-11-15)
 - [§692. The focus point from five more makers](notes/692-the-focus-point-from-five-more-makers.md) (2026-11-15)
+- [§693. The panel keeps to its sections](notes/693-the-panel-keeps-to-its-sections.md) (2026-11-15)

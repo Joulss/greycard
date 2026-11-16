@@ -1165,4 +1165,72 @@ mod tests {
             .unwrap_or(text.len());
         (text[..end].parse().expect("a factor"), &text[end..])
     }
+
+    /// A focused slider near the top of the panel's view, short of the
+    /// foot, as the sections above it fold: the panel, pulled back into
+    /// its sections' reach in the same frames, is not taken for the
+    /// wheel, and the slider is kept in view rather than let go of.
+    #[test]
+    fn a_slider_near_the_top_is_kept_as_the_sections_above_it_fold() {
+        use crate::testing::{panel_scroll_and_end, press};
+        let step = |ms: u64| {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(ms));
+            slint::platform::update_timers_and_animations();
+        };
+        let (app, _state, _worker) = exposure_focused();
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 800.0));
+        for (_, _, set) in crate::panel::edit::FOLDS {
+            set(&app, false);
+        }
+        step(1000);
+        focus_slider(&app, "Exposure");
+        step(1000);
+        // Period down to the panel's last slider, near its foot.
+        let (mut last, mut still) = (0.0, 0);
+        for _ in 0..200 {
+            press(&app, ".");
+            step(100);
+            let now = app.get_panel_scroll();
+            still = if now == last { still + 1 } else { 0 };
+            last = now;
+            if still == 8 {
+                break;
+            }
+        }
+        // That slider brought up near the view's top: the panel short
+        // of its foot by most of a view.
+        let (label, y0, _) = focused_slider(&app);
+        let (top, bottom) = panel_view(&app);
+        app.set_panel_scroll(app.get_panel_scroll() + top + 20.0 - y0);
+        step(1000);
+        let (_, near, _) = focused_slider(&app);
+        assert!(
+            (near - (top + 20.0)).abs() < 1.0,
+            "{label} at {near}, the view from {top}"
+        );
+        let (before, _) = panel_scroll_and_end(&app);
+        app.set_collapsed_light(true);
+        app.set_collapsed_color(true);
+        app.set_collapsed_curves(true);
+        app.set_collapsed_mixer(true);
+        app.set_collapsed_grading(true);
+        for _ in 0..10 {
+            step(16);
+        }
+        step(1000);
+        // The case this is about: the folds took the sections' reach
+        // above the scroll, and the panel was pulled back into it.
+        let (after, end) = panel_scroll_and_end(&app);
+        assert!(
+            end + 1.0 < -before && after >= -end - 0.5,
+            "the panel pulled back: {before} -> {after}, reach {end}"
+        );
+        let (kept, y0, y1) = focused_slider(&app);
+        assert_eq!(kept, label, "the same slider has the keys");
+        assert!(
+            y0 >= top && y1 <= bottom,
+            "{label} at {y0}..{y1}, the view {top}..{bottom}"
+        );
+    }
 }

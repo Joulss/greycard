@@ -3668,6 +3668,89 @@ mod tests {
         assert_eq!(app.get_panel_scroll(), 0.0, "the sections are at their top");
     }
 
+    /// An object mask made, its pick placed, and the tool put down, with
+    /// the panel scrolled to its foot at each step: the panel never
+    /// scrolls past what its sections reach, so no room is left empty
+    /// under them while the MASK and WHITE BALANCE sections sit out of
+    /// reach above (issue 157). The wheel then takes it back to the
+    /// MASK section's top. At two window sizes, with one mask and with
+    /// several.
+    #[test]
+    fn an_object_mask_never_leaves_the_panel_scrolled_past_its_end() {
+        use crate::testing::{assert_panel_in_range, panel_to_end, settle};
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::WindowEvent;
+        for (w, h) in [(1683.0, 1000.0), (1500.0, 800.0)] {
+            for masks in [1, 3] {
+                let app = window(1);
+                app.window().set_size(slint::LogicalSize::new(w, h));
+                let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+                app.set_panel_tab("Masks".into());
+                for (_, _, set) in crate::panel::edit::FOLDS {
+                    set(&app, false);
+                }
+                for _ in 1..masks {
+                    app.invoke_new_mask();
+                }
+                let at = format!("{w}x{h}, {masks} masks");
+                app.invoke_new_mask();
+                settle(&app);
+                panel_to_end(&app);
+                app.invoke_add_shape("Object".into(), "Add".into());
+                assert_panel_in_range(&app, &format!("{at}: Object in hand"));
+                panel_to_end(&app);
+                app.invoke_place_pressed(300.0, 200.0, false);
+                app.invoke_place_released();
+                assert_panel_in_range(&app, &format!("{at}: picked"));
+                panel_to_end(&app);
+                app.invoke_stop_placing();
+                assert_panel_in_range(&app, &format!("{at}: put down"));
+                // The tester's view: the sections below MASK folded
+                // after the panel was at its foot.
+                panel_to_end(&app);
+                for (_, _, set) in crate::panel::edit::FOLDS {
+                    set(&app, true);
+                }
+                app.set_collapsed_light(false);
+                assert_panel_in_range(&app, &format!("{at}: folded"));
+                // The wheel up over the view reaches the MASK section.
+                let view = ElementHandle::find_by_element_id(&app, "App::panel-view")
+                    .next()
+                    .expect("the panel's view");
+                let (top, size) = (view.absolute_position(), view.size());
+                for _ in 0..60 {
+                    app.window().dispatch_event(WindowEvent::PointerScrolled {
+                        position: slint::LogicalPosition::new(
+                            top.x + size.width / 2.0,
+                            top.y + size.height / 2.0,
+                        ),
+                        delta_x: 0.0,
+                        delta_y: 120.0,
+                    });
+                }
+                settle(&app);
+                assert_eq!(
+                    app.get_panel_scroll(),
+                    0.0,
+                    "{at}: the wheel took it to the top"
+                );
+                let mask = ElementHandle::find_by_element_id(&app, "App::mask-section")
+                    .next()
+                    .expect("the MASK section");
+                let view = ElementHandle::find_by_element_id(&app, "App::panel-view")
+                    .next()
+                    .expect("the panel's view");
+                let top = view.absolute_position().y;
+                assert!(
+                    mask.absolute_position().y >= top - 0.5,
+                    "{at}: the MASK section's top at {}, the view's {}",
+                    mask.absolute_position().y,
+                    top
+                );
+            }
+        }
+    }
+
     /// New mask hands the new mask's name the keys, its placeholder
     /// selected: a name typed at once replaces it, and none of its
     /// letters reaches the window's keys. Enter gives them back. A

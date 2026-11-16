@@ -234,6 +234,9 @@ design note behind it.
   ([§674](https://github.com/jessolmstead/greycard/blob/master/docs/notes/674-an-open-dropped-by-a-develop-asked-while-it-decodes.md)).
 - `greycard rawtherapee --write` puts a new sidecar where the
   editor's setting says, no longer always beside the raw.
+- The right panel no longer stays scrolled past its last section,
+  hiding the sections above, after a section gets shorter (issue 157,
+  [§693](https://github.com/jessolmstead/greycard/blob/master/docs/notes/693-the-panel-keeps-to-its-sections.md)).
 - A picture past the graphics card's largest texture (16,384 pixels on
   every Mac) opens reduced and exports whole, no longer crashing every
   launch (issue 152,
