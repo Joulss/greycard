@@ -6,6 +6,10 @@ use std::path::PathBuf;
 
 use crate::{collections, filter, library, panel, roots, rows, sort, stacks, tree, versions};
 
+/// The ranged facets' values as read, and the hash of the frames they
+/// were read for.
+pub(crate) type RangesKept = (u64, Vec<(filter::Facet, Vec<greycard_library::FacetCount>)>);
+
 /// The library views: what the browser lists and in what order, the
 /// filter and the index behind it, the roots, collections, stacks and
 /// folder tree, the selection beside the current frame, the
@@ -107,6 +111,10 @@ pub(crate) struct Views {
     /// The facets' counts as last read, kept when a read comes back
     /// busy.
     pub(crate) facets_last: RefCell<Vec<(filter::Facet, Vec<greycard_library::FacetCount>)>>,
+    /// The ranged facets' values over the whole folder, kept against a
+    /// hash of the frames they were read for, and read again only when
+    /// those change (`library::folder_values`).
+    pub(crate) ranges_last: RefCell<Option<RangesKept>>,
     /// The library's roots, their counts and their watcher.
     pub(crate) library: roots::Library,
     /// The collections and smart collections, and what the browser

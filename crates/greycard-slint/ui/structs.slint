@@ -432,6 +432,23 @@ export struct FacetRow {
     chips: [FacetChip],
 }
 
+/// A number facet as the CULLING section's range (ISO, the focal
+/// length): its caption and code as a `FacetRow`'s, the folder's
+/// values in order as shown ("24 mm") and as a term writes them
+/// ("24"), the longest of them as shown, for the width its numbers
+/// keep, the ends shown by their place among them, and whether a term
+/// on the field is typed. No values, no row.
+export struct FacetRange {
+    name: string,
+    code: int,
+    values: [string],
+    keys: [string],
+    widest: string,
+    low: int,
+    high: int,
+    on: bool,
+}
+
 /// One row of the history, newest first: a state, named for what it
 /// changed, or an export made from the state below it, marked as a
 /// record with when it was written. `undone` when its state is one

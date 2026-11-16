@@ -2213,8 +2213,9 @@ mod tests {
         use i_slint_backend_testing::ElementHandle;
         let mut missed = Vec::new();
         // The header that sits in the view at the foot, under LIGHT,
-        // at each size: the one a click can reach there.
-        for (w, h, name) in [(1500.0, 800.0, "DETAIL"), (1683.0, 1000.0, "COLOR")] {
+        // at each size: the one a click can reach there. (1014 tall, the
+        // head's kept time line taken, is the panel 1000 was before it.)
+        for (w, h, name) in [(1500.0, 800.0, "DETAIL"), (1683.0, 1014.0, "COLOR")] {
             let app = window(3);
             app.window().set_size(slint::LogicalSize::new(w, h));
             let (_state, _worker) = crate::testing::state_for(&app, Vec::new());

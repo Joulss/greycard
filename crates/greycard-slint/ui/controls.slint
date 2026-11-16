@@ -1720,6 +1720,299 @@ export component EditSlider inherits Rectangle {
     }
 }
 
+// One of a `RangeSlider`'s two handles: `EditSlider`'s, which takes
+// the keys by Tab, an arrow a stop each way (`step`), the arrow let go
+// or the keys gone elsewhere `done`. (The panel's view scrolls a handle
+// Tab reaches into view of itself.) Escape hands the keys back; any
+// other key is the window's, as a slider's is. A screen reader is told
+// its stop as the value, among the stops it can reach (`first` to
+// `last`), and the folder's value there as the description; its
+// increment and decrement are a step and done at once.
+component RangeHandle inherits Rectangle {
+    in property <bool> active;
+    in property <bool> pressed;
+    in property <string> label;
+    in property <string> shown;
+    in property <int> stop;
+    in property <int> first;
+    in property <int> last;
+    callback step(int);
+    callback done();
+    out property <bool> focused: fs.has-focus;
+    property <length> size: root.active || fs.has-focus ? 16px : 14px;
+    width: self.size;
+    height: self.size;
+    border-radius: self.size / 2;
+    background: root.pressed ? Theme.text-strong : Theme.text;
+    border-width: fs.has-focus ? 2px : 0;
+    border-color: Theme.focus-ring;
+    accessible-role: slider;
+    accessible-label: root.label;
+    accessible-value: root.stop;
+    accessible-description: root.shown;
+    accessible-value-minimum: root.first;
+    accessible-value-maximum: root.last;
+    accessible-value-step: 1;
+    accessible-action-increment => { root.step(1); root.done(); }
+    accessible-action-decrement => { root.step(-1); root.done(); }
+    animate width, height { duration: Theme.quick; }
+    property <int> number: 0;
+    function arrow(e: KeyEvent) -> bool {
+        return !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
+            && (e.text == Key.UpArrow || e.text == Key.RightArrow
+                || e.text == Key.DownArrow || e.text == Key.LeftArrow);
+    }
+    function me() -> int {
+        if (root.number == 0) {
+            SliderKeys.count += 1;
+            root.number = SliderKeys.count;
+        }
+        return root.number;
+    }
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                Typing.done += 1;
+                return accept;
+            }
+            if (root.arrow(e)) {
+                root.step(e.text == Key.UpArrow || e.text == Key.RightArrow ? 1 : -1);
+                return accept;
+            }
+            if (e.text == Key.Tab || e.text == Key.Backtab) { return reject; }
+            SliderKeys.passed-key = e;
+            SliderKeys.passed += 1;
+            return accept;
+        }
+        // The arrow let go: a held arrow's repeats were one move.
+        key-released(e) => {
+            if (root.arrow(e)) {
+                root.done();
+                return accept;
+            }
+            return reject;
+        }
+        changed has-focus => {
+            if (self.has-focus) {
+                SliderKeys.holder = root.me();
+            } else {
+                root.done();
+                if (SliderKeys.holder == root.number) {
+                    SliderKeys.holder = 0;
+                }
+            }
+        }
+    }
+}
+
+// A range over a row of values: a track and two handles, each on one
+// of the stops of `values`, spaced evenly whatever the values are, so
+// ISO's 100 to 102400 is as easy to set as a zoom's 24 to 70. The ends
+// are the owner's (`low`, `high`), and the slider only holds one
+// (`holding`), shown where it is held, until it asks to move it
+// through `asked` and the owner moves it. A handle only drags: a press
+// on one holds it and its release asks; a press off the handles moves
+// nothing. Of two within a press of each other, the drag's way picks
+// one. An arrow holds a focused end a stop at a time and asks when it
+// is let go, so a held arrow is one move, as a drag is. A double-click
+// asks for the whole range (`reset`), unless either press moved an
+// end. New `values` under a hold let it go, asking nothing: its stop
+// is the old values'. The look is `EditSlider`'s, its fill drawn
+// between the handles and only while `on`. A press takes no focus, as
+// the filter's chips take none: in culling the arrows are the frames'.
+export component RangeSlider inherits Rectangle {
+    in property <[string]> values;
+    in property <int> low: 0;
+    in property <int> high: 1;
+    in property <bool> on: false;
+    in property <string> label;
+    /// An end asked to move, 0 the low and 1 the high, to a stop.
+    callback asked(int, int);
+    callback reset();
+    /// The end a press holds (-1 none) and the stop it is shown on.
+    callback holding(int, int);
+    property <int> last: max(1, root.values.length - 1);
+    // Half a handle each side, so a handle at an end stays inside.
+    property <length> inset: 8px;
+    property <length> track-width: root.width - 2 * root.inset;
+    // The end a press or an arrow holds (-1 none), its stop, and the
+    // value there when it was held; a press on two handles waits for
+    // the drag's way to pick one.
+    property <int> held: -1;
+    property <int> held-at: 0;
+    property <string> held-value;
+    property <bool> keyed: false;
+    property <bool> undecided: false;
+    // Whether this press moved an end, and whether the one before did:
+    // Slint takes a click soon after a drag, near its press, for a
+    // double-click's second.
+    property <bool> dragged: false;
+    property <bool> dragged-before: false;
+    property <length> press-x;
+    property <int> shown-low: root.held == 0 ? root.held-at : root.low;
+    property <int> shown-high: root.held == 1 ? root.held-at : root.high;
+    property <bool> active: ta.has-hover || ta.pressed || lo.focused || hi.focused;
+    function x-of(i: int) -> length {
+        return root.inset + root.track-width * i / root.last;
+    }
+    function stop-at(x: length) -> int {
+        return clamp(round((x - root.inset) / root.track-width * root.last), 0, root.last);
+    }
+    // An end held on a stop, kept on its side of the other; -1 none.
+    function hold(end: int, at: int) {
+        let to = clamp(end == 0 ? min(at, root.high) : max(at, root.low), 0, root.last);
+        if (end >= 0 && end == root.held && to != root.held-at) {
+            root.dragged = true;
+        }
+        root.held-at = to;
+        root.held = end;
+        root.held-value = end >= 0 ? root.values[to] : "";
+        root.holding(end, to);
+    }
+    // Let go of the hold, asking nothing.
+    function drop() {
+        root.undecided = false;
+        root.keyed = false;
+        root.hold(-1, 0);
+    }
+    // The held end let go, and asked to its stop if it moved there.
+    function let-go() {
+        let end = root.held;
+        let to = min(root.held-at, root.last);
+        root.drop();
+        if (end >= 0 && to != (end == 0 ? root.low : root.high)) {
+            root.asked(end, to);
+        }
+    }
+    // An arrow: the end held a stop on, asked when the arrow is let go.
+    function step(end: int, way: int) {
+        if (root.held != end) {
+            root.let-go();
+            root.keyed = true;
+            root.hold(end, (end == 0 ? root.low : root.high) + way);
+        } else {
+            root.hold(end, root.held-at + way);
+        }
+    }
+    // The arrow let go, or the keys gone: a key's hold asked for.
+    function stepped() {
+        if (root.keyed) { root.let-go(); }
+    }
+    // The stops read again under a hold: if its stop is no longer the
+    // value it was held on, the hold is the old values' and goes.
+    changed values => {
+        if (root.held >= 0 && (root.held-at > root.last || root.values[root.held-at] != root.held-value)) {
+            root.drop();
+        }
+    }
+    track := Rectangle {
+        x: root.inset;
+        width: root.track-width;
+        y: (root.height - self.height) / 2;
+        height: root.active ? 5px : 4px;
+        border-radius: self.height / 2;
+        background: Theme.border-strong;
+        animate height { duration: Theme.quick; }
+        Rectangle {
+            visible: root.on;
+            x: root.x-of(root.shown-low) - root.inset;
+            width: root.x-of(root.shown-high) - root.x-of(root.shown-low);
+            height: 100%;
+            background: ta.pressed ? Theme.accent-pressed : root.active ? Theme.accent-hover : Theme.accent;
+        }
+    }
+    // Under the touch area, so a press on a handle is the drag's and
+    // does not focus it.
+    lo := RangeHandle {
+        x: root.x-of(root.shown-low) - self.width / 2;
+        y: (root.height - self.height) / 2;
+        active: root.active;
+        pressed: ta.pressed && root.held == 0;
+        label: root.label;
+        shown: root.values[root.shown-low];
+        stop: root.shown-low;
+        first: 0;
+        last: root.shown-high;
+        step(way) => { root.step(0, way); }
+        done => { root.stepped(); }
+    }
+    hi := RangeHandle {
+        x: root.x-of(root.shown-high) - self.width / 2;
+        y: (root.height - self.height) / 2;
+        active: root.active;
+        pressed: ta.pressed && root.held == 1;
+        label: root.label;
+        shown: root.values[root.shown-high];
+        stop: root.shown-high;
+        first: root.shown-low;
+        last: root.last;
+        step(way) => { root.step(1, way); }
+        done => { root.stepped(); }
+    }
+    ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.cancel) {
+                root.drop();
+                return;
+            }
+            if (e.button != PointerEventButton.left) {
+                // Another button pressed mid-drag ends the drag, asking
+                // nothing: its release lets go of the pointer, and the
+                // left's release may come where no `up` reaches us.
+                if (e.kind == PointerEventKind.down && !root.keyed) { root.drop(); }
+                return;
+            }
+            if (e.kind == PointerEventKind.down) {
+                // An arrow's hold is asked for; anything else held is a
+                // drag whose release never came, and goes.
+                if (root.keyed) { root.let-go(); } else { root.drop(); }
+                root.press-x = self.mouse-x;
+                root.dragged-before = root.dragged;
+                root.dragged = false;
+                let dl = abs(self.mouse-x - root.x-of(root.low));
+                let dh = abs(self.mouse-x - root.x-of(root.high));
+                // On a handle (half a handle each side of its middle),
+                // the nearer; on both, the drag's way picks one.
+                if (dl <= root.inset && dh <= root.inset) {
+                    root.undecided = true;
+                } else if (min(dl, dh) <= root.inset) {
+                    root.hold(dl <= dh ? 0 : 1, dl <= dh ? root.low : root.high);
+                }
+            }
+            if (e.kind == PointerEventKind.up && !root.keyed) {
+                root.undecided = false;
+                root.let-go();
+            }
+        }
+        moved => {
+            if (!self.pressed || root.keyed) { return; }
+            if (abs(self.mouse-x - root.press-x) >= 4px) { root.dragged = true; }
+            if (root.undecided) {
+                if (!root.dragged) { return; }
+                root.undecided = false;
+                // The end the way picks, and never moved against the way
+                // by this first move: a press left of both, moved right,
+                // can land on a stop left of the high end it picked.
+                let end = self.mouse-x < root.press-x ? 0 : 1;
+                let at = root.stop-at(self.mouse-x);
+                root.hold(end, end == 0 ? min(at, root.low) : max(at, root.high));
+                return;
+            }
+            if (root.held >= 0) {
+                root.hold(root.held, root.stop-at(self.mouse-x));
+            }
+        }
+        // Before the second release's `up`, which then holds nothing.
+        // Either press having moved an end, it is no double-click.
+        double-clicked => {
+            if (root.dragged || root.dragged-before) { return; }
+            root.drop();
+            root.reset();
+        }
+    }
+}
+
 // A switch with a label. With `follows`, `checked` is the owner's
 // binding to keep: a click or a key only asks, through `toggled`, and
 // the switch shows whatever the owner's state comes to.

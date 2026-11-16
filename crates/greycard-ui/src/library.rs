@@ -46,10 +46,10 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use greycard_library::{Change, FacetCount, Library, Report};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::filter::{self, Facet};
-use crate::{App, FacetChip, FacetRow, Shared, State, tr};
+use crate::{App, FacetChip, FacetRange, FacetRow, Shared, State, tr};
 
 /// How often a long pass tells the window how far it has got, so a
 /// facet fills in and a frame the filter does not want goes, while
@@ -2036,7 +2036,9 @@ fn counts_in_hand(
 
 /// Every facet's chips, in [`Facet::ALL`]'s order: each value among
 /// the frames the filter's other tests leave, with its count — the
-/// rule the meta rows keep (`filter::Counts`). The EXIF facets are
+/// rule the meta rows keep (`filter::Counts`). ISO and the focal
+/// length have no chips: the CULLING section's ranges stand for them
+/// ([`facet_ranges`]), and they are not counted here. The EXIF facets are
 /// one `GROUP BY` each on the index: the tests the frames in hand
 /// answer pick the rows (`within`), and the index's own tests, less
 /// the facet's, are the query's filter. The keyword and the kind are
@@ -2081,7 +2083,7 @@ pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
     };
     let mut rows = Vec::new();
     for facet in Facet::ALL {
-        if filter::in_hand(facet) {
+        if filter::in_hand(facet) || filter::ranged(facet).is_some() {
             continue;
         }
         let asked = st.views.filter.index_filter(&typed, Some(facet));
@@ -2222,6 +2224,103 @@ pub(crate) fn split_facet_rows(rows: &[FacetRow]) -> (Vec<FacetRow>, Vec<FacetRo
     )
 }
 
+/// A ranged facet's values over the whole folder, as the index counts
+/// them: not narrowed by the rest of the filter, as a chip row is, so
+/// the stops stay put while the filter changes and the range's own
+/// ends never take values off it. The frames behind a closed stack are
+/// left out, as the chips' counts leave them. None until the index has
+/// the folder's rows. The answer depends on the frames and their rows
+/// alone, so it is kept against them and read again only when they
+/// change (another folder, a frame indexed, a stack opened or closed);
+/// a read that fails keeps the last answer and asks again next time.
+fn folder_values(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
+    use std::hash::{Hash, Hasher};
+    let Some(lib) = &st.views.index_reader else {
+        return Vec::new();
+    };
+    if st.views.index_ids.len() != st.files.len() {
+        return Vec::new();
+    }
+    let behind = crate::stacks::behind(st);
+    let within: Vec<i64> = (st.views.index_ids.iter().enumerate())
+        .filter(|(i, _)| !behind.as_ref().is_some_and(|b| b[*i]))
+        .filter_map(|(_, id)| *id)
+        .collect();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    lib.path().hash(&mut hasher);
+    within.hash(&mut hasher);
+    let key = hasher.finish();
+    let mut kept = st.views.ranges_last.borrow_mut();
+    if let Some((k, values)) = kept.as_ref()
+        && *k == key
+    {
+        return values.clone();
+    }
+    let mut values = Vec::new();
+    for (facet, _) in filter::RANGED {
+        match lib.facet_counts(facet, Some(&within), &greycard_library::Filter::default()) {
+            Ok(counts) => values.push((facet, counts)),
+            Err(e) => {
+                tracing::debug!("index: {facet:?} range: {e}; keeping the last answer");
+                return kept.as_ref().map(|(_, v)| v.clone()).unwrap_or_default();
+            }
+        }
+    }
+    *kept = Some((key, values.clone()));
+    values
+}
+
+/// A ranged facet's row: the values in order, as shown and as a term
+/// writes them, and the ends the filter's text puts them at.
+pub(crate) fn range_of(facet: Facet, counts: &[FacetCount], text: &str) -> FacetRange {
+    let mut values: Vec<(f64, &FacetCount)> = counts
+        .iter()
+        .filter_map(|c| c.value.parse::<f64>().ok().map(|v| (v, c)))
+        .collect();
+    values.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let numbers: Vec<f64> = values.iter().map(|(v, _)| *v).collect();
+    let shown: Vec<SharedString> = values
+        .iter()
+        .map(|(_, c)| filter::facet_chip_text(facet, &c.label).into())
+        .collect();
+    let keys: Vec<SharedString> = values
+        .iter()
+        .map(|(_, c)| c.value.as_str().into())
+        .collect();
+    let widest = shown
+        .iter()
+        .max_by_key(|s| s.chars().count())
+        .cloned()
+        .unwrap_or_default();
+    let (low, high, on) = filter::ranged(facet)
+        .map(|field| filter::range_ends(text, field, &numbers))
+        .unwrap_or((0, numbers.len().saturating_sub(1), false));
+    FacetRange {
+        name: crate::i18n::text(filter::facet_caption(facet)).into(),
+        code: filter::facet_slot(facet) as i32,
+        values: ModelRc::new(VecModel::from(shown)),
+        keys: ModelRc::new(VecModel::from(keys)),
+        widest,
+        low: low as i32,
+        high: high as i32,
+        on,
+    }
+}
+
+/// The CULLING section's ranges, in [`filter::RANGED`]'s order.
+pub(crate) fn facet_ranges(st: &State) -> Vec<FacetRange> {
+    let values = folder_values(st);
+    filter::RANGED
+        .iter()
+        .map(|(facet, _)| {
+            let counts = (values.iter().find(|(f, _)| f == facet))
+                .map(|(_, c)| c.as_slice())
+                .unwrap_or_default();
+            range_of(*facet, counts, &st.views.filter.text)
+        })
+        .collect()
+}
+
 /// What the facets' row says before its chips: the index's error, its
 /// progress or its opening, whatever rows there are — a mixed folder
 /// has its kind's row before the index has a row of its own — and,
@@ -2275,16 +2374,17 @@ pub(crate) fn choose_wanted(st: &mut State) -> bool {
                 }
             }
         };
+        // ISO and the focal length never come here: `filter::from_cli`
+        // leaves their terms for the text.
         let needle = want.value.to_lowercase();
-        let number = |s: &str| s.trim().trim_end_matches("mm").parse::<f64>().ok();
         let hits: Vec<String> = counts
             .into_iter()
-            .filter(|c| match want.facet {
-                Facet::Iso | Facet::Focal => {
-                    number(&c.value).is_some() && number(&c.value) == number(&want.value)
+            .filter(|c| {
+                if want.exact {
+                    c.value.to_lowercase() == needle
+                } else {
+                    c.value.to_lowercase().contains(&needle)
                 }
-                _ if want.exact => c.value.to_lowercase() == needle,
-                _ => c.value.to_lowercase().contains(&needle),
             })
             .map(|c| c.value)
             .collect();
@@ -2815,6 +2915,89 @@ mod tests {
         (files, sidecars, reader)
     }
 
+    /// A state over a folder of three, all indexed: an R5 at 23.9 mm
+    /// and ISO 100, an R6 at ISO 6400, and a mosaic DNG whose EXIF has
+    /// neither an ISO nor a focal length.
+    fn odd_state(app: &App, dir: &Path) -> State {
+        let files: Vec<PathBuf> = ["a.tif", "b.tif", "c.dng"]
+            .iter()
+            .map(|n| dir.join(n))
+            .collect();
+        write_frame(
+            &files[0],
+            &greycard_library::fixture::Frame {
+                focal: (239, 10),
+                ..R5
+            },
+            1,
+        );
+        write_frame(&files[1], &R6, 2);
+        write_mosaic_dng(&files[2], "RGGB");
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = Library::open(&db).unwrap();
+        writer.index_folder(dir, &mut |_| {}).unwrap();
+        drop(writer);
+        let mut st = State::empty(files, app);
+        st.sidecars = vec![Sidecar::default(); 3];
+        st.views.index_reader = Some(Library::open_read_only(&db).unwrap());
+        refresh_ids(&mut st);
+        assert!(
+            st.views.index_ids.iter().all(Option::is_some),
+            "all indexed"
+        );
+        st
+    }
+
+    /// An older build's held-out ISO chip let a frame with no ISO
+    /// through; loaded now it is dropped, rather than turned into an
+    /// `iso!=` that would hide that frame.
+    #[test]
+    fn a_held_out_iso_chip_kept_by_an_older_build_hides_no_frame_without_one() {
+        use crate::filter::SavedBar;
+        let dir = scratch("held-out");
+        let app = crate::testing::window(3);
+        let mut st = odd_state(&app, &dir);
+        let kept: filter::Saved = serde_json::from_str(
+            r#"{"stars": 0, "exact": false, "flags": [], "labels": [], "text": "",
+                "not_facets": {"iso": ["6400"], "focal": ["50"]}}"#,
+        )
+        .unwrap();
+        st.views.filter = kept.filter();
+        assert_eq!(st.views.filter.text, "");
+        assert_eq!(shown(&st), [0, 1, 2], "the frame with no ISO stays");
+        drop(st);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A focal length off the whole millimeter is a stop of its own, and
+    /// the terms the range writes for it pass it at either end, through
+    /// the index's own SQL.
+    #[test]
+    fn a_focal_stop_off_the_whole_millimeter_passes_its_own_terms() {
+        let dir = scratch("focal-tenth");
+        let app = crate::testing::window(3);
+        let mut st = odd_state(&app, &dir);
+        let counts = folder_values(&st)
+            .into_iter()
+            .find(|(f, _)| *f == Facet::Focal)
+            .map(|(_, c)| c)
+            .unwrap();
+        let focal = range_of(Facet::Focal, &counts, "");
+        let keys: Vec<String> = focal.keys.iter().map(|k| k.to_string()).collect();
+        assert_eq!(keys, ["23.9", "50"]);
+        for text in ["focal>=23.9", "focal<=23.9", "focal>=23.9 focal<=23.9"] {
+            st.views.filter.text = text.into();
+            st.views.index_passed = index_pass(&st);
+            let shown = shown(&st);
+            assert!(shown.contains(&0), "{text}: {shown:?}");
+            assert!(!shown.contains(&2), "{text}: no focal length, no pass");
+        }
+        st.views.filter.text = "focal>=23.9 focal<=23.9".into();
+        assert_eq!(shown(&st), [0]);
+        drop(st);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// A state with the folder's files, sidecars and index, as the
     /// window would have them after the first pass.
     fn state(app: &App, dir: &Path) -> State {
@@ -2920,9 +3103,16 @@ mod tests {
             pairs(&[("Canon EOS R6m2", 2), ("Canon EOS R5", 1), (&sony, 1)])
         );
         assert_eq!(
-            counts(&mut st, Facet::Iso),
-            pairs(&[("100", 1), ("3200", 1), ("6400", 2)])
+            counts(&mut st, Facet::Lens),
+            pairs(&[
+                ("RF50mm F1.8 STM", 2),
+                ("FE 24-70mm F2.8 GM II", 1),
+                ("RF35mm F1.4 L VCM", 1)
+            ])
         );
+        // ISO and the focal length are ranges, and are not counted.
+        assert!(counts(&mut st, Facet::Iso).is_empty());
+        assert!(counts(&mut st, Facet::Focal).is_empty());
         assert_eq!(
             counts(&mut st, Facet::Keyword),
             pairs(&[("harbor", 2), ("dusk", 1)])
@@ -2945,7 +3135,10 @@ mod tests {
             counts(&mut st, Facet::Camera),
             pairs(&[("Canon EOS R6m2", 2), ("Canon EOS R5", 1), (&sony, 1)])
         );
-        assert_eq!(counts(&mut st, Facet::Iso), pairs(&[("6400", 2)]));
+        assert_eq!(
+            counts(&mut st, Facet::Lens),
+            pairs(&[("RF50mm F1.8 STM", 2)])
+        );
         assert_eq!(counts(&mut st, Facet::Keyword), pairs(&[("harbor", 1)]));
 
         // And the rule itself, chip by chip: a count is what that
@@ -2953,7 +3146,10 @@ mod tests {
         // the frames the index has rows for.
         st.views.filter.stars = filter::Stars::AtLeast(1);
         st.views.index_passed = index_pass(&st);
-        for facet in Facet::ALL {
+        for facet in Facet::ALL
+            .into_iter()
+            .filter(|f| filter::ranged(*f).is_none())
+        {
             let rows = facet_counts(&st);
             let (_, chips) = rows.iter().find(|(f, _)| *f == facet).unwrap();
             for chip in chips {
@@ -3272,6 +3468,259 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// The CULLING section's ISO and focal length are ranges over the
+    /// folder's values: an end moved writes its term into the text and
+    /// filters by it, a term typed shows on the ends, and the whole
+    /// range again takes the terms out.
+    #[test]
+    fn a_range_writes_its_terms_and_shows_the_typed_ones() {
+        use slint::Model;
+
+        use crate::testing::{state_for, window};
+        let dir = scratch("ranges");
+        let app = window(0);
+        let (files, sidecars, reader) = folder(&dir);
+        let (state, _worker) = state_for(&app, files);
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars = sidecars;
+            st.views.index_reader = Some(reader);
+            refresh_ids(&mut st);
+            crate::panel::browser::rebuild_browser(&mut st, &app);
+        }
+        let shown =
+            |r: &FacetRange| -> Vec<String> { r.values.iter().map(|v| v.to_string()).collect() };
+        let iso = app.get_filter_iso_range();
+        assert_eq!(shown(&iso), ["100", "3200", "6400"]);
+        assert_eq!((iso.low, iso.high, iso.on), (0, 2, false));
+        assert_eq!(
+            shown(&app.get_filter_focal_range()),
+            ["24 mm", "35 mm", "50 mm"]
+        );
+        // No chips for either, in the panel or the header.
+        let rows: Vec<String> = app
+            .get_filter_facets()
+            .iter()
+            .map(|r| r.name.to_string())
+            .collect();
+        assert!(!rows.iter().any(|n| n == "ISO" || n == "Focal"), "{rows:?}");
+
+        // The low end to 3200: the two R6s, the A7, and the fifth,
+        // which has no row yet.
+        app.invoke_filter_range_moved(iso.code, 0, "3200".into(), "".into());
+        assert_eq!(state.borrow().views.filter.text, "iso>=3200");
+        assert_eq!(app.get_filter_text(), "iso>=3200");
+        assert_eq!(app.get_filter_shown(), 4);
+        let iso = app.get_filter_iso_range();
+        assert_eq!((iso.low, iso.high, iso.on), (1, 2, true));
+        // Its values stay the folder's, the range's own term aside.
+        assert_eq!(shown(&iso), ["100", "3200", "6400"]);
+
+        // A value the folder lacks, typed: the ends on the nearest it
+        // has, the text as typed.
+        app.invoke_filter_text_edited("harbor iso:5000".into());
+        let iso = app.get_filter_iso_range();
+        assert_eq!((iso.low, iso.high, iso.on), (2, 2, true));
+        assert_eq!(state.borrow().views.filter.text, "harbor iso:5000");
+        // The high end moved up from there to the folder's: the exact
+        // term goes, and the low end is written as shown.
+        app.invoke_filter_range_moved(iso.code, 1, "6400".into(), "".into());
+        assert_eq!(app.get_filter_text(), "harbor iso>=6400");
+
+        // The whole range again.
+        app.invoke_filter_range_reset(iso.code);
+        assert_eq!(app.get_filter_text(), "harbor");
+        assert!(!app.get_filter_iso_range().on);
+        state.borrow_mut().views.index_reader = None;
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// ISO and the focal length have no chips: `--filter iso:3200` at
+    /// launch, and an older build's chips kept in a filter, come in as
+    /// the range's terms in the text, and the range shows them and
+    /// clears them as a range set by hand.
+    #[test]
+    fn launch_and_kept_chips_show_on_the_range() {
+        use crate::filter::SavedBar;
+        use crate::testing::{state_for, window};
+        let dir = scratch("chosen");
+        let app = window(0);
+        let (files, sidecars, reader) = folder(&dir);
+        let (state, _worker) = state_for(&app, files);
+        let rebuild = || {
+            let mut st = state.borrow_mut();
+            crate::panel::browser::rebuild_browser(&mut st, &app);
+        };
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars = sidecars;
+            st.views.index_reader = Some(reader);
+            refresh_ids(&mut st);
+        }
+        rebuild();
+        let ends = |r: FacetRange| (r.low, r.high, r.on);
+        let iso = app.get_filter_iso_range().code;
+        let focal = app.get_filter_focal_range().code;
+
+        // `--filter iso:3200` at launch: the term goes to the text.
+        let (rest, wanted) = filter::from_cli("iso:3200");
+        assert!(wanted.is_empty());
+        app.invoke_filter_text_edited(rest.into());
+        assert_eq!(ends(app.get_filter_iso_range()), (1, 1, true));
+        assert!(app.get_filter_on());
+        // Clear, as for any filter.
+        app.invoke_filter_cleared();
+        assert_eq!(ends(app.get_filter_iso_range()), (0, 2, false));
+        assert!(!app.get_filter_on());
+
+        // A filter kept from the last session or a smart collection by
+        // a build that had the chips.
+        let kept: filter::Saved = serde_json::from_str(
+            r#"{"stars": 0, "exact": false, "flags": [], "labels": [], "text": "",
+                "facets": {"iso": ["6400", "100"], "focal": ["50"]}}"#,
+        )
+        .unwrap();
+        let read = kept.filter();
+        app.set_filter_text(read.text.clone().into());
+        state.borrow_mut().views.filter = read;
+        rebuild();
+        assert_eq!(app.get_filter_text(), "iso>=100 iso<=6400 focal:50");
+        assert_eq!(ends(app.get_filter_iso_range()), (0, 2, true));
+        assert_eq!(ends(app.get_filter_focal_range()), (2, 2, true));
+        // The whole ISO range: its terms go, the focal length's stay.
+        app.invoke_filter_range_reset(iso);
+        assert_eq!(ends(app.get_filter_iso_range()), (0, 2, false));
+        assert_eq!(app.get_filter_text(), "focal:50");
+        // The focal length's low end down a stop: the exact term goes,
+        // both ends written as shown.
+        app.invoke_filter_range_moved(focal, 0, "35".into(), "".into());
+        assert_eq!(app.get_filter_text(), "focal>=35");
+        state.borrow_mut().views.index_reader = None;
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A range's drag filters nothing until release: a scrub past the
+    /// open frame's ISO and back, a click on the track, and a
+    /// double-click on a handle leave
+    /// the open frame, the set, the filter, and the grid's rows alone.
+    #[test]
+    fn a_scrub_and_a_double_click_leave_the_open_frame_and_the_set() {
+        use crate::testing::{settle, state_for, window};
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let dir = scratch("scrub");
+        let app = window(0);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 900.0));
+        let (files, sidecars, reader) = folder(&dir);
+        let (state, _worker) = state_for(&app, files);
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars = sidecars;
+            st.views.index_reader = Some(reader);
+            refresh_ids(&mut st);
+            // The R5 at ISO 100 open, the A7 at 3200 with it.
+            st.current = Some(2);
+            st.views.picked = vec![2, 3];
+            crate::panel::browser::rebuild_browser(&mut st, &app);
+        }
+        app.set_culling(true);
+        app.set_panel_tab("Cull".into());
+        settle(&app);
+        settle(&app);
+        assert_eq!(app.get_filter_iso_range().values.row_count(), 3);
+        let (at, s) =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "RangeSlider")
+                .next()
+                .map(|e| crate::testing::bounds_of(&e))
+                .expect("the ISO range");
+        let y = at.y + s.height / 2.0;
+        let stop = |i: f32| slint::LogicalPosition::new(at.x + 8.0 + (s.width - 16.0) * i / 2.0, y);
+        let rows = app.get_thumbs();
+        let alone = |when: &str| {
+            let st = state.borrow();
+            assert_eq!(st.current, Some(2), "{when}: the open frame");
+            assert_eq!(st.views.picked, [2, 3], "{when}: the set");
+            assert_eq!(st.views.filter.text, "", "{when}: the filter");
+            assert!(app.get_thumbs() == rows, "{when}: no rebuild");
+        };
+        let pointer = |event: WindowEvent| app.window().dispatch_event(event);
+        let button = PointerEventButton::Left;
+        // The low end to 6400 and back to 100.
+        pointer(WindowEvent::PointerMoved {
+            position: stop(0.0),
+        });
+        pointer(WindowEvent::PointerPressed {
+            position: stop(0.0),
+            button,
+        });
+        for i in [1.0, 2.0, 1.0, 0.0] {
+            pointer(WindowEvent::PointerMoved { position: stop(i) });
+            alone(&format!("held at {i}"));
+        }
+        pointer(WindowEvent::PointerReleased {
+            position: stop(0.0),
+            button,
+        });
+        settle(&app);
+        alone("scrubbed and back");
+        // A click on the track past the open frame's ISO, and a
+        // double-click on the low handle.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+        crate::testing::click(&app, stop(1.5).x, y);
+        settle(&app);
+        alone("clicked off the handles");
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+        crate::testing::click(&app, stop(0.0).x, y);
+        crate::testing::click(&app, stop(0.0).x, y);
+        settle(&app);
+        alone("double-clicked");
+        // The ranges sit above the panel's facet rows, which come and go
+        // with the filter a range sets: applied, to the R6s alone, the
+        // ranges keep their place in the section. (Measured from the
+        // section's top: the panel's head, above the sections, is not
+        // the filter's, and here it is drawn again at the first rebuild
+        // since the frame was set open without opening it.)
+        use i_slint_backend_testing::ElementHandle;
+        let bounds = |kind: &str| -> Vec<(f32, f32, f32)> {
+            let top = ElementHandle::find_by_element_type_name(&app, "CullSection")
+                .next()
+                .map(|e| crate::testing::bounds_of(&e).0.y)
+                .expect("the CULLING section");
+            ElementHandle::find_by_element_type_name(&app, kind)
+                .map(|e| crate::testing::bounds_of(&e))
+                .map(|(p, s)| (p.x, p.y - top, s.height))
+                .collect()
+        };
+        let ranges = bounds("RangeRow");
+        assert_eq!(ranges.len(), 2);
+        let (panel_x, bottom) = (ranges[0].0, ranges[1].1 + ranges[1].2);
+        let facets: Vec<_> = (bounds("FacetChips").into_iter())
+            .filter(|f| f.0 >= panel_x - 1.0)
+            .collect();
+        assert!(!facets.is_empty(), "the panel's facet rows");
+        for f in &facets {
+            assert!(
+                f.1 >= bottom,
+                "a facet row at {} above a range ending at {bottom}",
+                f.1
+            );
+        }
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+        crate::testing::drag(
+            &app,
+            &[(stop(0.0).x, y), (stop(1.0).x, y), (stop(2.0).x, y)],
+        );
+        settle(&app);
+        settle(&app);
+        assert_eq!(state.borrow().views.filter.text, "iso>=6400");
+        assert_eq!(bounds("RangeRow"), ranges);
+        state.borrow_mut().views.index_reader = None;
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// The grid's header has two facet rows: camera and lens on the
     /// first, whatever else the index counts on the second.
     #[test]
@@ -3299,11 +3748,185 @@ mod tests {
             short.iter().all(|n| n != "Camera" && n != "Lens"),
             "{short:?}"
         );
+        // ISO and the focal length are ranges, here as in the CULLING
+        // section, with no chips.
+        assert!(
+            short.iter().all(|n| n != "ISO" && n != "Focal"),
+            "{short:?}"
+        );
         // Together they are the rows the stacked bar shows.
         assert_eq!(
             long.len() + short.len(),
             app.get_filter_facets().row_count()
         );
+        state.borrow_mut().views.index_reader = None;
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The grid's header has the ranges too, side by side on a row of
+    /// their own under the top row and above the facets' rows, a fair
+    /// width at a laptop's window, the default, and a wide one, and no
+    /// taller than a chip row. A drag applies on release, as in Cull,
+    /// and the ranges stay put when the facets' rows change with it. A
+    /// facet with one value has no range here.
+    #[test]
+    fn the_grids_header_has_the_ranges_where_the_filter_cannot_move_them() {
+        use crate::testing::{settle, state_for, window};
+        use i_slint_backend_testing::ElementHandle;
+        let dir = scratch("header-ranges");
+        let app = window(0);
+        let (files, sidecars, reader) = folder(&dir);
+        let (state, _worker) = state_for(&app, files);
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars = sidecars;
+            st.views.index_reader = Some(reader);
+            refresh_ids(&mut st);
+            st.current = Some(2);
+            crate::panel::browser::rebuild_browser(&mut st, &app);
+        }
+        app.set_grid_open(true);
+        // The header's, inside the grid's sheet, by kind: left, top,
+        // width, and height.
+        let header = |kind: &str| -> Vec<(f32, f32, f32, f32)> {
+            let (sheet, size) = ElementHandle::find_by_element_type_name(&app, "GridSheet")
+                .next()
+                .map(|e| crate::testing::bounds_of(&e))
+                .expect("the grid");
+            ElementHandle::find_by_element_type_name(&app, kind)
+                .map(|e| crate::testing::bounds_of(&e))
+                .filter(|(p, _)| p.x >= sheet.x && p.x < sheet.x + size.width)
+                .map(|(p, s)| (p.x, p.y, s.width, s.height))
+                .collect()
+        };
+        // The window at its least and on up to wide, the left pane open
+        // and put away: the ranges side by side where both fit, else one
+        // under the other, whole inside the grid either way.
+        let sheet_right = || {
+            ElementHandle::find_by_element_type_name(&app, "GridSheet")
+                .next()
+                .map(|e| {
+                    let (p, s) = crate::testing::bounds_of(&e);
+                    p.x + s.width
+                })
+                .expect("the grid")
+        };
+        let sizes = [
+            (574.0, 768.0),
+            (640.0, 768.0),
+            (700.0, 768.0),
+            (736.0, 768.0),
+            (1366.0, 768.0),
+            (1500.0, 800.0),
+            (2560.0, 1440.0),
+        ];
+        for hidden in [false, true] {
+            app.set_left_hidden(hidden);
+            for (w, h) in sizes {
+                app.window().set_size(slint::LogicalSize::new(w, h));
+                settle(&app);
+                settle(&app);
+                let at = format!(
+                    "{w} wide, left pane {}",
+                    if hidden { "away" } else { "open" }
+                );
+                let rows = header("RangeRow");
+                assert_eq!(rows.len(), 2, "{at}: both ranges");
+                let right = sheet_right().min(w);
+                if w >= 1366.0 {
+                    assert_eq!(rows[0].1, rows[1].1, "{at}: on one row");
+                }
+                let chip_row = header("FacetChips")
+                    .iter()
+                    .map(|f| f.3)
+                    .fold(f32::MAX, f32::min);
+                for r in &rows {
+                    assert!(
+                        r.3 <= chip_row,
+                        "{at}: a range {} tall, a chip row {chip_row}",
+                        r.3
+                    );
+                    assert!(
+                        r.2 <= 420.5 || rows[0].1 != rows[1].1,
+                        "{at}: a range {} wide",
+                        r.2
+                    );
+                    assert!(
+                        r.0 + r.2 <= right + 0.5,
+                        "{at}: a range to {}, the grid to {right}",
+                        r.0 + r.2
+                    );
+                }
+                for t in header("RangeSlider") {
+                    assert!(t.2 >= 100.0, "{at}: a track {} wide", t.2);
+                    assert!(t.0 + t.2 <= right + 0.5, "{at}: a track past the grid");
+                }
+                let bottom = rows.iter().map(|r| r.1 + r.3).fold(0.0, f32::max);
+                for f in header("FacetChips") {
+                    assert!(
+                        f.1 >= bottom,
+                        "{at}: a facet row at {} above the ranges",
+                        f.1
+                    );
+                }
+            }
+        }
+        app.set_left_hidden(false);
+        // A drag of the ISO's low end, to 6400: nothing during it, the
+        // filter on release, and the ranges where they were.
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 800.0));
+        settle(&app);
+        settle(&app);
+        let rows = header("RangeRow");
+        let track = header("RangeSlider")[0];
+        let y = track.1 + track.3 / 2.0;
+        let stop = |i: f32| track.0 + 8.0 + (track.2 - 16.0) * i / 2.0;
+        let pointer = |e: slint::platform::WindowEvent| app.window().dispatch_event(e);
+        let at = |x: f32| slint::LogicalPosition::new(x, y);
+        let button = slint::platform::PointerEventButton::Left;
+        use slint::platform::WindowEvent::{PointerMoved, PointerPressed, PointerReleased};
+        pointer(PointerMoved {
+            position: at(stop(0.0)),
+        });
+        pointer(PointerPressed {
+            position: at(stop(0.0)),
+            button,
+        });
+        pointer(PointerMoved {
+            position: at(stop(1.0)),
+        });
+        pointer(PointerMoved {
+            position: at(stop(2.0)),
+        });
+        assert_eq!(
+            state.borrow().views.filter.text,
+            "",
+            "nothing during a drag"
+        );
+        pointer(PointerReleased {
+            position: at(stop(2.0)),
+            button,
+        });
+        settle(&app);
+        settle(&app);
+        assert_eq!(state.borrow().views.filter.text, "iso>=6400");
+        assert_eq!(app.get_filter_text(), "iso>=6400");
+        assert_eq!(header("RangeRow"), rows, "the ranges stay put");
+        // Typed, the other way: the handles follow the text.
+        app.invoke_filter_text_edited("focal:35".into());
+        settle(&app);
+        let focal = app.get_filter_focal_range();
+        assert_eq!((focal.low, focal.high, focal.on), (1, 1, true));
+        // One value: no range in the header.
+        let mut one = app.get_filter_iso_range();
+        one.values = ModelRc::new(VecModel::from(vec![slint::SharedString::from("100")]));
+        one.keys = one.values.clone();
+        (one.low, one.high) = (0, 0);
+        app.set_filter_iso_range(one);
+        settle(&app);
+        assert_eq!(header("RangeRow").len(), 1);
         state.borrow_mut().views.index_reader = None;
         drop(state);
         crate::testing::remove_dir_retry(&dir);

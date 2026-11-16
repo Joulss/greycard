@@ -633,10 +633,10 @@ comes across with its ratings and collections.
       hand), and an error row in the index for a file whose hash fails
       so it stops showing under every chip (§168). The all-roots view
       and the filter remembered between sessions are there since §174
-- [ ] ISO and focal length filtered by a range, a low and a high end
-      that snap to the values the folder has, in place of a chip for
-      every value; they write the `iso>=` and `iso<=` terms the filter
-      reads already. After the Cull panel's rows (PR 137)
+- [ ] The filter's ranges, what is left (§695): Home, End, Page Up,
+      and Page Down with a handle focused change the frame; both
+      handles say one label to a screen reader; `mm<=35` typed is a
+      word, not a term
 - [ ] Several values of one number field in the filter text,
       `focal:35,85` or `iso:400,800,1600`, for the picks a range
       cannot make (two primes, full stops only); how a range shows

@@ -12,7 +12,7 @@ export { Theme, ScrollBars, LabelColumn } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge, HeldKeys, SectionStack, SectionSlot, SectionDrag } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys, ButtonKeys } from "controls.slint";
-import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, WheelGuide, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, ProfileRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
+import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, WheelGuide, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetRange, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, ProfileRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -867,6 +867,14 @@ export component App inherits Window {
     in property <[FacetRow]> filter-facets-short: [];
     in property <string> filter-facet-note: "";
     callback filter-facet-toggled(int, string, bool);
+    /// The CULLING section's ISO and focal length, each a range over
+    /// the folder's values, which have no chips anywhere; an end moved
+    /// (the facet's code, which end, both ends' keys) and the whole
+    /// range asked for again.
+    in property <FacetRange> filter-iso-range;
+    in property <FacetRange> filter-focal-range;
+    callback filter-range-moved(int, int, string, string);
+    callback filter-range-reset(int);
     /// The library's roots, in the left pane with the grid: each with
     /// its file count, the all-roots view, and whether the folder open
     /// can be added with a press.
@@ -4254,6 +4262,10 @@ export component App inherits Window {
                                     filter-facets: root.filter-facets;
                                     filter-facet-note: root.filter-facet-note;
                                     filter-facet-toggled(a, b, x) => { root.filter-facet-toggled(a, b, x); }
+                                    filter-iso-range: root.filter-iso-range;
+                                    filter-focal-range: root.filter-focal-range;
+                                    filter-range-moved(c, e, l, h) => { root.filter-range-moved(c, e, l, h); }
+                                    filter-range-reset(c) => { root.filter-range-reset(c); }
                                     collapsed-culling <=> root.collapsed-culling;
                                     filter-star-picked(a) => { root.filter-star-picked(a); }
                                     filter-flag-toggled(a, x) => { root.filter-flag-toggled(a, x); }
@@ -5408,6 +5420,10 @@ export component App inherits Window {
         filter-facets-short: root.filter-facets-short;
         filter-facet-note: root.filter-facet-note;
         filter-facet-toggled(a, b, x) => { root.filter-facet-toggled(a, b, x); }
+        filter-iso-range: root.filter-iso-range;
+        filter-focal-range: root.filter-focal-range;
+        filter-range-moved(c, e, l, h) => { root.filter-range-moved(c, e, l, h); }
+        filter-range-reset(c) => { root.filter-range-reset(c); }
         filter-star-picked(a) => { root.filter-star-picked(a); }
         filter-flag-toggled(a, x) => { root.filter-flag-toggled(a, x); }
         filter-label-toggled(a, x) => { root.filter-label-toggled(a, x); }

@@ -585,45 +585,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_left_hidden(cli.hide_panels || remembered.hide_left);
     app.set_right_hidden(cli.hide_panels || remembered.hide_right);
     app.set_strip_hidden(cli.hide_panels || remembered.hide_strip);
-    // The three names the flag's old three-way Show went by. The
-    // chips say more than they can, but a flag on a command line
-    // wants one word, and a script written against the old one still
-    // means what it meant. Anything else is the filter language: its
-    // facet terms wait for the index to name the chips they mean,
-    // and the rest go in the text field as if typed there.
-    let (filter, facets_wanted) = match cli.filter.as_deref() {
-        // The filter as the last session left it, for a session: not
-        // for a batch run, whose export or capture is of the file it
-        // names, and not over a file named on the command line (a
-        // double-click from the desktop), which a filter must never
-        // hide from the person who asked for it.
-        None if restores_filter(&cli) => (remembered.filter.filter(), Vec::new()),
-        None => (filter::Filter::default(), Vec::new()),
-        Some(name) => match filter::Filter::from_name(name) {
-            Some(found) => (found, Vec::new()),
-            // One of the three names in the wrong case is a mistyped
-            // name, as it always was, and not a word to look for.
-            None if filter::Filter::NAMES
-                .iter()
-                .any(|n| n.eq_ignore_ascii_case(name)) =>
-            {
-                tracing::warn!("--filter {name}: want All, Picks or \"No rejects\"; showing all");
-                (filter::Filter::default(), Vec::new())
-            }
-            None => {
-                let (text, wanted) = filter::from_cli(name);
-                let mut filter = filter::Filter {
-                    text,
-                    ..filter::Filter::default()
-                };
-                let wanted = filter.choose_at_once(wanted);
-                for e in filter.typed().errors {
-                    tracing::warn!("--filter: {e}");
-                }
-                (filter, wanted)
-            }
-        },
-    };
+    let (filter, facets_wanted) = opening_filter(&cli, &remembered);
     let filtering = !filter.is_empty();
     app.set_filter_text(filter.text.clone().into());
     app.set_reject_count(0);
@@ -2372,6 +2334,52 @@ pub(crate) fn opening_scope(cli: &Cli, remembered: &settings::Settings) -> scope
         .unwrap_or_default()
 }
 
+/// The filter a launch opens on, and the facet chips it waits for the
+/// index to name. `--filter` takes the three names the flag's old
+/// three-way Show went by: the chips say more than they can, but a
+/// flag on a command line wants one word, and a script written against
+/// the old one still means what it meant. Anything else is the filter
+/// language: its facet terms wait for the index to name the chips they
+/// mean, and the rest go in the text field as if typed there.
+pub(crate) fn opening_filter(
+    cli: &Cli,
+    remembered: &settings::Settings,
+) -> (filter::Filter, Vec<filter::Wanted>) {
+    match cli.filter.as_deref() {
+        // The filter as the last session left it, for a session: not
+        // for a batch run, whose export or capture is of the file it
+        // names, and not over a file named on the command line (a
+        // double-click from the desktop), which a filter must never
+        // hide from the person who asked for it.
+        None if restores_filter(cli) => (remembered.filter.opened(), Vec::new()),
+        None => (filter::Filter::default(), Vec::new()),
+        Some(name) => match filter::Filter::from_name(name) {
+            Some(found) => (found, Vec::new()),
+            // One of the three names in the wrong case is a mistyped
+            // name, as it always was, and not a word to look for.
+            None if filter::Filter::NAMES
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(name)) =>
+            {
+                tracing::warn!("--filter {name}: want All, Picks or \"No rejects\"; showing all");
+                (filter::Filter::default(), Vec::new())
+            }
+            None => {
+                let (text, wanted) = filter::from_cli(name);
+                let mut filter = filter::Filter {
+                    text,
+                    ..filter::Filter::default()
+                };
+                let wanted = filter.choose_at_once(wanted);
+                for e in filter.typed().errors {
+                    tracing::warn!("--filter: {e}");
+                }
+                (filter, wanted)
+            }
+        },
+    }
+}
+
 /// Whether a launch puts back the filter the last session left: not
 /// for a batch run (a snapshot, a screenshot), and not when
 /// the command line names a file rather than a folder.
@@ -2974,6 +2982,36 @@ mod tests {
             },
             ..settings::Settings::default()
         }
+    }
+
+    /// The last session's filter, as a build with ISO and focal chips
+    /// kept it in the settings file, opens a folder as the ranges'
+    /// terms, the held-out values dropped; over a named file, nothing.
+    #[test]
+    fn an_older_builds_kept_iso_chips_open_as_the_ranges_terms() {
+        let dir = crate::testing::scratch_dir("startup-kept-chips");
+        let file = dir.join("settings.json");
+        std::fs::write(
+            &file,
+            r#"{"filter": {"stars": 0, "exact": false, "flags": [], "labels": [],
+                "text": "harbor", "facets": {"iso": ["3200", "200"], "lens": ["RF 50"]},
+                "not_facets": {"iso": ["6400"], "focal": ["50"]}}}"#,
+        )
+        .unwrap();
+        let remembered = settings::Settings::load_from(&file);
+        let frame = dir.join("a.tif");
+        std::fs::write(&frame, b"").unwrap();
+        let cli =
+            |path: &Path| Cli::try_parse_from(["greycard-ui".as_ref(), path.as_os_str()]).unwrap();
+        let (filter, wanted) = opening_filter(&cli(&dir), &remembered);
+        assert!(wanted.is_empty());
+        assert_eq!(filter.text, "harbor iso>=200 iso<=3200");
+        assert_eq!(filter.chosen(filter::Facet::Lens), ["RF 50"]);
+        assert!(filter.held_out(filter::Facet::Iso).is_empty());
+        assert!(filter.held_out(filter::Facet::Focal).is_empty());
+        let (filter, _) = opening_filter(&cli(&frame), &remembered);
+        assert!(filter.is_empty());
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

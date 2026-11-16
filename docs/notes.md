@@ -706,3 +706,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§692. The focus point from five more makers](notes/692-the-focus-point-from-five-more-makers.md) (2026-11-15)
 - [§693. The panel keeps to its sections](notes/693-the-panel-keeps-to-its-sections.md) (2026-11-15)
 - [§694. A mosaic's noise line past texture](notes/694-a-mosaics-noise-line-past-texture.md) (2026-11-15)
+- [§695. ISO and focal length as ranges](notes/695-iso-and-focal-length-as-ranges.md) (2026-11-15)

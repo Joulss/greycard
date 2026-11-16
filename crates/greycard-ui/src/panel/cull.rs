@@ -2847,6 +2847,11 @@ pub(crate) fn show_filter(st: &State, app: &App) {
     let rows = crate::library::facet_rows(st);
     let note = crate::library::facet_note(st, !rows.is_empty());
     let (long, short) = crate::library::split_facet_rows(&rows);
+    // ISO and the focal length are the CULLING section's ranges over
+    // the folder's values, and chips nowhere.
+    let mut ranges = crate::library::facet_ranges(st).into_iter();
+    app.set_filter_iso_range(ranges.next().unwrap_or_default());
+    app.set_filter_focal_range(ranges.next().unwrap_or_default());
     app.set_filter_facets(ModelRc::new(VecModel::from(rows)));
     app.set_filter_facets_long(ModelRc::new(VecModel::from(long)));
     app.set_filter_facets_short(ModelRc::new(VecModel::from(short)));
@@ -2883,6 +2888,21 @@ pub(crate) fn apply_filter(state: &Rc<Shared>, app: &App) {
 /// The same, for a character typed into the text field.
 fn apply_filter_typed(state: &Rc<Shared>, app: &App) {
     apply_filter_said(state, app, false, true);
+}
+
+/// The filter's text put by a control rather than typed: a range's
+/// terms. The field holds its own text, so it is given the new one;
+/// `settled` as for [`apply_filter_said`].
+fn set_filter_text(state: &Rc<Shared>, app: &App, text: String, settled: bool) {
+    {
+        let mut st = state.borrow_mut();
+        if st.views.filter.text == text {
+            return;
+        }
+        st.views.filter.text = text.clone();
+    }
+    app.set_filter_text(text.into());
+    apply_filter_said(state, app, settled, true);
 }
 
 /// The same, for the index having moved under the filter: a pass
@@ -3168,6 +3188,39 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 st.views.filter.text = text.to_string();
             }
             apply_filter_typed(&state, &app);
+        });
+    }
+    // A range's end moved, or the whole range asked for: the terms it
+    // stands for written into the text, which the field shows, and the
+    // filter applied and logged. The slider asks once a move is done,
+    // on a drag's release or an arrow's, so each ask was meant.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_filter_range_moved(move |code, end, low, high| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(&facet) = filter::Facet::ALL.get(code.max(0) as usize) else {
+                return;
+            };
+            let text = {
+                let st = state.borrow();
+                filter::with_range(&st.views.filter.text, facet, end == 0, &low, &high)
+            };
+            set_filter_text(&state, &app, text, true);
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_filter_range_reset(move |code| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(&facet) = filter::Facet::ALL.get(code.max(0) as usize) else {
+                return;
+            };
+            let text = filter::without_range(&state.borrow().views.filter.text, facet);
+            set_filter_text(&state, &app, text, true);
         });
     }
     {

@@ -3,7 +3,7 @@
 // a row of tiles for the folders in the folder open.
 
 import { Theme } from "../theme.slint";
-import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile, SortMenu, GridHead, GridPlace } from "../structs.slint";
+import { Thumb, ThumbCell, FilterChip, FacetRow, FacetRange, FolderTile, SortMenu, GridHead, GridPlace } from "../structs.slint";
 import { ButtonKeys, NameTip, PanelButton, ScrollBand, SizeSlider, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag, TipArea } from "../controls.slint";
 import { FilterBar, SortButton } from "filter.slint";
 import { LoadingCard } from "loading.slint";
@@ -303,6 +303,11 @@ export component GridSheet inherits Rectangle {
     in property <[FacetRow]> filter-facets-short;
     in property <string> filter-facet-note;
     callback filter-facet-toggled(int, string, bool);
+    /// ISO and the focal length, a range each over the folder's values.
+    in property <FacetRange> filter-iso-range;
+    in property <FacetRange> filter-focal-range;
+    callback filter-range-moved(int, int, string, string);
+    callback filter-range-reset(int);
     /// The filter kept as a smart collection: its name asked for.
     callback filter-save-smart();
     /// Whether the bar offers Save...: not over a collection.
@@ -608,6 +613,10 @@ export component GridSheet inherits Rectangle {
                     facets-short: root.filter-facets-short;
                     facet-note: root.filter-facet-note;
                     facet-toggled(c, k, x) => { root.filter-facet-toggled(c, k, x); }
+                    iso-range: root.filter-iso-range;
+                    focal-range: root.filter-focal-range;
+                    range-moved(c, e, l, h) => { root.filter-range-moved(c, e, l, h); }
+                    range-reset(c) => { root.filter-range-reset(c); }
                     exact: root.filter-exact;
                     shown: root.filter-shown;
                     total: root.filter-total;

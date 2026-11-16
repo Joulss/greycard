@@ -67,11 +67,13 @@ export component PanelHead inherits VerticalLayout {
     // caption: the name, then the body and its
     // lens, then the exposure triangle, which
     // wants two lines since the whole of it does
-    // not fit the panel's width. Both lines keep
-    // their height when the file says nothing, so
-    // the panel below does not jump between one
-    // picture and the next. The vectorscope folds
-    // them away (`shot-folded`).
+    // not fit the panel's width. Those lines and
+    // the size and the time keep their height when
+    // the file says nothing, so the panel below
+    // does not jump between one picture and the
+    // next. The companion's line comes and goes
+    // with it. The vectorscope folds them away
+    // (`shot-folded`).
     VerticalLayout {
         spacing: 2px;
         HorizontalLayout {
@@ -150,7 +152,7 @@ export component PanelHead inherits VerticalLayout {
                 font-size: Theme.font-sm;
                 overflow: elide;
             }
-            if !root.shot-folded && root.shot-time != "": Text {
+            if !root.shot-folded: Text {
                 text: root.shot-time;
                 height: 14px;
                 color: Theme.text-secondary;

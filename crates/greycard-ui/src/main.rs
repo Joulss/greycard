@@ -556,10 +556,10 @@ struct Cli {
     /// or 4 (implies --cull)
     #[arg(long, value_name = "N")]
     cull_compare: Option<usize>,
-    /// The browser's filter to open with: All, Picks or "No rejects",
+    /// The browser's filter to open with: All, Picks, or "No rejects",
     /// or terms of the filter language, one argument, spaces
     /// between them (`'camera:R6 iso>=3200 rating>=3'`). A camera,
-    /// lens, style, iso, focal, date or keyword term with `:` or `=`
+    /// lens, style, date, or keyword term with `:` or `=`
     /// turns on the chips it names once the folder is indexed, and a
     /// kind term (`kind:raw`) its chip at once; the rest go in the
     /// text field
@@ -927,6 +927,7 @@ impl State {
                 index_tries: 0,
                 index_pass_ready: false,
                 facets_last: RefCell::new(Vec::new()),
+                ranges_last: RefCell::new(None),
                 library: roots::Library::default(),
                 collections: collections::Store::default(),
                 collections_held: Default::default(),

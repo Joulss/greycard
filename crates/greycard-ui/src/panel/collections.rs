@@ -103,9 +103,12 @@ pub(crate) fn show(st: &State, app: &App) {
             .order()
     };
     let hand = st.views.sort.choice(&st.views.view) == crate::sort::Choice::Hand;
-    let filter = Saved::of(&st.views.filter);
-    let smart_on =
-        |s: &Smart| filter == s.filter && st.views.view == smart_view(st, s.root.as_deref());
+    // Compared as loaded: a smart collection an older build kept with
+    // ISO or focal chips loads as the range's terms, and its file is
+    // not rewritten, so the shape on disk is not what the bar keeps.
+    let smart_on = |s: &Smart| {
+        st.views.filter == s.filter.filter() && st.views.view == smart_view(st, s.root.as_deref())
+    };
     let store = &st.views.collections;
     let chips: Vec<CollectionChip> = store
         .list
@@ -890,7 +893,7 @@ fn picked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, id: &str) {
     };
     // A root since taken out of the library: every root instead.
     let view = smart_view(&st, s.root.as_deref());
-    st.views.filter = s.filter.filter();
+    st.views.filter = s.filter.opened();
     app.set_filter_text(st.views.filter.text.as_str().into());
     tracing::info!(
         "smart collection {}: {}",
@@ -1774,6 +1777,60 @@ mod tests {
         app.invoke_collection_sheet_done();
         assert!(state.borrow().views.collections.smart.is_empty());
         assert!(!file.exists());
+        teardown(s);
+    }
+
+    /// An older smart collection holding an ISO chip loads as the
+    /// range's term, and its row lights while the bar says it, though
+    /// its file, not rewritten, still holds the chip.
+    #[test]
+    fn an_older_smart_collection_with_iso_chips_lights_when_opened() {
+        let s = setup("smart-iso");
+        let (app, state, worker) = (&s.app, &s.state, &s.worker);
+        state.borrow_mut().views.filter.text = "y".into();
+        app.set_filter_text("y".into());
+        crate::panel::cull::apply_filter(state, app);
+        app.invoke_filter_save_smart();
+        app.set_collection_sheet_name("Low ISO".into());
+        app.invoke_collection_sheet_done();
+        // As a build with the chips kept it: no text, an ISO chip.
+        let older: Saved = serde_json::from_str(
+            r#"{"stars": 0, "exact": false, "flags": [], "labels": [], "text": "",
+                "facets": {"iso": ["100"]}}"#,
+        )
+        .unwrap();
+        state.borrow_mut().views.collections.smart[0].filter = older.clone();
+        let id = state.borrow().views.collections.smart[0].id.clone();
+        let file = s
+            .dir
+            .join(crate::collections::DIR)
+            .join(format!("{id}.smart.json"));
+        let kept = std::fs::read(&file).unwrap();
+        app.invoke_filter_cleared();
+        show(&state.borrow(), app);
+        let (cx, cy) = middle_of(app, "Low ISO");
+        click(app, cx, cy);
+        land_sent(state, app, worker);
+        assert_eq!(app.get_filter_text(), "iso:100");
+        let lit = |state: &Rc<Shared>| {
+            state
+                .borrow()
+                .views
+                .collections_held
+                .rows
+                .row_data(0)
+                .unwrap()
+                .on
+        };
+        assert!(lit(state), "the row is lit while its filter is on");
+        assert_eq!(state.borrow().views.collections.smart[0].filter, older);
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            kept,
+            "opening rewrites nothing"
+        );
+        app.invoke_filter_cleared();
+        assert!(!lit(state));
         teardown(s);
     }
 

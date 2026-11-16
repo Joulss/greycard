@@ -3,8 +3,8 @@
 
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { FilterChip, FacetRow, SortMenu } from "../structs.slint";
-import { PanelButton, Typing } from "../controls.slint";
+import { FilterChip, FacetRow, FacetRange, SortMenu } from "../structs.slint";
+import { PanelButton, RangeSlider, Typing } from "../controls.slint";
 
 // A chip of the filter: a pill that says what it asks and how many
 // frames it would leave. A chip that leads nowhere is dimmed rather
@@ -150,6 +150,77 @@ component FacetChips inherits Rectangle {
     }
 }
 
+// A number facet's range on the CULLING section: its caption, the low
+// end's value, the slider over the folder's values, and the high end's.
+// The numbers keep widths the bar measures over both ranges, so the
+// tracks line up. One value: the caption and it, as its lone chip was.
+component RangeRow inherits HorizontalLayout {
+    in property <FacetRange> range;
+    in property <length> caption-width;
+    in property <length> value-width;
+    /// An end moved, 0 the low and 1 the high, then the low's key and
+    /// the high's after it, each empty at the folder's own end.
+    callback moved(int, string, string);
+    callback reset();
+    property <int> last: root.range.values.length - 1;
+    // The end the slider holds (-1 none) and where, shown before asked.
+    property <int> held: -1;
+    property <int> held-at: 0;
+    property <int> shown-low: root.last > 0 && root.held == 0 ? root.held-at : root.range.low;
+    property <int> shown-high: root.last > 0 && root.held == 1 ? root.held-at : root.range.high;
+    function low-key(i: int) -> string {
+        return i <= 0 ? "" : root.range.keys[i];
+    }
+    function high-key(i: int) -> string {
+        return i >= root.last ? "" : root.range.keys[i];
+    }
+    height: Theme.control-height - 4px;
+    spacing: Theme.space-1;
+    Text {
+        text: root.range.name;
+        min-width: root.caption-width;
+        color: Theme.text-secondary;
+        font-size: Theme.font-xs;
+        vertical-alignment: center;
+    }
+    Text {
+        text: root.range.values[root.shown-low];
+        width: root.value-width;
+        horizontal-alignment: root.last > 0 ? right : left;
+        color: root.range.on ? Theme.text : Theme.text-secondary;
+        font-size: Theme.font-xs;
+        font-weight: root.range.on ? Theme.weight-medium : Theme.weight-regular;
+        vertical-alignment: center;
+    }
+    if root.last > 0: RangeSlider {
+        horizontal-stretch: 1;
+        values: root.range.values;
+        low: root.range.low;
+        high: root.range.high;
+        on: root.range.on;
+        label: root.range.name;
+        holding(end, at) => {
+            root.held = end;
+            root.held-at = at;
+        }
+        asked(end, to) => {
+            root.moved(end,
+                root.low-key(end == 0 ? to : root.range.low),
+                root.high-key(end == 1 ? to : root.range.high));
+        }
+        reset => { root.reset(); }
+    }
+    if root.last > 0: Text {
+        text: root.range.values[root.shown-high];
+        width: root.value-width;
+        color: root.range.on ? Theme.text : Theme.text-secondary;
+        font-size: Theme.font-xs;
+        font-weight: root.range.on ? Theme.weight-medium : Theme.weight-regular;
+        vertical-alignment: center;
+    }
+    if root.last <= 0: Rectangle { horizontal-stretch: 1; }
+}
+
 // The Sort button and its menu: at the end of the filter bar, and on
 // the grid's top row while the bar is put away. The button says what
 // the list is by and which way up, and opens the menu.
@@ -217,7 +288,7 @@ export component FilterBar inherits Rectangle {
     in property <[FilterChip]> flags;
     in property <[FilterChip]> labels;
     /// The facets with a value in the folder: camera, lens, kind,
-    /// style, ISO, focal length, day and keyword. The EXIF's are the
+    /// style, day, and keyword. The EXIF's are the
     /// library index's, empty until it has rows for the folder, when
     /// `facet-note` says why; the kind is the paths' and the keyword
     /// the sidecars'.
@@ -228,6 +299,15 @@ export component FilterBar inherits Rectangle {
     in property <[FacetRow]> facets-long;
     in property <[FacetRow]> facets-short;
     in property <string> facet-note;
+    /// ISO and the focal length, each a range over the folder's values,
+    /// in the stacked bar and the header alike; neither has chips.
+    in property <FacetRange> iso-range;
+    in property <FacetRange> focal-range;
+    /// A range's end moved, by the facet's code, which end (0 the low),
+    /// and both ends' keys, empty at the folder's own end.
+    callback range-moved(int, int, string, string);
+    /// A range's double-click: the folder's whole range again.
+    callback range-reset(int);
     in property <bool> exact;
     in property <int> shown;
     in property <int> total;
@@ -282,6 +362,33 @@ export component FilterBar inherits Rectangle {
     // it was built by the same press.
     changed wanted => { if (root.wanted && root.takes-focus) { root.grab(); } }
     init => { if (root.wanted && root.takes-focus) { root.grab(); } }
+    // The ranges' columns, measured and never drawn: the wider caption,
+    // and the longest value of either, as an end that is on shows it.
+    property <length> range-caption: max(iso-name.preferred-width, focal-name.preferred-width);
+    property <length> range-value: max(iso-widest.preferred-width, focal-widest.preferred-width);
+    // The header's ranges, there with two values or more: side by side
+    // where both fit at their least (220 px each and the gap), else one
+    // under the other.
+    property <bool> ranges-shown: root.iso-range.values.length > 1 || root.focal-range.values.length > 1;
+    property <bool> ranges-side-by-side: root.ranges-shown && root.width >= 2 * 220px + Theme.space-5;
+    property <bool> ranges-one-under-other: root.ranges-shown && !root.ranges-side-by-side;
+    Rectangle {
+        width: 0px;
+        height: 0px;
+        visible: false;
+        iso-name := Text { text: root.iso-range.name; font-size: Theme.font-xs; }
+        focal-name := Text { text: root.focal-range.name; font-size: Theme.font-xs; }
+        iso-widest := Text {
+            text: root.iso-range.widest;
+            font-size: Theme.font-xs;
+            font-weight: Theme.weight-medium;
+        }
+        focal-widest := Text {
+            text: root.focal-range.widest;
+            font-size: Theme.font-xs;
+            font-weight: Theme.weight-medium;
+        }
+    }
     VerticalLayout {
         spacing: Theme.space-2;
         // The panel's chip groups: Stars keeps its mode on the caption
@@ -428,6 +535,26 @@ export component FilterBar inherits Rectangle {
                     }
                 }
             }
+            // The ranges above the facets: their stops are the whole
+            // folder's and stay, where the facet rows below come and go
+            // with the filter a range sets, which would move the range
+            // out from under the pointer. Each `if` of its own rather
+            // than a `for`: a model put again would build its rows
+            // again, and a drag under way with them.
+            if root.iso-range.values.length > 0: RangeRow {
+                range: root.iso-range;
+                caption-width: root.range-caption;
+                value-width: root.range-value;
+                moved(end, low, high) => { root.range-moved(root.iso-range.code, end, low, high); }
+                reset => { root.range-reset(root.iso-range.code); }
+            }
+            if root.focal-range.values.length > 0: RangeRow {
+                range: root.focal-range;
+                caption-width: root.range-caption;
+                value-width: root.range-value;
+                moved(end, low, high) => { root.range-moved(root.focal-range.code, end, low, high); }
+                reset => { root.range-reset(root.focal-range.code); }
+            }
             // A facet to a row here, each scrolled on its own: a
             // lens's name alone can be most of the panel's width.
             if root.facet-note != "": Text {
@@ -566,6 +693,55 @@ export component FilterBar inherits Rectangle {
                 picked(i) => { root.sort-picked(i); }
                 turned(d) => { root.sort-turned(d); }
                 released => { root.released(); }
+            }
+        }
+        // ISO and the focal length, side by side on a row of their
+        // own, each there with two values or more. Under the top row
+        // and above the facets' rows: those come and go with the filter
+        // a range sets, and above it they would move it under the
+        // pointer. Each at a width a track is easy to set at, so a wide
+        // window does not draw them long, and narrower when the window
+        // is: a laptop's header holds both. A header narrower than the
+        // two at their least (the window at its own least, with the
+        // left pane open) puts one under the other, the width of the
+        // header.
+        if !root.stacked && root.ranges-side-by-side: HorizontalLayout {
+            spacing: Theme.space-5;
+            alignment: start;
+            if root.iso-range.values.length > 1: RangeRow {
+                range: root.iso-range;
+                caption-width: root.range-caption;
+                value-width: root.range-value;
+                preferred-width: 420px;
+                min-width: 220px;
+                moved(end, low, high) => { root.range-moved(root.iso-range.code, end, low, high); }
+                reset => { root.range-reset(root.iso-range.code); }
+            }
+            if root.focal-range.values.length > 1: RangeRow {
+                range: root.focal-range;
+                caption-width: root.range-caption;
+                value-width: root.range-value;
+                preferred-width: 420px;
+                min-width: 220px;
+                moved(end, low, high) => { root.range-moved(root.focal-range.code, end, low, high); }
+                reset => { root.range-reset(root.focal-range.code); }
+            }
+        }
+        if !root.stacked && root.ranges-one-under-other: VerticalLayout {
+            spacing: Theme.space-1;
+            if root.iso-range.values.length > 1: RangeRow {
+                range: root.iso-range;
+                caption-width: root.range-caption;
+                value-width: root.range-value;
+                moved(end, low, high) => { root.range-moved(root.iso-range.code, end, low, high); }
+                reset => { root.range-reset(root.iso-range.code); }
+            }
+            if root.focal-range.values.length > 1: RangeRow {
+                range: root.focal-range;
+                caption-width: root.range-caption;
+                value-width: root.range-value;
+                moved(end, low, high) => { root.range-moved(root.focal-range.code, end, low, high); }
+                reset => { root.range-reset(root.focal-range.code); }
             }
         }
         // The first row also carries the note, before its chips: the

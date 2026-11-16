@@ -41,7 +41,7 @@ use std::path::Path;
 
 use greycard_edit::meta::{Flag, Label, Meta, STARS};
 pub use greycard_library::filter::Facet;
-use greycard_library::filter::{ParseError, Term};
+use greycard_library::filter::{Cmp, NumberField, ParseError, Term};
 
 use crate::i18n::text;
 use crate::tr;
@@ -122,8 +122,37 @@ pub use greycard_library::filter::Saved;
 /// the filter it stands for is this module's.
 pub trait SavedBar {
     fn of(filter: &Filter) -> Saved;
-    /// The filter kept, a facet this build does not know left out.
+    /// The filter kept, a facet this build does not know left out. ISO
+    /// and focal length chips, kept by a build that had them, come back
+    /// as the range's terms in the text ([`ranged_terms`]). Quiet: it is
+    /// asked at every rebuild, of every smart collection.
     fn filter(&self) -> Filter;
+    /// [`SavedBar::filter`] for a filter put back on the bar (the last
+    /// session's, a smart collection opened), the log told once of any
+    /// held-out ISO or focal value it drops.
+    fn opened(&self) -> Filter;
+}
+
+/// The terms that stand for a ranged facet's chips as an older build
+/// kept them: the values chosen as one range, from the lowest to the
+/// highest (`iso:800` for one value, `iso>=400 iso<=1600` for more,
+/// which also takes the values between them). A value that is not a
+/// number is dropped. Values held out are dropped too ([`SavedBar::opened`]
+/// logs them): a held-out chip let a frame with no value through, and
+/// `iso!=v` would hide it, so the filter widens in plain view rather
+/// than hiding frames no one asked to hide.
+fn ranged_terms(facet: Facet, on: &[String]) -> Vec<String> {
+    let name = facet.field();
+    fn number(v: &str) -> Option<(f64, &str)> {
+        v.trim().parse::<f64>().ok().map(|n| (n, v.trim()))
+    }
+    let mut on: Vec<(f64, &str)> = on.iter().map(String::as_str).filter_map(number).collect();
+    on.sort_by(|a, b| a.0.total_cmp(&b.0));
+    match (on.first(), on.last()) {
+        (Some(lo), Some(hi)) if lo.0 == hi.0 => vec![format!("{name}:{}", lo.1)],
+        (Some(lo), Some(hi)) => vec![format!("{name}>={}", lo.1), format!("{name}<={}", hi.1)],
+        _ => Vec::new(),
+    }
 }
 
 impl SavedBar for Saved {
@@ -160,17 +189,47 @@ impl SavedBar for Saved {
             ..Filter::default()
         };
         for (field, values) in &self.facets {
-            if let Some(facet) = Facet::from_field(field) {
+            if let Some(facet) = Facet::from_field(field).filter(|f| ranged(*f).is_none()) {
                 filter.facets[facet_slot(facet)] = values.clone();
             }
         }
         for (field, values) in &self.not_facets {
-            if let Some(facet) = Facet::from_field(field) {
+            if let Some(facet) = Facet::from_field(field).filter(|f| ranged(*f).is_none()) {
                 filter.not_facets[facet_slot(facet)] = values.clone();
             }
         }
+        // ISO and the focal length have no chips: an older build's come
+        // back as the range's terms.
+        let terms: Vec<String> = RANGED
+            .iter()
+            .flat_map(|(facet, _)| ranged_terms(*facet, &kept(&self.facets, *facet)))
+            .collect();
+        filter.text = append(std::mem::take(&mut filter.text), &terms);
         filter
     }
+
+    fn opened(&self) -> Filter {
+        for (facet, _) in RANGED {
+            let out = kept(&self.not_facets, facet);
+            if !out.is_empty() {
+                tracing::info!(
+                    "filter: {} values held out by an older build ({}) dropped; \
+                     a range cannot leave a value out",
+                    facet.field(),
+                    out.join(", ")
+                );
+            }
+        }
+        self.filter()
+    }
+}
+
+/// A saved filter's values for `facet`, under any of its field's names.
+fn kept(map: &std::collections::BTreeMap<String, Vec<String>>, facet: Facet) -> Vec<String> {
+    (map.iter())
+        .filter(|(field, _)| Facet::from_field(field) == Some(facet))
+        .flat_map(|(_, v)| v.iter().cloned())
+        .collect()
 }
 
 /// What the browser says when the filter has hidden the whole
@@ -315,6 +374,217 @@ pub fn facet_chip_text(facet: Facet, label: &str) -> String {
         Facet::Kind => label.to_uppercase(),
         _ => label.to_string(),
     }
+}
+
+/// The facets the CULLING section filters by a range rather than by a
+/// chip a value, each with the number field its terms test. The range
+/// reads and writes those terms in the text, so a range set is a
+/// filter typed, and one typed is a range set.
+pub const RANGED: [(Facet, NumberField); 2] = [
+    (Facet::Iso, NumberField::Iso),
+    (Facet::Focal, NumberField::Focal),
+];
+
+/// The number field a ranged facet's terms test.
+pub fn ranged(facet: Facet) -> Option<NumberField> {
+    RANGED.iter().find(|(f, _)| *f == facet).map(|(_, n)| *n)
+}
+
+/// The tokens of a filter's text by their byte spans, split as
+/// [`greycard_library::filter::tokens`] splits them: on whitespace
+/// outside double quotes.
+fn spans(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    let mut quoted = false;
+    for (i, c) in text.char_indices() {
+        if c == '"' {
+            quoted = !quoted;
+            start.get_or_insert(i);
+        } else if c.is_whitespace() && !quoted {
+            if let Some(s) = start.take() {
+                out.push((s, i));
+            }
+        } else {
+            start.get_or_insert(i);
+        }
+    }
+    if let Some(s) = start {
+        out.push((s, text.len()));
+    }
+    out
+}
+
+/// A token of the text as a bound on `field`: its test and value. A
+/// `!=` is no bound and is left alone, as is anything else.
+fn bound_on(token: &str, field: NumberField) -> Option<(Cmp, f64)> {
+    if !greycard_library::filter::is_term(token) {
+        return None;
+    }
+    let parsed = greycard_library::Filter::from_terms(&[token]).ok()?;
+    match parsed.terms.as_slice() {
+        [
+            Term::Number {
+                field: f,
+                op,
+                value,
+            },
+        ] if *f == field && *op != Cmp::Ne => Some((*op, *value)),
+        _ => None,
+    }
+}
+
+/// The text with the tokens `goes` picks spliced out, every other byte
+/// as typed: a token goes with the gap before it, or, with no token
+/// kept before it, with the gap after it.
+fn cut(text: &str, goes: impl Fn(&str) -> bool) -> String {
+    let spans = spans(text);
+    let Some((first, last)) = spans.first().zip(spans.last()) else {
+        return text.to_string();
+    };
+    let mut out = text[..first.0].to_string();
+    let mut kept_any = false;
+    let mut prev_end = first.0;
+    for &(s, e) in &spans {
+        if !goes(&text[s..e]) {
+            if kept_any {
+                out.push_str(&text[prev_end..s]);
+            }
+            out.push_str(&text[s..e]);
+            kept_any = true;
+        }
+        prev_end = e;
+    }
+    out.push_str(&text[last.1..]);
+    out
+}
+
+/// Terms written at the end of the text: after a closing quote when the
+/// text ends inside an open one, so a term is never taken into a
+/// phrase, and after a space unless the text ends in one.
+fn append(mut text: String, terms: &[String]) -> String {
+    if terms.is_empty() {
+        return text;
+    }
+    if text.matches('"').count() % 2 == 1 {
+        text.push('"');
+    }
+    if !text.is_empty() && !text.ends_with(char::is_whitespace) {
+        text.push(' ');
+    }
+    text.push_str(&terms.join(" "));
+    text
+}
+
+/// Whether a value passes a bound, as the index's SQL has it: a whole
+/// number exactly, a focal length through its tenth of a millimeter.
+fn passes(field: NumberField, op: Cmp, bound: f64, v: f64) -> bool {
+    let (lo, hi) = if field.is_whole() {
+        (bound, bound)
+    } else {
+        (bound - 0.05, bound + 0.05)
+    };
+    match op {
+        Cmp::Eq => v >= lo && v <= hi,
+        Cmp::Ne => true,
+        Cmp::Ge => v >= lo,
+        Cmp::Gt => v > hi,
+        Cmp::Le => v <= hi,
+        Cmp::Lt => v < lo,
+    }
+}
+
+fn is_low(op: Cmp) -> bool {
+    matches!(op, Cmp::Ge | Cmp::Gt | Cmp::Eq)
+}
+
+fn is_high(op: Cmp) -> bool {
+    matches!(op, Cmp::Le | Cmp::Lt | Cmp::Eq)
+}
+
+/// Where a range's ends sit among the folder's `values` in order, for
+/// the text's bounds on `field`: the low end at the lowest value every
+/// low bound (`>=`, `>`, `:`) lets through, the high at the highest
+/// every high bound (`<=`, `<`, `:`) does, so the handles span the
+/// values the filter passes; and whether anything bounds it. A bound on
+/// a value the folder lacks moves its end to the next value in, the
+/// text left as typed. Bounds that pass no value put both ends on the
+/// value nearest the one asked: an exact one, or else the tightest low,
+/// or else the tightest high.
+pub fn range_ends(text: &str, field: NumberField, values: &[f64]) -> (usize, usize, bool) {
+    let top = values.len().saturating_sub(1);
+    let bounds: Vec<(Cmp, f64)> = greycard_library::filter::tokens(text)
+        .iter()
+        .filter_map(|t| bound_on(t, field))
+        .collect();
+    if bounds.is_empty() || values.is_empty() {
+        return (0, top, !bounds.is_empty());
+    }
+    let all = |want: fn(Cmp) -> bool, v: f64| {
+        bounds
+            .iter()
+            .filter(|(op, _)| want(*op))
+            .all(|(op, b)| passes(field, *op, *b, v))
+    };
+    let low = values.iter().position(|v| all(is_low, *v));
+    let high = values.iter().rposition(|v| all(is_high, *v));
+    if let (Some(l), Some(h)) = (low, high)
+        && l <= h
+    {
+        return (l, h, true);
+    }
+    let of = |want: fn(Cmp) -> bool| bounds.iter().filter(move |(op, _)| want(*op)).map(|b| b.1);
+    let asked = bounds
+        .iter()
+        .find(|(op, _)| *op == Cmp::Eq)
+        .map(|b| b.1)
+        .or_else(|| of(is_low).reduce(f64::max))
+        .or_else(|| of(is_high).reduce(f64::min))
+        .unwrap_or_default();
+    let near = (0..values.len())
+        .min_by(|a, b| {
+            (values[*a] - asked)
+                .abs()
+                .total_cmp(&(values[*b] - asked).abs())
+        })
+        .unwrap_or(0);
+    (near, near, true)
+}
+
+/// The text after a range's end was moved: the moved end's bounds on
+/// the facet's field spliced out and `field>=low` or `field<=high`
+/// written at the end, none when that end is at the folder's own
+/// (`low` or `high` empty). The other end's bounds stay as typed;
+/// an exact `field:v` bounds both ends, so it goes, with every bound on
+/// the field, and both ends are written as shown. A `!=` and every
+/// other byte of the text stay as typed.
+pub fn with_range(text: &str, facet: Facet, moved_low: bool, low: &str, high: &str) -> String {
+    let Some(field) = ranged(facet) else {
+        return text.to_string();
+    };
+    let both = spans(text)
+        .iter()
+        .any(|(s, e)| bound_on(&text[*s..*e], field).is_some_and(|(op, _)| op == Cmp::Eq));
+    let goes = |op: Cmp| both || if moved_low { is_low(op) } else { is_high(op) };
+    let kept = cut(text, |t| bound_on(t, field).is_some_and(|(op, _)| goes(op)));
+    let name = facet.field();
+    let mut terms = Vec::new();
+    if (moved_low || both) && !low.is_empty() {
+        terms.push(format!("{name}>={low}"));
+    }
+    if (!moved_low || both) && !high.is_empty() {
+        terms.push(format!("{name}<={high}"));
+    }
+    append(kept, &terms)
+}
+
+/// The text with the facet's range bounds spliced out, every other byte
+/// as typed: the folder's whole range, which asks nothing.
+pub fn without_range(text: &str, facet: Facet) -> String {
+    let Some(field) = ranged(facet) else {
+        return text.to_string();
+    };
+    cut(text, |t| bound_on(t, field).is_some())
 }
 
 /// What the browser shows of the folder.
@@ -666,9 +936,10 @@ pub struct Wanted {
 }
 
 /// `--filter` in the filter language, split: a camera, lens, kind,
-/// style, iso, focal, date or keyword term with `:` or `=` is a
-/// facet's chips to turn on once they can be named ([`Wanted`]);
-/// every other token is left for the text field, in its order. A
+/// style, date, or keyword term with `:` or `=` is a facet's chips to
+/// turn on once they can be named ([`Wanted`]); every other token,
+/// ISO and focal length terms among them, is left for the text field,
+/// in its order. A
 /// kind is read as the term reads it (`jpg` is `jpeg`) and wanted
 /// exactly, which names its chip at once
 /// ([`Filter::choose_at_once`]), and one that is no kind is left for
@@ -687,6 +958,18 @@ pub fn from_cli(text: &str) -> (String, Vec<Wanted>) {
             (None, None) => (None, false),
         };
         match (Facet::from_field(name), value.map(|v| v.trim_matches('"'))) {
+            // ISO and the focal length have no chips: their terms go to
+            // the text, where the CULLING section's range reads them,
+            // under the field's own name (`mm:50` as `focal:50`). A
+            // token that is no term (the word `mm`) stays as typed.
+            (Some(facet), _) if ranged(facet).is_some() => {
+                let named = format!("{}{after}", facet.field());
+                rest.push(if greycard_library::filter::is_term(&named) {
+                    named
+                } else {
+                    token.clone()
+                });
+            }
             (Some(Facet::Kind), Some(v)) => match greycard_library::filter::kind_named(v) {
                 Some(kind) => wanted.push(Wanted {
                     facet: Facet::Kind,
@@ -1237,7 +1520,8 @@ mod tests {
 
     /// `--filter` in the filter language: a facet term with `:` or
     /// `=` waits for the index to name its chips, and the rest is
-    /// the text field's.
+    /// the text field's, ISO and the focal length among it, which have
+    /// ranges and no chips.
     #[test]
     fn the_command_line_filter_splits_into_chips_and_text() {
         let want = |facet, value: &str, exact| Wanted {
@@ -1246,14 +1530,8 @@ mod tests {
             exact,
         };
         let (text, wanted) = from_cli("camera:R6 iso>=3200 rating>=3 focal=50mm harbor");
-        assert_eq!(text, "iso>=3200 rating>=3 harbor");
-        assert_eq!(
-            wanted,
-            vec![
-                want(Facet::Camera, "R6", false),
-                want(Facet::Focal, "50mm", true)
-            ]
-        );
+        assert_eq!(text, "iso>=3200 rating>=3 focal=50mm harbor");
+        assert_eq!(wanted, vec![want(Facet::Camera, "R6", false)]);
         let (text, wanted) = from_cli("lens:\"RF 50mm\" date:2026-09 kw:dusk camera=\"EOS R5\"");
         assert_eq!(text, "");
         assert_eq!(
@@ -1582,12 +1860,12 @@ mod tests {
             ..Filter::default()
         };
         filter.toggle_facet(Facet::Camera, "Canon EOS R6m2");
-        filter.toggle_facet(Facet::Focal, "35");
+        filter.toggle_facet(Facet::Lens, "RF 35mm");
         filter.toggle_facet(Facet::Keyword, "dusk");
         filter.toggle_facet(Facet::Kind, "raw");
         filter.exclude_flag(Flag::Reject);
         filter.exclude_label(Label::Purple);
-        filter.exclude_facet(Facet::Iso, "6400");
+        filter.exclude_facet(Facet::Style, "Canon Faithful");
         let saved = Saved::of(&filter);
         let text = serde_json::to_string(&saved).unwrap();
         let back: Saved = serde_json::from_str(&text).unwrap();
@@ -1621,5 +1899,346 @@ mod tests {
         assert_eq!(read.chosen(Facet::Keyword), ["dusk".to_string()]);
         assert!(read.chosen(Facet::Kind).is_empty());
         assert_eq!(Saved::of(&read), before);
+    }
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::*;
+
+    const ISOS: [f64; 6] = [100.0, 200.0, 400.0, 800.0, 3200.0, 102400.0];
+
+    fn ends(text: &str) -> (usize, usize, bool) {
+        range_ends(text, NumberField::Iso, &ISOS)
+    }
+
+    /// No term is the whole range, off; each end alone moves its own.
+    #[test]
+    fn a_range_reads_its_ends_from_the_text() {
+        assert_eq!(ends(""), (0, 5, false));
+        assert_eq!(ends("harbor rating>=3"), (0, 5, false));
+        assert_eq!(ends("iso>=400"), (2, 5, true));
+        assert_eq!(ends("ISO<=800"), (0, 3, true));
+        assert_eq!(ends("iso>=200 harbor iso<=3200"), (1, 4, true));
+        // The tighter of two bounds on one end, in either order.
+        assert_eq!(ends("iso>=200 iso>=800"), (3, 5, true));
+        assert_eq!(ends("iso>=800 iso>=200"), (3, 5, true));
+        assert_eq!(ends("iso<=800 iso<=200"), (0, 1, true));
+        // Strict bounds pass the next value in.
+        assert_eq!(ends("iso>400 iso<3200"), (3, 3, true));
+        // An exact value bounds both ends.
+        assert_eq!(ends("iso:800"), (3, 3, true));
+        // A `!=` is no bound.
+        assert_eq!(ends("iso!=800"), (0, 5, false));
+        // The focal length's are the focal field's, and the reverse.
+        assert_eq!(ends("focal>=50"), (0, 5, false));
+    }
+
+    /// A bound on a value the folder lacks puts its end on the next
+    /// value the term lets through; bounds no value passes, on the
+    /// value nearest the one asked.
+    #[test]
+    fn a_value_the_folder_lacks_snaps_to_one_it_has() {
+        assert_eq!(ends("iso>=1000"), (4, 5, true));
+        assert_eq!(ends("iso<=1000"), (0, 3, true));
+        assert_eq!(ends("iso>=50 iso<=200000"), (0, 5, true));
+        assert_eq!(ends("iso:1000"), (3, 3, true));
+        assert_eq!(ends("iso>=200000"), (5, 5, true));
+        assert_eq!(ends("iso<=50"), (0, 0, true));
+        // A focal length through its tenth of a millimeter, as the
+        // index compares it.
+        let mm = [23.9, 35.0, 70.0];
+        assert_eq!(
+            range_ends("focal>=24", NumberField::Focal, &mm),
+            (1, 2, true)
+        );
+        assert_eq!(
+            range_ends("focal<=23.9 focal>=23.9", NumberField::Focal, &mm),
+            (0, 0, true)
+        );
+    }
+
+    /// Bounds that cross put both ends at the tightest low asked,
+    /// whatever their order in the text; with no low, the tightest
+    /// high.
+    #[test]
+    fn crossed_bounds_take_the_tightest() {
+        assert_eq!(ends("iso>=200 iso>=3200 iso<=100"), (4, 4, true));
+        assert_eq!(ends("iso<=100 iso>=3200 iso>=200"), (4, 4, true));
+        assert_eq!(ends("iso<=800 iso<=50 iso<=3200"), (0, 0, true));
+    }
+
+    /// An older build's ISO and focal length chips, kept in the settings
+    /// or a smart collection, load as the range's terms in the text: one
+    /// value exactly, more from the lowest to the highest; a held-out
+    /// value is dropped (see `ranged_terms`). The other facets' chips load as chips.
+    #[test]
+    fn kept_iso_and_focal_chips_load_as_the_ranges_terms() {
+        let kept: Saved = serde_json::from_str(
+            r#"{"stars": 0, "exact": false, "flags": [], "labels": [], "text": "\"harbor",
+                "facets": {"iso": ["3200", "200", "800"], "focal": ["35"], "camera": ["R6"]},
+                "not_facets": {"iso": ["6400"], "mm": ["50"]}}"#,
+        )
+        .unwrap();
+        let read = kept.filter();
+        assert_eq!(read.text, "\"harbor\" iso>=200 iso<=3200 focal:35");
+        assert!(read.chosen(Facet::Iso).is_empty() && read.held_out(Facet::Iso).is_empty());
+        assert!(read.chosen(Facet::Focal).is_empty() && read.held_out(Facet::Focal).is_empty());
+        assert_eq!(read.chosen(Facet::Camera), ["R6".to_string()]);
+        let typed = read.typed();
+        assert!(typed.errors.is_empty(), "{:?}", typed.errors);
+        assert_eq!(ends(&read.text), (1, 4, true));
+        assert_eq!(
+            range_ends(&read.text, NumberField::Focal, &[24.0, 35.0, 50.0]),
+            (1, 1, true)
+        );
+        // Kept again, the terms are in the text and no chip is.
+        let again = Saved::of(&read);
+        assert!(!again.facets.contains_key("iso") && !again.not_facets.contains_key("mm"));
+        assert_eq!(again.filter(), read);
+        // `--filter` at launch: the same terms go to the text, under
+        // the field's own name.
+        let (rest, wanted) = from_cli("camera:R6 iso:800 mm>=24 harbor");
+        assert_eq!(rest, "iso:800 focal>=24 harbor");
+        // A word that names the field and asks nothing stays a word.
+        assert_eq!(from_cli("mm iso focal: harbor").0, "mm iso focal: harbor");
+        assert_eq!(wanted.len(), 1);
+        assert_eq!(wanted[0].facet, Facet::Camera);
+    }
+
+    /// The held-out values dropped are logged when the filter is opened,
+    /// once, and not each time it is read, as every rebuild reads every
+    /// smart collection's.
+    #[test]
+    fn held_out_values_are_logged_once_when_opened() {
+        use std::sync::{Arc, Mutex};
+        #[derive(Clone, Default)]
+        struct Lines(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Lines {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let kept: Saved = serde_json::from_str(
+            r#"{"facets": {"iso": ["200"]}, "not_facets": {"iso": ["6400"], "focal": ["50"]}}"#,
+        )
+        .unwrap();
+        let lines = Lines::default();
+        let writer = lines.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            for _ in 0..5 {
+                assert_eq!(kept.filter().text, "iso:200");
+            }
+            assert_eq!(kept.opened(), kept.filter());
+        });
+        let said = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
+        assert_eq!(
+            said.matches("held out by an older build").count(),
+            2,
+            "{said}"
+        );
+        assert!(said.contains("iso values held out by an older build (6400)"));
+        assert!(said.contains("focal values held out by an older build (50)"));
+    }
+
+    /// A moved end writes its own term only, none at the folder's own
+    /// end, and leaves the other end's and every other byte as typed.
+    #[test]
+    fn a_moved_end_writes_its_term_and_leaves_the_rest() {
+        let moved = |text, low_moved, low, high| with_range(text, Facet::Iso, low_moved, low, high);
+        assert_eq!(moved("", true, "400", ""), "iso>=400");
+        assert_eq!(moved("", false, "", "800"), "iso<=800");
+        assert_eq!(
+            moved("harbor  iso>=200 \"low tide\"", true, "400", ""),
+            "harbor \"low tide\" iso>=400"
+        );
+        // A space typed at the end is the separator.
+        assert_eq!(moved("harbor ", true, "400", ""), "harbor iso>=400");
+        // Back to the folder's end: the term goes, with its gap.
+        assert_eq!(moved("iso>=400   iso<=800 ", true, "", "800"), "iso<=800 ");
+        // The other end as typed, a value the folder lacks included.
+        assert_eq!(
+            moved("iso<=1000\tiso!=200", true, "400", "800"),
+            "iso<=1000\tiso!=200 iso>=400"
+        );
+        // An exact value bounds both, so both are written as shown.
+        assert_eq!(moved("iso:800", true, "400", "800"), "iso>=400 iso<=800");
+        assert_eq!(moved("iso=800", false, "800", ""), "iso>=800");
+        // A focal length's own field.
+        assert_eq!(
+            with_range("focal>=24 iso>=400", Facet::Focal, true, "35", ""),
+            "iso>=400 focal>=35"
+        );
+        // A facet with no range leaves the text alone.
+        assert_eq!(with_range("a  b", Facet::Lens, true, "x", ""), "a  b");
+    }
+
+    /// A quote left open is closed before a term is written, so the
+    /// term is not taken into the phrase.
+    #[test]
+    fn a_term_is_written_outside_an_open_quote() {
+        let text = with_range("\"harbor", Facet::Iso, true, "400", "");
+        assert_eq!(text, "\"harbor\" iso>=400");
+        assert_eq!(ends(&text), (2, 5, true));
+        let text = with_range("\"low tide ", Facet::Iso, false, "", "800");
+        assert_eq!(text, "\"low tide \" iso<=800");
+        assert_eq!(ends(&text), (0, 3, true));
+    }
+
+    /// The whole range asked for takes every bound on the field out,
+    /// and nothing else.
+    #[test]
+    fn the_whole_range_takes_the_fields_bounds_out() {
+        assert_eq!(
+            without_range(
+                "harbor iso>=400 iso<=800  iso:3200 iso!=100 focal>=24",
+                Facet::Iso
+            ),
+            "harbor iso!=100 focal>=24"
+        );
+        assert_eq!(without_range(" iso>=400  harbor ", Facet::Iso), " harbor ");
+        // With no bound to take out, the text as it was.
+        assert_eq!(without_range("a  b ", Facet::Iso), "a  b ");
+    }
+
+    /// What a range writes, the filter reads back to the same ends.
+    #[test]
+    fn a_range_written_reads_back_where_it_was_set() {
+        let text = with_range("", Facet::Iso, true, "200", "");
+        let text = with_range(&text, Facet::Iso, false, "200", "3200");
+        assert_eq!(ends(&text), (1, 4, true));
+        let typed = Filter {
+            text,
+            ..Filter::default()
+        }
+        .typed();
+        assert!(typed.errors.is_empty(), "{:?}", typed.errors);
+        assert_eq!(typed.index.len(), 2);
+    }
+
+    /// Filters made up at random: the spans split as the parser does,
+    /// and a range's splice leaves every byte of the tokens it keeps
+    /// and of the gaps between them as typed, its terms at the end.
+    #[test]
+    fn a_splice_leaves_every_other_byte_as_typed() {
+        const PIECES: [&str; 12] = [
+            "harbor",
+            "\"low tide\"",
+            "iso>=400",
+            "iso<=3200",
+            "iso:800",
+            "iso!=100",
+            "focal>=24",
+            "ISO>200",
+            "iso<1600",
+            "rating>=3",
+            "é",
+            "\"open",
+        ];
+        const GAPS: [&str; 5] = ["", " ", "  ", "\t", " \t "];
+        let mut seed: u64 = 0x5eed;
+        let mut next = |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n
+        };
+        for _ in 0..2000 {
+            let mut text = GAPS[next(GAPS.len())].to_string();
+            for i in 0..next(6) {
+                if i > 0 {
+                    text.push_str(GAPS[1 + next(GAPS.len() - 1)]);
+                }
+                text.push_str(PIECES[next(PIECES.len())]);
+            }
+            text.push_str(GAPS[next(GAPS.len())]);
+            let tokens: Vec<String> = spans(&text)
+                .iter()
+                .map(|(s, e)| text[*s..*e].to_string())
+                .collect();
+            assert_eq!(tokens, greycard_library::filter::tokens(&text), "{text:?}");
+
+            let gone = |t: &str| bound_on(t, NumberField::Iso).is_some();
+            let out = without_range(&text, Facet::Iso);
+            kept_as_typed(&text, &out, &gone);
+
+            let low_moved = next(2) == 0;
+            let exact = tokens
+                .iter()
+                .any(|t| bound_on(t, NumberField::Iso).is_some_and(|(op, _)| op == Cmp::Eq));
+            let gone = |t: &str| {
+                bound_on(t, NumberField::Iso).is_some_and(|(op, _)| {
+                    exact || if low_moved { is_low(op) } else { is_high(op) }
+                })
+            };
+            let out = with_range(&text, Facet::Iso, low_moved, "400", "3200");
+            let base = cut(&text, gone);
+            kept_as_typed(&text, &base, &gone);
+            assert!(out.starts_with(&base), "{text:?} -> {out:?}");
+            let terms = match (low_moved || exact, !low_moved || exact) {
+                (true, true) => "iso>=400 iso<=3200",
+                (true, false) => "iso>=400",
+                _ => "iso<=3200",
+            };
+            assert!(out.ends_with(terms), "{text:?} -> {out:?}");
+            let read = greycard_library::filter::tokens(&out);
+            let n = terms.split(' ').count();
+            assert_eq!(
+                read[read.len() - n..].join(" "),
+                terms,
+                "{text:?} -> {out:?}"
+            );
+        }
+    }
+
+    /// `out` is `text` with the tokens `gone` picks taken out: the
+    /// tokens left in order, and each gap between two tokens left
+    /// that were neighbors, the lead before a first token kept, and
+    /// the tail after a last one, byte for byte.
+    fn kept_as_typed(text: &str, out: &str, gone: &dyn Fn(&str) -> bool) {
+        let before = spans(text);
+        let after = spans(out);
+        let kept: Vec<usize> = (0..before.len())
+            .filter(|i| !gone(&text[before[*i].0..before[*i].1]))
+            .collect();
+        assert_eq!(kept.len(), after.len(), "{text:?} -> {out:?}");
+        if kept.len() == before.len() {
+            assert_eq!(out, text);
+        }
+        for (k, i) in kept.iter().enumerate() {
+            let (s, e) = before[*i];
+            assert_eq!(
+                &out[after[k].0..after[k].1],
+                &text[s..e],
+                "{text:?} -> {out:?}"
+            );
+            if k > 0 && kept[k - 1] + 1 == *i {
+                assert_eq!(
+                    &out[after[k - 1].1..after[k].0],
+                    &text[before[i - 1].1..s],
+                    "{text:?} -> {out:?}"
+                );
+            }
+        }
+        if kept.first() == Some(&0) {
+            assert_eq!(
+                &out[..after[0].0],
+                &text[..before[0].0],
+                "{text:?} -> {out:?}"
+            );
+        }
+        if let (Some(&l), Some(a)) = (kept.last(), after.last())
+            && l + 1 == before.len()
+        {
+            assert_eq!(&out[a.1..], &text[before[l].1..], "{text:?} -> {out:?}");
+        }
     }
 }

@@ -71,6 +71,9 @@ design note behind it.
   Nikon, Sony, Fujifilm, Panasonic, and Olympus and OM System raws
   ([§688](https://github.com/jessolmstead/greycard/blob/master/docs/notes/688-the-cameras-focus-point.md),
   [§692](https://github.com/jessolmstead/greycard/blob/master/docs/notes/692-the-focus-point-from-five-more-makers.md)).
+- ISO and focal length filter by a range with two handles, in the
+  Cull panel and the grid's header, in place of a chip for every value
+  ([§695](https://github.com/jessolmstead/greycard/blob/master/docs/notes/695-iso-and-focal-length-as-ranges.md)).
 - Several chosen frames each wear a ring in the filmstrip, the current
   one the strongest
   ([§687](https://github.com/jessolmstead/greycard/blob/master/docs/notes/687-a-set-that-shows-in-the-strip.md)).

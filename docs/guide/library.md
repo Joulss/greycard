@@ -281,11 +281,10 @@ add up (Red or Green); different groups narrow each other (Red and
 3+). A chip that would leave nothing is dimmed.
 
 Under them are chips read from the cameras' data: **Camera**,
-**Lens**, **Style** (the camera's picture style), **ISO**, **Focal**,
-**Day** and **Keyword**. They fill in once greycard has indexed the
-folder. Beside them is **Kind**, from the file's name: **Raw**,
-**JPEG**, **PNG** or **TIFF**, shown when the frames shown hold more
-than one. Keywords are added in the **METADATA** section (see
+**Lens**, **Style** (the camera's picture style), **Day**, and
+**Keyword**. They fill in once greycard has indexed the folder.
+Beside them is **Kind**, from the file's name: **Raw**, **JPEG**,
+**PNG** or **TIFF**, shown when the frames shown hold more than one. Keywords are added in the **METADATA** section (see
 [Keywords and a title](culling.md#keywords-and-a-title)) or brought
 in with a Lightroom catalog or an XMP.
 
@@ -301,6 +300,29 @@ When a rating, flag or label key makes the frame fall outside the
 filter, it leaves the view and the status line says why, such as
 "IMG_0001.CR3 rated 0 and hidden by the filter (1 star or more);
 Clear the filter to see it".
+
+### ISO and focal length
+
+**ISO** and **Focal** are sliders with two ends. In the **CULLING**
+section they sit under the stars, flags, and labels; in the grid's
+header, under its top row. In both they are above the **Camera**,
+**Lens**, and **Day** rows. Each runs over the ISOs or focal lengths
+the folder's frames were shot at, every value one step apart however
+far apart the numbers are, with the low end's value on the left and
+the high end's on the right.
+
+- Drag an end to narrow the range. The filter changes when you let go.
+- Double-click a slider to take in its whole range again.
+- From the filter's text field, press **Shift+Tab** in the CULLING
+  section, or **Tab** in the grid's header, to reach an end. The arrow
+  keys then step it one value at a time; the filter changes when you
+  let go of the key.
+
+A range set writes its terms into the text field (`iso>=400`,
+`focal<=70`), and terms you type there move the ends. A frame with no
+ISO or focal length in its data, such as a scan, is shown only while
+that slider covers its whole range. A slider is there once the folder
+has two values or more.
 
 ### Typing
 

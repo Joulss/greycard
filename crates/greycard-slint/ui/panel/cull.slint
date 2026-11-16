@@ -2,7 +2,7 @@
 // browser's filter, the compare view and the two ways out.
 
 import { Theme, LabelColumn } from "../theme.slint";
-import { FilterChip, FacetRow, SortMenu } from "../structs.slint";
+import { FilterChip, FacetRow, FacetRange, SortMenu } from "../structs.slint";
 import { Section, PanelButton, Segmented, Toggle } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 
@@ -35,6 +35,10 @@ export component CullSection inherits Section {
     in property <[FacetRow]> filter-facets;
     in property <string> filter-facet-note;
     callback filter-facet-toggled(int, string, bool);
+    in property <FacetRange> filter-iso-range;
+    in property <FacetRange> filter-focal-range;
+    callback filter-range-moved(int, int, string, string);
+    callback filter-range-reset(int);
     in-out property <bool> collapsed-culling;
     callback filter-star-picked(int);
     callback filter-flag-toggled(int, bool);
@@ -142,6 +146,10 @@ export component CullSection inherits Section {
         facets: root.filter-facets;
         facet-note: root.filter-facet-note;
         facet-toggled(c, k, x) => { root.filter-facet-toggled(c, k, x); }
+        iso-range: root.filter-iso-range;
+        focal-range: root.filter-focal-range;
+        range-moved(c, e, l, h) => { root.filter-range-moved(c, e, l, h); }
+        range-reset(c) => { root.filter-range-reset(c); }
         exact: root.filter-exact;
         shown: root.filter-shown;
         total: root.filter-total;
