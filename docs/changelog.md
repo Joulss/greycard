@@ -169,6 +169,10 @@ design note behind it.
 
 ### Fixes
 
+- On Windows, a start killed by a graphics driver while the window is set
+  up sends the next start through Direct3D 12, where an Intel driver had
+  been missed
+  ([§704](https://github.com/jessolmstead/greycard/blob/master/docs/notes/704-the-gpu-marker-held-to-the-renderers-setup.md)).
 - A followed archive copy renamed outside greycard keeps its follow, so
   its edits still come back
   ([§701](https://github.com/jessolmstead/greycard/blob/master/docs/notes/701-the-hand-kept-lists-the-compiler-keeps.md)).

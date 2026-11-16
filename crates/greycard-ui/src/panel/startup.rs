@@ -245,8 +245,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
 
     // A start that died setting up the GPU leaves a marker, and the
     // next goes round the backend it died on where there is another:
-    // set now, before `WGPUSettings` reads the environment. Taken off
-    // once the select comes back (`gpu_marker`).
+    // set now, before `WGPUSettings` reads the environment. Once the
+    // window's renderer is set up it is taken off, or on DX12 made the
+    // pin (`gpu_marker`).
     let _gpu_marker = crate::gpu_marker::start();
 
     // The power preference `WGPU_POWER_PREF` names, as Slint's default
@@ -342,14 +343,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             }
         },
     };
-    // The select came back: past where a driver killed a start, so the
-    // marker comes off here and not at the first frame.
+    // The select came back; the GPU marker stays until the window's
+    // renderer is set up: one driver died after the select.
     crate::gpu_marker::selected();
     // A launch that died opening the frame this one would restore
     // left a note; that frame is not opened again (`open_note`). The
-    // restored frame is noted before anything opens it. After the
-    // select, so a start that dies in the select is the GPU marker's
-    // alone, and the two never both count one death.
+    // restored frame is noted once the window's renderer is set up,
+    // before anything opens it: the GPU marker is on until then, so a
+    // start that dies setting up the GPU is the marker's alone, and
+    // the two never both count one death.
     let restoring = match &select {
         crate::roots::Select::Last(Some(file)) => Some(file.as_path()),
         _ => None,
@@ -1042,13 +1044,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             .set_rendering_notifier(move |phase, api| match phase {
                 slint::RenderingState::RenderingSetup => {
                     if let slint::GraphicsAPI::WGPU30 { device, queue, .. } = api {
-                        // Once per rendering setup, which is once per
-                        // device: the line a "black viewport" report needs.
+                        // Once per renderer, on its first frame drawn
+                        // (a surface texture acquired): the line a "black
+                        // viewport" report needs.
                         // It is kept for a report's GPU field too.
                         let info = device.adapter_info();
                         let gpu = report::gpu_line(&info);
                         tracing::info!("gpu: {gpu}");
-                        crate::gpu_marker::device_made();
                         // With no GPU the window draws in software, and
                         // the ops' shaders there take minutes a frame
                         // where their CPU paths take seconds: the ops
@@ -1091,6 +1093,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         tracing::error!("gpu: not wgpu 30 ({api:?}); the viewport cannot render");
                         state.borrow_mut().develop.gpu = Some(format!("not wgpu 30 ({api:?})"));
                     }
+                    // Past the GPU's setup, whatever the API: the device
+                    // made, the viewport's pipelines built, and the worker
+                    // handed the device, so a driver crashing in any of it,
+                    // or an error of wgpu's panicking (`gpu_errors`), is
+                    // the GPU marker's; nothing above opens a frame, so
+                    // the restored one is noted only now (`open_note`).
+                    crate::gpu_marker::device_made();
+                    crate::open_note::device_made();
                     // The file to start on, now that the worker knows
                     // where to develop. From the event loop rather than
                     // here: the select borrows the state this holds.
@@ -1888,9 +1898,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     crate::gpu_lost::leaving();
     // If the loop's exit did not already.
     crate::panel::handed::leave();
-    // An event loop that ended before any frame, on DX12 we chose, is
-    // the device refused there (`gpu_marker`).
-    crate::gpu_marker::run_ended();
+    // An event loop that failed before the renderer's setup, on DX12
+    // we chose, is DX12 refused; one that ended cleanly (a window
+    // closed before it was drawn, a lost device survived) says nothing
+    // of the backend (`gpu_marker`).
+    crate::gpu_marker::run_ended(ran.is_err());
     // The window closed as it closes: no open died.
     crate::open_note::quit();
     if let Err(e) = &ran {

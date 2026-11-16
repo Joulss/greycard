@@ -16,14 +16,16 @@
 //! the file can be opened by hand.
 //!
 //! The note is written only as a frame's picture is new: the launch's
-//! restored file, and each frame whose develop lands as the file open
-//! after another (when `last_file` changes). A develop of the same
-//! frame again (a slider) writes nothing. A lock beside the note is
-//! held for the session, so a second greycard beside a live one finds
-//! the note live, and neither honors it nor writes one. A note for
-//! another file than the one to be restored is let go; a launch that
-//! restores none (a file named on the command line, or a `last_file`
-//! that is gone) leaves it for the launch that would.
+//! restored file, once the window's renderer is set up (a death
+//! before is the GPU marker's, and no picture is up yet), and each
+//! frame whose develop lands as the file open after another (when
+//! `last_file` changes). A develop of the same frame again (a slider) writes
+//! nothing. A lock beside the note is held for the session, so a
+//! second greycard beside a live one finds the note live, and neither
+//! honors it nor writes one. A note for another file than the one to
+//! be restored is let go; a launch that restores none (a file named on
+//! the command line, or a `last_file` that is gone) leaves it for the
+//! launch that would.
 //!
 //! [`gpu_marker`]: crate::gpu_marker
 
@@ -46,6 +48,8 @@ struct Held {
     /// The last file whose picture was drawn, so a develop of it again
     /// is not noted again.
     settled: Option<PathBuf>,
+    /// The restored file, noted once the window's renderer is set up.
+    restoring: Option<PathBuf>,
 }
 
 thread_local! {
@@ -212,13 +216,23 @@ fn take_lock(note: &Path) -> Lock {
     }
 }
 
+/// [`begin_in`] with the device made at once, as the tests have it.
+#[cfg(test)]
+pub(crate) fn start_in(dir: &Path, restoring: Option<&Path>) -> Option<PathBuf> {
+    let skip = begin_in(dir, restoring);
+    device_made();
+    skip
+}
+
 /// The note in `dir` at a launch that would restore `restoring`: the
 /// lock taken for the session, a note found read and let go, and,
-/// unless the last launch died opening it, the restored file noted
-/// before it opens. The file not to open again, where the last launch
-/// died opening it; none otherwise, and none where another greycard
-/// holds the note.
-pub(crate) fn start_in(dir: &Path, restoring: Option<&Path>) -> Option<PathBuf> {
+/// unless the last launch died opening it, the restored file kept to
+/// be noted once the window's renderer is set up ([`device_made`]),
+/// before it opens: a death before that is the GPU marker's
+/// (`gpu_marker`), and the two never both count one. The file not to
+/// open again, where the last launch died opening it; none otherwise,
+/// and none where another greycard holds the note.
+fn begin_in(dir: &Path, restoring: Option<&Path>) -> Option<PathBuf> {
     let path = dir.join(NOTE);
     let lock = match take_lock(&path) {
         Lock::Taken(file) => file,
@@ -245,6 +259,7 @@ pub(crate) fn start_in(dir: &Path, restoring: Option<&Path>) -> Option<PathBuf> 
         pending: None,
         up: false,
         settled: None,
+        restoring: None,
     };
     let skip = match found {
         Found::Nothing => None,
@@ -274,16 +289,14 @@ pub(crate) fn start_in(dir: &Path, restoring: Option<&Path>) -> Option<PathBuf> 
             Some(file)
         }
     };
-    if skip.is_none()
-        && let Some(file) = restoring
-    {
-        note(&mut held, file);
+    if skip.is_none() {
+        held.restoring = restoring.map(Path::to_path_buf);
     }
     HELD.with(|h| *h.borrow_mut() = Some(held));
     skip
 }
 
-/// [`start_in`] in the settings' folder; nothing where there is none,
+/// [`begin_in`] in the settings' folder; nothing where there is none,
 /// and nothing for a run the command line owns (`scripted`: a capture,
 /// a key or menu script, a timing run): such a run neither reads the
 /// user's note, nor takes it off, nor writes one, so it cannot use up
@@ -296,7 +309,20 @@ pub(crate) fn start(restoring: Option<&Path>, scripted: bool) -> Option<PathBuf>
         return None;
     }
     let dir = crate::settings::path()?.parent()?.to_path_buf();
-    start_in(&dir, restoring)
+    begin_in(&dir, restoring)
+}
+
+/// The window's renderer is set up: the restored file noted, once,
+/// unless a develop has noted or drawn a frame already.
+pub(crate) fn device_made() {
+    with(|held| {
+        if let Some(file) = held.restoring.take()
+            && held.pending.is_none()
+            && held.settled.is_none()
+        {
+            note(held, &file);
+        }
+    });
 }
 
 /// Whether the command line owns this run, for [`start`]: a capture
@@ -456,6 +482,25 @@ pub(crate) mod tests {
         // The one after, the file opened by hand or restored, as any.
         assert_eq!(start_in(&config, Some(&frame)), None);
         assert_eq!(noted(&config), Some(frame.clone()));
+        forget();
+    }
+
+    /// A launch that dies setting up the GPU, before the window's device
+    /// is made, leaves no note: that death is the GPU marker's, and the
+    /// next launch opens the frame again.
+    #[test]
+    fn a_death_before_the_device_is_made_leaves_no_note() {
+        let (_root, config, frame) = setup("before-device");
+        assert_eq!(begin_in(&config, Some(&frame)), None);
+        assert_eq!(noted(&config), None, "not before the device");
+        forget();
+        assert_eq!(begin_in(&config, Some(&frame)), None, "opened again");
+        device_made();
+        assert_eq!(noted(&config), Some(frame.clone()), "noted once made");
+        // A device made again (after a lost one) notes nothing anew.
+        shown();
+        device_made();
+        assert_eq!(noted(&config), None);
         forget();
     }
 

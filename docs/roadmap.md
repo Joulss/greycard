@@ -7,6 +7,14 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The GPU marker never gives up on a backend that keeps dying: a
+      machine pinned to DX12 whose DX12 later dies at every start, or
+      one with both backends counted dead, stays put until the file
+      is deleted; a count of deaths in a row, then the other backends
+      tried once (§704)
+- [ ] The GPU marker is written in place: a kill inside the write can
+      leave a torn file that strands a machine; write, then rename
+      (§704)
 - [ ] lavapipe is 2.7 to 3.8 levels off the CPU on three of the
       widened parity sweep's 8,000 edits (seeds 2, 17, and 20), all
       under a profile tone curve flat at black and at white; a real
