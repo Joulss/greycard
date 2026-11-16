@@ -8,28 +8,64 @@ It is a test build, so some things are missing. When a picture looks
 wrong, or the editor does something you didn't
 expect, please [report it](#reporting-a-problem).
 
+## System requirements
+
+### The editor
+
+Opening, culling, developing, and exporting.
+
+| | Minimum | Recommended |
+|---|---|---|
+| **Operating system** | Linux with glibc 2.39 or newer (Ubuntu 24.04, Fedora 40, Debian 13, or later); macOS 13.4 or newer; Windows 10 or newer, 64-bit | The same |
+| **Processor** | Any 64-bit Intel or AMD processor; Apple silicon or an Intel Mac; Windows on ARM | The same; for the AI features, see below |
+| **Graphics** | None: greycard draws in software and develops on the CPU, slowly | A GPU with Vulkan (Linux, Windows) or Metal (Mac) |
+| **Memory** | 8 GB | 16 GB |
+| **Graphics memory** | 4 GB, with fallbacks | 8 GB |
+| **Disk** | 1 GB | 10 GB |
+
+- **Without a GPU** greycard still opens, and says so in the status
+  line at the start, once more after the first develop, and in the
+  log. A 24 MP frame takes about 14 s on a 2012 quad-core.
+- **On Linux**, the tarball and the AppImage both need glibc 2.39.
+- **On a Mac**, the Intel build is newer than the Apple silicon one.
+  A Mac's graphics memory is its memory.
+- **On Windows on ARM**, take the `aarch64-windows` files. It is a new
+  build and not yet tried on a real machine.
+- **A 4 GB card** develops; when it runs short, greycard lets go of
+  what it can make again.
+- **The disk** holds the program (under 200 MB unpacked) and its
+  caches: thumbnails up to 300 MB, and previews of your library's
+  frames up to 8 GB, about 0.5 MB a frame. Both limits are in
+  [Settings](guide/settings.md#thumbnails).
+
+### AI features
+
+The learned denoiser, the learned masks, and the two removes download
+their models the first time you use them. Each needs this beyond the
+editor:
+
+| Feature | Graphics memory, or the CPU | Download | Not available |
+|---|---|---|---|
+| **Learned denoiser** | 2 to 5 GB; a smaller card runs it in smaller pieces, slower. Without a GPU, on the CPU, slower again | 5 to 20 MB a tier, and up to 8 GB of saved results | Fujifilm X-Trans raws |
+| **Learned masks** | Sky 0.8 GiB, Object 2.5, People 4.4, Subject and Background 5.9; a card short of it runs the mask on the CPU. There a People shape takes several seconds, an iris about thirty | Sky 96 MB, Subject 114 MB, Object 184 MB, People 1.04 GB | |
+| **Patch fill** (the eraser) | 2 GB, or on the CPU about 3.5 GB of memory | 210 MB | |
+| **Generative remove** | 6.3 GiB, and 16-bit floats in shaders: on NVIDIA, a GTX 16 or RTX 20 series card or newer | 5.5 GB, and 390 MB for **Fast** | Intel Macs, Windows on ARM, machines without a GPU, and older NVIDIA cards |
+
+- **The processor.** The AI features run on ONNX Runtime. The copy
+  that comes with greycard needs AVX2: most Intel Core processors from
+  2013 on, and AMD's from 2015 on. On an older one, and on Windows on
+  ARM, greycard offers Microsoft's runtime instead (about 9 MB on
+  Linux, 80 MB on Windows) and runs the models on the CPU alone,
+  slower ([On an older processor](guide/masks.md#on-an-older-processor),
+  [On Windows on ARM](guide/masks.md#on-windows-on-arm)).
+- **On an Intel Mac**, the denoiser and the Sky mask run through Core
+  ML; Subject, Background, Object, People, and the patch fill run on
+  the CPU alone ([On an Intel Mac](guide/masks.md#on-an-intel-mac)).
+- **Every model** at once is about 7.5 GB, 5.9 of it the generative
+  remove. With them and full caches, plan on 25 GB.
+
 ## Before you start
 
-- **A GPU, for any speed.** Vulkan on Linux and Windows, Metal on a
-  Mac. Without one, greycard still opens: it draws the window in
-  software, develops on the CPU, and says so in the status line at the
-  start and once more after the first develop, and in the log. That is slow (a 24 MP frame takes
-  about 14 s on a 2012 quad-core). On a
-  processor that old the AI features (the learned masks, the eraser,
-  and the learned denoiser) also need a runtime greycard offers to
-  download, and they are slower again
-  ([On an older processor](guide/masks.md#on-an-older-processor)).
-- **On Linux, glibc 2.39 or newer**: Ubuntu 24.04, Fedora 40, Debian
-  13, or later. The tarball and the AppImage both need it.
-- **A Mac with an Apple chip or an Intel one**, if you're on a Mac.
-  The Intel build is newer, and the generative remove is not
-  available on it.
-- **On Windows on ARM**, the `aarch64-windows` zip. It is a new build
-  and not yet tried on a real machine. Its AI features (the learned
-  masks, the eraser, and the learned denoiser) run on the CPU alone,
-  slower, through Microsoft's ONNX Runtime, which greycard offers to
-  download the first time you use one
-  ([On Windows on ARM](guide/masks.md#on-windows-on-arm)).
 - **Raw files.** Tested with Canon, Fujifilm GFX and X-Trans, Sony,
   Panasonic and Nikon raws. X-Trans raws develop without the learned
   denoiser for now ([Fujifilm X-Trans](guide/develop.md#fujifilm-x-trans)).
@@ -63,7 +99,7 @@ unpack it.
   menus or Open with unless your launcher takes in AppImages itself.
   Its settings, cache, and downloaded models are the same ones an
   installed copy uses, so the two can be swapped. It needs the same
-  glibc as the tarball ([Before you start](#before-you-start)).
+  glibc as the tarball ([System requirements](#system-requirements)).
 - **macOS:** open `greycard-<version>-aarch64-macos.dmg`, or
   `-x86_64-macos.dmg` on an Intel Mac, and drag greycard onto
   Applications. The app is signed and notarized, so it

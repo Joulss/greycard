@@ -98,7 +98,8 @@ You'll want a GPU with Vulkan, or Metal on a Mac. Without one it
 still opens, drawing in software and developing on the CPU, but
 slowly. The generative remove also needs 16-bit floats in shaders,
 which NVIDIA cards before the GTX 16 and RTX 20 series lack; the
-patch fill works everywhere.
+patch fill works everywhere. The memory and disk it all needs are in
+the guide's [System requirements](docs/user-guide.md#system-requirements).
 [Building from source](docs/building.md) is a `cargo build --release`
 once the libraries are in, and one script for the AI runtime.
 
