@@ -1290,6 +1290,9 @@ clears or a tester asks for it.
 
 #### User Requests
 
+- [ ] Lightroom's older `.lrtemplate` presets load as the `.xmp` ones
+      do: a Lua table of the same settings, from before Lightroom
+      Classic 7.3; today they are passed over without a word
 - [ ] MIDI Controller support
 - [ ] HEIC/HEIF as pictures: HEVC is patent-encumbered, so nothing of
       ours ships a decoder; macOS through ImageIO, Linux and Windows
