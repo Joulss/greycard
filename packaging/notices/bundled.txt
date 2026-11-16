@@ -239,6 +239,51 @@ Inno Setup 7.1.1
     3. You must have a visible line in your programs aboutbox or documentation that it is made using RemObjects Pascal Script and where RemObjects Pascal Script can be found.
     4. This notice may not be removed or altered from any source distribution.
 
+AppImage runtime, type 2, release 20251108
+  The program at the head of the Linux AppImage, which mounts the
+  image and starts greycard from it (Linux x86_64 AppImage only).
+  Built by the AppImage project from
+  https://github.com/AppImage/type2-runtime at the tag 20251108, where
+  its source is. MIT License, with the libraries it links statically
+  under their own:
+
+    MIT License
+
+    Copyright (c) 2004-23 probonopd
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+    The AppImage runtime executable contains statically linked code from
+    the following third party libraries, which are licensed under
+    the following terms:
+
+    * musl libc, licensed under the terms of
+      https://git.musl-libc.org/cgit/musl/tree/COPYRIGHT
+    * libfuse, licensed under the terms of
+      https://github.com/libfuse/libfuse/blob/master/LGPL2.txt
+    * squashfuse, licensed under the terms of
+      https://github.com/vasi/squashfuse/blob/master/LICENSE
+    * libzstd, licensed under the terms of
+      https://github.com/facebook/zstd/blob/dev/LICENSE
+    * zlib, licensed under the terms of
+      https://zlib.net/zlib_license.html
+
 
 ================================================================================
 2. ARTWORK COMPILED INTO THE BINARIES

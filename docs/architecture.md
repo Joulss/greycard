@@ -32,7 +32,7 @@ as its `Cargo.toml` has them; test-only dependencies are left out.
 | `greycard-gpu` | The device versions of core's ops (CA, demosaic, lens, local contrast, dehaze, sharpen), each held to its reference, and the `Context` a device's owner lends the engine | core |
 | `greycard-ai` | ONNX Runtime, the model store and registry, the learned masks, the learned denoiser, and the fill | core |
 | `greycard-match` | The camera match's fit: the maker's look from the JPEG a raw carries | core |
-| `greycard-render` | A developed frame made into a picture or a file: the CPU finish the shader is held to, AgX, the masks' detail bands, geometry, the border, the watermark, and the export | core, edit |
+| `greycard-render` | A developed frame made into a picture or a file: the CPU finish the shader is held to, AgX, the profile tone curve, the output sharpen, the masks' detail bands, geometry, the border, the watermark, and the export (JPEG, PNG, 16-bit TIFF, and lossless WebP) | core, edit |
 | `greycard-library` | The SQLite index, the roots, the thumbnail cache, collections, stacks and their carried copies, the catalog import, and a sidecar held or noted from disk | core, edit, edit-io |
 | `greycard-viewport` | The viewport's shader and its renderer, the scopes' binning, the monitor's display table, and the device's loss flag; no Slint type | core, edit, gpu, render |
 | `greycard-engine` | The stage list and the walk, the worker and its jobs, the reduced develop, the thumbnail pool, the previews, the edit's pictures, the models' side, the export queue, sheet, and headless run, the settings subset, and the camera match's runner and the measurement runners over the export's develop | core, edit, edit-io, lens, gpu, render, ai, match, library |
@@ -146,11 +146,12 @@ must give, and the list is made from its `Facts`.
 | `Retouch` | Clone, heal, and fill | edit's `retouch.rs` over core's `develop/retouch.rs`; fills from ai through `Models` | none |
 | `Tap::Guide` | The tone equalizer's guide plane | render, `finish::guide_plane` | none; the shader reads it |
 | `Tap::Planes` | The masks' detail bands | render, `detail.rs` | none; the shader reads them |
+| `Tap::SharpenGuide` | The picture before the local contrast, dehazed with it, that the sharpen reads what is flat from; only where the local contrast runs and a sharpen follows | engine, `walk.rs` (`SharpenGuide`) | the device's dehaze and sharpen read it there |
 | `LocalContrast` | The Detail section's local contrast | core, `develop/local_contrast.rs` | `local_contrast.wgsl`; `crates/greycard-gpu/tests/local_contrast.rs` |
 | `Dehaze` | Dehaze; its fit stays on the CPU | core, `develop/dehaze.rs` | `dehaze.wgsl`; `crates/greycard-gpu/tests/dehaze.rs` |
 | `Tap::MaskPicture` | The picture a refined mask's edge is made against | render, `refine.rs` | none |
 | `Sharpen` | Capture sharpen | core, `develop/sharpen.rs` | `sharpen_apply.wgsl` and two more; `crates/greycard-gpu/tests/sharpen.rs` |
-| `Finish` | Tone, color, the look, the masks' adjustments, and the output space: `Finish::Shader` for the viewport, `Finish::Cpu` then the border and the mark for a file | render, `finish.rs`; the engine's `finish.rs` reads both ends off a walk | `viewport.wgsl` in greycard-viewport; `crates/greycard-viewport/src/render/tests.rs` (`the_shader_is_the_cpu_over_random_edits`, §221) |
+| `Finish` | Tone (or the camera profile's own tone curve in the display curve's place), color, the look, the masks' adjustments, the output sharpen on the display-referred luminance, and the output space: `Finish::Shader` for the viewport, `Finish::Cpu` then the border and the mark for a file | render, `finish.rs`, `profile_tone.rs`, `output_sharpen.rs`; the engine's `finish.rs` reads both ends off a walk | `viewport.wgsl`, and `osharp.wgsl` for the output sharpen, in greycard-viewport; `crates/greycard-viewport/src/render/tests.rs` (`the_shader_is_the_cpu_over_random_edits`, §221; `a_profile_tone_curve_on_the_gpu_is_the_cpus`; `the_output_sharpen_on_the_gpu_is_the_cpus`) |
 
 A DNG's mosaic opcodes run inside `Prepare`, on the cropped mosaic
 before the noise is measured (§513). Core's `develop::finish` keeps

@@ -5068,19 +5068,19 @@ msgstr ""
 msgid "decoding..."
 msgstr ""
 
-#: crates/greycard-ui/src/panel/browser.rs:3662
+#: crates/greycard-ui/src/panel/browser.rs:4055
 msgid "{word}; hidden by the filter"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/browser.rs:4160
+#: crates/greycard-ui/src/panel/browser.rs:4553
 msgid "choosing a folder to open..."
 msgstr ""
 
-#: crates/greycard-ui/src/panel/browser.rs:4161
+#: crates/greycard-ui/src/panel/browser.rs:4554
 msgid "Open folder"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/browser.rs:4179
+#: crates/greycard-ui/src/panel/browser.rs:4572
 msgid "open folder canceled"
 msgstr ""
 
@@ -7321,7 +7321,7 @@ msgstr ""
 msgid "{from}: cannot be read; nothing changed on the way to the screen"
 msgstr ""
 
-#: crates/greycard-ui/src/panel/startup.rs:2739
+#: crates/greycard-ui/src/panel/startup.rs:2821
 msgid ""
 "Library and Loupe, top left (or G), switch between the grid and one frame; "
 "Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
@@ -8446,23 +8446,23 @@ msgstr ""
 msgid "Focus"
 msgstr ""
 
-#: crates/greycard-ui/src/sync.rs:1651
+#: crates/greycard-ui/src/sync.rs:1679
 msgid "{n} edit waiting for {name}"
 msgid_plural "{n} edits waiting for {name}"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/sync.rs:1658
+#: crates/greycard-ui/src/sync.rs:1686
 msgid "; {n} can't tell which copy is its own"
 msgid_plural "; {n} can't tell which copy are their own"
 msgstr[0] ""
 msgstr[1] ""
 
-#: crates/greycard-ui/src/sync.rs:1915
+#: crates/greycard-ui/src/sync.rs:1943
 msgid "its root"
 msgstr ""
 
-#: crates/greycard-ui/src/sync.rs:1918
+#: crates/greycard-ui/src/sync.rs:1946
 msgid "{which} is offline: {} is open from its copy on {where_}"
 msgstr ""
 
@@ -8578,22 +8578,22 @@ msgid ""
 "it"
 msgstr ""
 
-#: crates/greycard-ui/src/update.rs:293
+#: crates/greycard-ui/src/update.rs:295
 msgid "You have the latest version"
 msgstr ""
 
-#: crates/greycard-ui/src/update.rs:294
+#: crates/greycard-ui/src/update.rs:296
 msgid "GitHub returned no release; try again later"
 msgstr ""
 
-#: crates/greycard-ui/src/update.rs:295
+#: crates/greycard-ui/src/update.rs:297
 msgid "Could not reach GitHub"
 msgstr ""
 
-#: crates/greycard-ui/src/update.rs:397
+#: crates/greycard-ui/src/update.rs:399
 msgid "Checking..."
 msgstr ""
 
-#: crates/greycard-ui/src/update.rs:413
+#: crates/greycard-ui/src/update.rs:415
 msgid "the release page is open in the browser: {url}"
 msgstr ""

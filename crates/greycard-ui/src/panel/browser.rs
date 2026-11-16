@@ -2825,10 +2825,7 @@ fn sending_open(st: &mut State, path: &Path, version: &Option<std::sync::Arc<str
 /// File `file`'s path changed from `was` to `to` under the window (found
 /// moved, followed to an archive's copy, a move made), its bytes the
 /// same: everything the window keeps of it by path follows in the same
-/// step. Its stance, its mosaic, the size its develop lands at, the
-/// mosaic the panel shows, the command line's overrides, the lens frame,
-/// a crop fit due, the walk's last step, and the file the learned masks
-/// and their failures are of. The frame on screen's file is the frame's
+/// step ([`follow_paths`] names each). The frame on screen's file is the frame's
 /// still, and what a job the worker was running on it says under `was`
 /// is taken as the frame's (`moved_from`). The worker, which holds the
 /// file by the path
@@ -2839,48 +2836,7 @@ fn sending_open(st: &mut State, path: &Path, version: &Option<std::sync::Arc<str
 /// keeps of it in one job.
 pub(crate) fn file_moved(st: &mut State, file: usize, was: &Path, to: &Path) {
     let on_screen = st.current.and_then(|c| st.file_at(c)) == Some(file);
-    let d = &mut st.develop;
-    if let Some(s) = d.stances.remove(was) {
-        d.stances.insert(to.to_path_buf(), s);
-    }
-    if let Some(m) = d.mosaics.remove(was) {
-        d.mosaics.insert(to.to_path_buf(), m);
-    }
-    for (path, _) in d.opened_sizes.iter_mut().filter(|(p, _)| p == was) {
-        *path = to.to_path_buf();
-    }
-    let follow = |p: &mut PathBuf| {
-        if p == was {
-            *p = to.to_path_buf();
-        }
-    };
-    if let Some((p, _)) = d.panel_mosaic.as_mut() {
-        follow(p);
-    }
-    if let Some(p) = d.learned_of.as_mut() {
-        follow(p);
-    }
-    for (_, p) in d.masks_failed.values_mut() {
-        if let Some(p) = p.as_mut() {
-            follow(p);
-        }
-    }
-    if let Some(k) = d.lens_frame.as_mut() {
-        follow(&mut k.path);
-    }
-    if let Some((p, _)) = d.crop_fit_due.as_mut() {
-        follow(p);
-    }
-    if let Some((k, _)) = d.before_as_shot.as_mut() {
-        follow(&mut k.path);
-    }
-    if let Some((k, _)) = d.zoom_back.as_mut().and_then(|b| b.frame.as_mut()) {
-        follow(&mut k.path);
-    }
-    if let Some((p, _)) = st.launch.overridden.as_mut() {
-        follow(p);
-    }
-    st.develop.walk.file_moved(was, to);
+    follow_paths(st, was, to);
     crate::panel::painted::file_moved(st, was, to);
     let d = &mut st.develop;
     if on_screen {
@@ -2899,6 +2855,443 @@ pub(crate) fn file_moved(st: &mut State, file: usize, was: &Path, to: &Path) {
         d.open_sent = None;
         d.reopen_due = true;
     }
+}
+
+/// The owners' fields that name a file by its path, followed from `was`
+/// to `to` for [`file_moved`]. Every owner is taken apart whole, with no
+/// `..`: a field added to one does not compile until it is followed here
+/// or named as one that need not be.
+fn follow_paths(st: &mut State, was: &Path, to: &Path) {
+    use crate::owners::{Culling, Develop, Launch, Sheets, Views, Window, Work};
+    use std::collections::{HashMap, HashSet};
+    fn follow(p: &mut PathBuf, was: &Path, to: &Path) {
+        if p == was {
+            *p = to.to_path_buf();
+        }
+    }
+    // What is kept at `to` with nothing at `was` was a file's gone from
+    // there, and goes: the file moved in is not that one.
+    fn follow_key<V>(m: &mut HashMap<PathBuf, V>, was: &Path, to: &Path) {
+        match m.remove(was) {
+            Some(v) => {
+                m.insert(to.to_path_buf(), v);
+            }
+            None => {
+                m.remove(to);
+            }
+        }
+    }
+    fn follow_member(s: &mut HashSet<PathBuf>, was: &Path, to: &Path) {
+        if s.remove(was) {
+            s.insert(to.to_path_buf());
+        } else {
+            s.remove(to);
+        }
+    }
+    let State {
+        // `State::move_file` follows the list; the rest is by file or
+        // cell, or a sheet's own.
+        files: _,
+        cells: _,
+        current: _,
+        sidecars: _,
+        from_row: _,
+        camera_match: _,
+        import: _,
+        lightroom: _,
+        rawtherapee: _,
+        archive: _,
+        launch:
+            Launch {
+                overridden,
+                // A folder, a capture's file, or no path.
+                last_folder: _,
+                not_reopened: _,
+                screenshot: _,
+                snapshot: _,
+                tweak_at_start: _,
+                time_sharpen: _,
+                time_clarity: _,
+                time_dehaze: _,
+                time_texture: _,
+                time_cull: _,
+                time_select: _,
+                time_scroll: _,
+                cull_develop: _,
+                snapshot_placeholder: _,
+                turn_at_start: _,
+                awaiting_turn: _,
+                cull_key_at_start: _,
+                ask_rejects: _,
+                move_rejects: _,
+                cull_at_start: _,
+                developed_at_start: _,
+                scripted: _,
+                facets_wanted: _,
+                awaiting_index: _,
+                select_at_start: _,
+                overrides_at_start: _,
+                setup_ran: _,
+                also_at_start: _,
+                preview_temperature: _,
+                show_mask: _,
+                show_patch: _,
+                opened: _,
+                zoom_stands: _,
+                grid_wait_over: _,
+                panel_scroll: _,
+                snapshot_shown: _,
+                failed: _,
+            },
+        window:
+            Window {
+                // The settings file, or no path.
+                settings_file: _,
+                write_sidecars: _,
+                xmp_sidecars: _,
+                placement: _,
+                lens_on_new: _,
+                author: _,
+                copyright: _,
+                deletes_allowed: _,
+                batch: _,
+                app: _,
+            },
+        sheets:
+            Sheets {
+                // Folders.
+                trash_refused: _,
+                // Planned on the list as it stood: a delete out holds
+                // the frames it names.
+                deleting: _,
+                // Their own types, which follow what they keep or let
+                // a path that no longer matches go.
+                delete_asked: _,
+                version_delete: _,
+                look_remove: _,
+                look_rename: _,
+                look_renaming: _,
+                time_shift: _,
+                fetch: _,
+                runtime_next: _,
+                models: _,
+                preset_checks: _,
+                preset_rows: _,
+                sync_checks: _,
+                sync_rows: _,
+                sync_last: _,
+                sync_source: _,
+                clipboard: _,
+                mask_clipboard: _,
+                // No path.
+                look_remove_generation: _,
+                look_removing: _,
+                look_rename_generation: _,
+                fetching: _,
+                declined: _,
+                remove_offered: _,
+                edge_declined: _,
+                edge_offer_due: _,
+                edge_loaded: _,
+                fetch_failed: _,
+                lenses_declined: _,
+                lenses_asked: _,
+                sync_asked: _,
+                paste_asked: _,
+                frame_sync_waiting: _,
+            },
+        work:
+            Work {
+                merge_edits,
+                // `sync::Sync::file_moved`, taken apart there.
+                sync,
+                // Folders, the queue's file, or no path.
+                export_looking: _,
+                export_queue_file: _,
+                export_last_folder: _,
+                export_choosing: _,
+                export_checks: _,
+                queue_probes: _,
+                queue_busy: _,
+                merge_relist: _,
+                // Their own types, which follow what they keep or let
+                // a path that no longer matches go.
+                exporting: _,
+                export_one_line: _,
+                export_pending: _,
+                export_queue: _,
+                queue_run: _,
+                export_presets: _,
+                edit_in: _,
+                saves: _,
+            },
+        culling:
+            Culling {
+                // By cell, or their own types.
+                cull: _,
+                cull_move_on: _,
+                loupe_cull: _,
+                show_developed: _,
+                developed: _,
+                notice_timer: _,
+                badge_timer: _,
+                tags: _,
+                hold: _,
+                placeholder: _,
+                prefetch: _,
+                lightbox: _,
+                lightbox_fetch: _,
+                compare_tiles: _,
+            },
+        views:
+            Views {
+                reframed,
+                panel_stand_in,
+                // `State::move_file`.
+                companions: _,
+                collection_frames: _,
+                // Matched against the list when its read lands.
+                pick_pending: _,
+                // The index's file.
+                index_path: _,
+                // By cell or file, or no path.
+                jpegs_apart: _,
+                queue_cell_ids: _,
+                queue_relist_due: _,
+                cells_by_file: _,
+                picked: _,
+                shown: _,
+                pictured: _,
+                index_ids: _,
+                index_passed: _,
+                index_generation: _,
+                index_progress: _,
+                index_error: _,
+                index_tries: _,
+                index_pass_ready: _,
+                sort_reveal: _,
+                view_generation: _,
+                reading_line: _,
+                thumb_base: _,
+                thumb_shown: _,
+                thumb_made: _,
+                thumb_failed: _,
+                thumb_asked: _,
+                thumb_want: _,
+                making_said: _,
+                near_rows: _,
+                fill_clock: _,
+                fill_over: _,
+                selected_at: _,
+                grid_shown: _,
+                strip_shown: _,
+                menu_file: _,
+                // Their own types, which follow what they keep or let
+                // a path that no longer matches go.
+                queue_listed: _,
+                grid_heads: _,
+                queued_open: _,
+                before_queue: _,
+                back_on_land: _,
+                stacks_listed: _,
+                stacks: _,
+                filter: _,
+                index: _,
+                index_reader: _,
+                facets_last: _,
+                ranges_last: _,
+                library: _,
+                collections: _,
+                collections_held: _,
+                recent: _,
+                visited: _,
+                tree: _,
+                view: _,
+                sort: _,
+                loads: _,
+                thumb_run: _,
+                words: _,
+            },
+        develop:
+            Develop {
+                stances,
+                mosaics,
+                monochromes,
+                opened_sizes,
+                panel_mosaic,
+                learned_of,
+                masks_failed,
+                lens_frame,
+                crop_fit_due,
+                before_as_shot,
+                zoom_back,
+                walk,
+                // `painted::file_moved`, and `file_moved` after this.
+                painted: _,
+                moved_from: _,
+                open_sent: _,
+                reopen_due: _,
+                // Compared with the open frame where read, and let go
+                // or sent again when it no longer matches.
+                focus_pending: _,
+                original: _,
+                neighbors_sent: _,
+                people_all: _,
+                // No path, or the open frame's by key or by look.
+                edit: _,
+                pending: _,
+                base_white: _,
+                frame: _,
+                drawn_kind: _,
+                drawn_guide: _,
+                drawn_generation: _,
+                drawn_planes: _,
+                picture_asked: _,
+                as_shot_white: _,
+                white_cache: _,
+                shown_white: _,
+                debounce: _,
+                save_timer: _,
+                image_size: _,
+                zoom: _,
+                mat: _,
+                center: _,
+                stood_view: _,
+                zoom_free: _,
+                renderer: _,
+                gpu: _,
+                start_note: _,
+                bins: _,
+                scope: _,
+                hover: _,
+                hover_shown: _,
+                curve_drag: _,
+                source_size: _,
+                shown_size: _,
+                shown_turn: _,
+                drawn_camera: _,
+                drawn_focus: _,
+                turn_pressed: _,
+                crop_drag: _,
+                crop_draw: _,
+                crop_start: _,
+                crop_last: _,
+                crop_start_due: _,
+                fill_choice: _,
+                target: _,
+                fresh_mask: _,
+                placing: _,
+                brush_row_cuts: _,
+                choosing: _,
+                part_pending: _,
+                landscape_pending: _,
+                landscape_offer: _,
+                part_asks: _,
+                part_dismissed: _,
+                picking: _,
+                wheel_rest: _,
+                mask_drag: _,
+                rasters: _,
+                refined: _,
+                retouching: _,
+                patch_stroke: _,
+                fill_resized: _,
+                fill_engines: _,
+                patch_drag: _,
+                patch_handles: _,
+                patch_shape: _,
+                lit_shape: _,
+                fills_pending: _,
+                pending_shapes: _,
+                guiding: _,
+                guide_kept: _,
+                learned: _,
+                asked: _,
+                learned_version: _,
+                reasks: _,
+                quiet: _,
+                store: _,
+                lens: _,
+                lens_options: _,
+                profiles: _,
+                camera: _,
+                other_names: _,
+                looks: _,
+                look: _,
+                look_for: _,
+                profile_tone: _,
+                profile_tone_for: _,
+                look_groups_open: _,
+                profile_groups_open: _,
+                look_hover: _,
+                white_profile: _,
+                mask_handles: _,
+                mask_boxes: _,
+                mask_picks: _,
+                person_boxes: _,
+                monitors: _,
+                lut_for: _,
+                encoded_lut_for: _,
+                presets: _,
+                preset_store: _,
+                preset_favorites: _,
+                preset_folds: _,
+                preset_group_asked: _,
+                status_after_develop: _,
+                hint: _,
+                peek: _,
+                held: _,
+                status_kept: _,
+                view_kept: _,
+                show_mask_kept: _,
+                look_seen: _,
+                planes_wants: _,
+                planes_asked: _,
+                generation: _,
+            },
+    } = st;
+    follow_key(stances, was, to);
+    follow_key(mosaics, was, to);
+    follow_key(merge_edits, was, to);
+    follow_member(monochromes, was, to);
+    follow_member(reframed, was, to);
+    for (p, _) in opened_sizes.iter_mut() {
+        follow(p, was, to);
+    }
+    for p in masks_failed.values_mut().filter_map(|(_, p)| p.as_mut()) {
+        follow(p, was, to);
+    }
+    let frame = zoom_back.as_mut().and_then(|b| b.frame.as_mut());
+    for p in [
+        panel_mosaic.as_mut().map(|(p, _)| p),
+        learned_of.as_mut(),
+        crop_fit_due.as_mut().map(|(p, _)| p),
+        overridden.as_mut().map(|(p, _)| p),
+        panel_stand_in.as_mut(),
+        lens_frame.as_mut().map(|k| &mut k.path),
+        before_as_shot.as_mut().map(|(k, _)| &mut k.path),
+        frame.map(|(k, _)| &mut k.path),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        follow(p, was, to);
+    }
+    walk.file_moved(was, to);
+    sync.file_moved(was, to);
+}
+
+/// The files at `paths` gone from the list, deleted or moved away: what
+/// the session learned of them by path goes with them, and the Fill's
+/// strokes waiting on them (`painted::drop_files`).
+pub(crate) fn files_gone(st: &mut State, paths: &[PathBuf]) {
+    for p in paths {
+        st.develop.stances.remove(p);
+        st.develop.mosaics.remove(p);
+        st.develop.monochromes.remove(p);
+        st.views.reframed.remove(p);
+    }
+    crate::panel::painted::drop_files(st, paths);
 }
 
 /// The frame on screen's file was followed to another path while the
@@ -6999,5 +7392,83 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// What the session learned of a file by its path follows the file
+    /// when it moves, and goes when the file leaves the list: a frame
+    /// decoded as monochrome stays so at its new path, an archive's copy
+    /// followed stays followed, and nothing of it is left for another
+    /// file at the old one.
+    #[test]
+    fn what_is_learned_by_path_follows_a_move_and_goes_with_the_file() {
+        let app = window(3);
+        let files = crate::testing::folder(3);
+        let (state, worker) = crate::testing::state_for(&app, files.clone());
+        let to = PathBuf::from("/archive/shoot/IMG_0000.CR3");
+        let stance = greycard_core::decode::Stance::default();
+        {
+            let mut st = state.borrow_mut();
+            st.develop.monochromes.insert(files[0].clone());
+            st.views.reframed.insert(files[0].clone());
+            st.views.panel_stand_in = Some(files[0].clone());
+            crate::sync::follow_for_test(
+                &mut st,
+                files[0].clone(),
+                "/local/IMG_0000.CR3".into(),
+                "/archive".into(),
+            );
+            st.move_file(0, to.clone());
+            assert!(st.develop.monochromes.contains(&to));
+            assert!(!st.develop.monochromes.contains(&files[0]));
+            assert!(st.views.reframed.contains(&to));
+            assert_eq!(st.views.panel_stand_in, Some(to.clone()));
+            assert!(crate::sync::followed(&st, 0), "the copy is followed still");
+            assert_eq!(
+                crate::sync::local_of(&st, &to),
+                Some(std::path::Path::new("/local/IMG_0000.CR3"))
+            );
+            assert!(crate::sync::local_of(&st, &files[0]).is_none());
+            st.develop.monochromes.insert(files[1].clone());
+            st.views.reframed.insert(files[1].clone());
+            st.develop.stances.insert(files[1].clone(), stance);
+            st.develop
+                .mosaics
+                .insert(files[1].clone(), OpenMosaic::NotMosaic);
+        }
+        crate::panel::cull::drop_files(
+            &mut state.borrow_mut(),
+            &app,
+            &worker,
+            &[0, 1],
+            "gone".into(),
+        );
+        let st = state.borrow();
+        assert!(st.develop.monochromes.is_empty());
+        assert!(st.views.reframed.is_empty());
+        assert!(st.develop.stances.is_empty());
+        assert!(st.develop.mosaics.is_empty());
+    }
+
+    /// A file moved onto a path that something was learned of for a
+    /// file gone from there takes none of it: its stance, its mosaic,
+    /// and its monochrome flag were the other file's.
+    #[test]
+    fn a_file_moved_onto_a_gone_files_path_inherits_nothing() {
+        let app = window(2);
+        let files = crate::testing::folder(2);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        let mut st = state.borrow_mut();
+        let to = PathBuf::from("/nowhere/IMG_9999.CR3");
+        st.develop
+            .stances
+            .insert(to.clone(), greycard_core::decode::Stance::default());
+        st.develop.mosaics.insert(to.clone(), OpenMosaic::NotMosaic);
+        st.develop.monochromes.insert(to.clone());
+        st.views.reframed.insert(to.clone());
+        st.move_file(0, to.clone());
+        assert!(!st.develop.stances.contains_key(&to));
+        assert!(!st.develop.mosaics.contains_key(&to));
+        assert!(!st.develop.monochromes.contains(&to));
+        assert!(!st.views.reframed.contains(&to));
     }
 }

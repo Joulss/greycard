@@ -712,3 +712,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§698. The tree scrolls to the folder open](notes/698-the-tree-scrolls-to-the-folder-open.md) (2026-11-15)
 - [§699. The left pane's sections boxed as the right's](notes/699-the-left-panes-sections-boxed-as-the-rights.md) (2026-11-15)
 - [§700. The build's commit in its version](notes/700-the-builds-commit-in-its-version.md) (2026-11-15)
+- [§701. The hand-kept lists the compiler keeps](notes/701-the-hand-kept-lists-the-compiler-keeps.md) (2026-11-15)

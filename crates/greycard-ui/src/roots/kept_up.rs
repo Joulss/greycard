@@ -202,7 +202,7 @@ pub(crate) fn merge(
         .filter(|i| !stays.contains(i))
         .map(|i| st.files[i].clone())
         .collect();
-    crate::panel::painted::drop_files(st, &left);
+    crate::panel::browser::files_gone(st, &left);
     let fresh = from.iter().filter(|f| f.is_none()).count();
     let count = next.len();
     // The files' own vectors, each file that stays carrying what it

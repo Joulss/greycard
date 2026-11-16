@@ -77,6 +77,21 @@ public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwIte
 }
 
 if ($Remove) {
+    # A GREYCARD_PREFIX set wrong must not take another folder with it:
+    # only one holding a binary the install puts there (either, since a
+    # removal stopped by the other running may have taken one), and
+    # never a drive's root or the user's profile.
+    $full = [IO.Path]::GetFullPath($target).TrimEnd('\')
+    $root = [IO.Path]::GetPathRoot($full).TrimEnd('\')
+    $ours = (Test-Path (Join-Path $target 'greycard-ui.exe')) -or
+        (Test-Path (Join-Path $target 'greycard.exe'))
+    $notOurs = ($full -eq $root) -or ($full -eq "$env:USERPROFILE".TrimEnd('\')) -or
+        ((Test-Path $target) -and -not $ours)
+    if ($notOurs) {
+        Write-Host "  $target is not a greycard install; nothing removed" -ForegroundColor Yellow
+        exit 1
+    }
+
     Write-Host "removing greycard from $target"
 
     # The installed copy first; the setup installs none, so over a

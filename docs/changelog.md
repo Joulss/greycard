@@ -166,6 +166,9 @@ design note behind it.
 
 ### Fixes
 
+- A followed archive copy renamed outside greycard keeps its follow, so
+  its edits still come back
+  ([§701](https://github.com/jessolmstead/greycard/blob/master/docs/notes/701-the-hand-kept-lists-the-compiler-keeps.md)).
 - DNGs from monochrome sensors (Leica Monochrom bodies, the Ricoh GR IV
   Monochrome) open and develop to a neutral grey
   ([§668](https://github.com/jessolmstead/greycard/blob/master/docs/notes/668-monochrome-sensors-open.md),

@@ -67,6 +67,34 @@ pub(crate) struct Sync {
     running: Arc<Running>,
 }
 
+impl Sync {
+    /// The file at `was` moved to `to` (`browser::follow_paths`): a
+    /// copy the window follows stays followed under its new path. Taken
+    /// apart whole, as there, so a field added is placed here.
+    pub(crate) fn file_moved(&mut self, was: &Path, to: &Path) {
+        let Sync {
+            followed,
+            // A job's: keyed by the path it was made for, and let go
+            // under that path when it ends.
+            queued: _,
+            in_flight: _,
+            checking: _,
+            deferred: _,
+            running: _,
+            // Archives' roots, not files.
+            caught_up: _,
+        } = self;
+        match followed.remove(was) {
+            Some(f) => {
+                followed.insert(to.to_path_buf(), f);
+            }
+            None => {
+                followed.remove(to);
+            }
+        }
+    }
+}
+
 /// A frame followed to its archive copy: where it was, and where.
 #[derive(Debug, Clone)]
 pub(crate) struct Followed {

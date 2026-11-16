@@ -57,6 +57,37 @@ cd "$(dirname "$0")/.."
 about_version=0.9.3
 out=${1:-target/THIRD-PARTY-NOTICES}
 
+# Every project a source file's header credits must be named in
+# packaging/notices/ported.txt, so nothing is ported without its notice.
+# A header credits when, read as one block (a credit may wrap), it says
+# "copyright" before a year, a name, "the", or "(c)". Each project in
+# `known` it mentions must then appear in ported.txt, and it must
+# mention one at least. What this cannot catch: a credit without the
+# word "copyright", and a project missing from `known` credited beside
+# one in it. Add a project to `known` as it is ported. Before
+# cargo-about, so it runs without it.
+known="RawTherapee darktable RCD Exiv2 ExifTool Pillow OpenColorIO dcraw LibRaw Blender G'MIC"
+unlisted=$(git ls-files 'crates/*.rs' 'crates/*.wgsl' | while read -r f; do
+    header=$(awk '/^[[:space:]]*(\/\/|$)/ {
+        sub(/^[[:space:]]*\/\/[!\/]?[[:space:]]*/, ""); printf "%s ", $0; next
+    } { exit }' "$f")
+    printf '%s\n' "$header" |
+        grep -Eq '[Cc]opyright (\([Cc]\)|©|[0-9]|the |[A-Z][a-z]+ [A-Z])' || continue
+    named=
+    for p in $known; do
+        printf '%s\n' "$header" | grep -qiwF -- "$p" || continue
+        named=1
+        grep -qiwF -- "$p" packaging/notices/ported.txt || echo "  $f: $p"
+    done
+    [ -n "$named" ] || echo "  $f: a project not in notices.sh's list"
+done)
+if [ -n "$unlisted" ]; then
+    echo "notices.sh: these headers credit a project packaging/notices/ported.txt" >&2
+    echo "  does not name; add it there in the form of the others:" >&2
+    echo "$unlisted" >&2
+    exit 1
+fi
+
 if ! have=$(cargo about --version 2>/dev/null); then
     echo "notices.sh: cargo-about is missing; install it with" >&2
     echo "  cargo install cargo-about --locked --version $about_version --features cli" >&2

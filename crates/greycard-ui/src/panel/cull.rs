@@ -2735,7 +2735,7 @@ pub(crate) fn drop_files(
         .iter()
         .filter_map(|&i| st.files.get(i).cloned())
         .collect();
-    crate::panel::painted::drop_files(st, &paths);
+    crate::panel::browser::files_gone(st, &paths);
     // The files that go take every cell of theirs, versions included.
     let keep = |i: &usize| !gone.contains(i);
     // Where the frame on screen would stand in the new list if it is

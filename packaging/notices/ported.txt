@@ -47,6 +47,12 @@ From Exiv2 (https://github.com/Exiv2/exiv2), GPL-2.0-or-later,
 copyright the Exiv2 authors: the names of the makers' picture styles
 read from maker notes.
 
+From ExifTool (https://exiftool.org), under the same terms as Perl
+(GPL-1.0-or-later or the Artistic License), copyright Phil Harvey: the
+layouts of the makers' focus point, sensor area, and picture style
+tags (Canon.pm, FujiFilm.pm, Nikon.pm, Olympus.pm, Panasonic.pm, and
+Sony.pm). The reading code is greycard's own.
+
 From Pillow (https://python-pillow.org), Pillow's bilinear resampling
 (src/libImaging/Resample.c), used to size a picture for the people
 model:

@@ -2421,55 +2421,137 @@ fn merged(
     kept: settings::Settings,
     panes_from_file: bool,
 ) -> settings::Settings {
-    settings.shared.last_file = kept.shared.last_file;
-    settings.recent_folders = kept.recent_folders;
-    settings.start_folder = kept.start_folder;
-    settings.start_view = kept.start_view;
-    settings.filter_bar = kept.filter_bar;
-    settings.grid_wheel = kept.grid_wheel;
-    settings.folder_tree_subfolders = kept.folder_tree_subfolders;
-    settings.profiles_all_cameras = kept.profiles_all_cameras;
-    settings.shared.xmp_sidecars = kept.shared.xmp_sidecars;
-    settings.shared.sidecars_in_folder = kept.shared.sidecars_in_folder;
-    settings.shared.jpegs_apart = kept.shared.jpegs_apart;
-    settings.shared.lens_on_new = kept.shared.lens_on_new;
-    settings.shared.author = kept.shared.author;
-    settings.shared.copyright = kept.shared.copyright;
-    settings.one_section = kept.one_section;
-    settings.exported = kept.exported;
-    settings.edit_in = kept.edit_in;
-    settings.cull_move_on = kept.cull_move_on;
-    settings.loupe_cull = kept.loupe_cull;
-    settings.cull_developed = kept.cull_developed;
-    settings.sort = kept.sort;
-    settings.lenses_declined = kept.lenses_declined;
-    settings.models_asked = kept.models_asked;
-    settings.rawtherapee_answered = kept.rawtherapee_answered;
-    settings.preset_favorites = kept.preset_favorites;
-    settings.preset_folds = kept.preset_folds;
-    settings.thumb_cache_mb = kept.thumb_cache_mb;
-    settings.preview_cache_mb = kept.preview_cache_mb;
-    settings.network_poll_minutes = kept.network_poll_minutes;
-    settings.import = kept.import;
-    settings.update = kept.update;
-    settings.match_unchecked = kept.match_unchecked;
-    settings.crop_start = kept.crop_start;
-    settings.crop_last = kept.crop_last;
-    settings.fill_choice = kept.fill_choice;
-    settings.ui_scale = kept.ui_scale;
-    settings.keys = kept.keys;
-    settings.settings_category = kept.settings_category;
-    settings.theme = kept.theme;
-    settings.scroll_bars = kept.scroll_bars;
-    settings.scroll_bar_size = kept.scroll_bar_size;
-    settings.language = kept.language;
-    settings.windows = kept.windows;
-    settings.ui_scale_system =
-        crate::window_fit::scale::system_seen().unwrap_or(kept.ui_scale_system);
+    // Every field is named once, with no `..`: bound, it is the file's
+    // and kept from it; `_`, it is the panel's or the state's, as
+    // `gathered` read it. A field added does not compile until placed.
+    let settings::Settings {
+        shared:
+            settings::Shared {
+                last_file,
+                xmp_sidecars,
+                sidecars_in_folder,
+                jpegs_apart,
+                lens_on_new,
+                author,
+                copyright,
+                export: _,
+                export_presets: _,
+                export_preset: _,
+            },
+        recent_folders,
+        start_folder,
+        start_view,
+        filter_bar,
+        grid_wheel,
+        folder_tree_subfolders,
+        profiles_all_cameras,
+        one_section,
+        exported,
+        edit_in,
+        cull_move_on,
+        loupe_cull,
+        cull_developed,
+        sort,
+        lenses_declined,
+        models_asked,
+        rawtherapee_answered,
+        preset_favorites,
+        preset_folds,
+        thumb_cache_mb,
+        preview_cache_mb,
+        network_poll_minutes,
+        import,
+        update,
+        match_unchecked,
+        crop_start,
+        crop_last,
+        fill_choice,
+        ui_scale,
+        keys,
+        settings_category,
+        theme,
+        scroll_bars,
+        scroll_bar_size,
+        language,
+        windows,
+        ui_scale_system,
+        // The file's for a run opened with `--hide-panels`.
+        hide_left,
+        hide_right,
+        hide_strip,
+        export_last_folder: _,
+        scope: _,
+        curve_mode: _,
+        warn_shadows: _,
+        warn_highlights: _,
+        peaking: _,
+        proof_profile: _,
+        proof_intent: _,
+        gamut_warning: _,
+        display_profile: _,
+        display_monitor: _,
+        canvas_color: _,
+        mat: _,
+        collapsed: _,
+        section_orders: _,
+        shares: _,
+        grid_cell: _,
+        lightbox_across: _,
+        range_sample: _,
+        left_width: _,
+        right_width: _,
+        strip_photo: _,
+        filter: _,
+        sync_shift: _,
+    } = kept;
+    settings.shared.last_file = last_file;
+    settings.recent_folders = recent_folders;
+    settings.start_folder = start_folder;
+    settings.start_view = start_view;
+    settings.filter_bar = filter_bar;
+    settings.grid_wheel = grid_wheel;
+    settings.folder_tree_subfolders = folder_tree_subfolders;
+    settings.profiles_all_cameras = profiles_all_cameras;
+    settings.shared.xmp_sidecars = xmp_sidecars;
+    settings.shared.sidecars_in_folder = sidecars_in_folder;
+    settings.shared.jpegs_apart = jpegs_apart;
+    settings.shared.lens_on_new = lens_on_new;
+    settings.shared.author = author;
+    settings.shared.copyright = copyright;
+    settings.one_section = one_section;
+    settings.exported = exported;
+    settings.edit_in = edit_in;
+    settings.cull_move_on = cull_move_on;
+    settings.loupe_cull = loupe_cull;
+    settings.cull_developed = cull_developed;
+    settings.sort = sort;
+    settings.lenses_declined = lenses_declined;
+    settings.models_asked = models_asked;
+    settings.rawtherapee_answered = rawtherapee_answered;
+    settings.preset_favorites = preset_favorites;
+    settings.preset_folds = preset_folds;
+    settings.thumb_cache_mb = thumb_cache_mb;
+    settings.preview_cache_mb = preview_cache_mb;
+    settings.network_poll_minutes = network_poll_minutes;
+    settings.import = import;
+    settings.update = update;
+    settings.match_unchecked = match_unchecked;
+    settings.crop_start = crop_start;
+    settings.crop_last = crop_last;
+    settings.fill_choice = fill_choice;
+    settings.ui_scale = ui_scale;
+    settings.keys = keys;
+    settings.settings_category = settings_category;
+    settings.theme = theme;
+    settings.scroll_bars = scroll_bars;
+    settings.scroll_bar_size = scroll_bar_size;
+    settings.language = language;
+    settings.windows = windows;
+    settings.ui_scale_system = crate::window_fit::scale::system_seen().unwrap_or(ui_scale_system);
     if panes_from_file {
-        settings.hide_left = kept.hide_left;
-        settings.hide_right = kept.hide_right;
-        settings.hide_strip = kept.hide_strip;
+        settings.hide_left = hide_left;
+        settings.hide_right = hide_right;
+        settings.hide_strip = hide_strip;
     }
     settings
 }
