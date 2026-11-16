@@ -1469,6 +1469,8 @@ clears or a tester asks for it.
       the width of F's mat a setting (discussion 59, 2026-11-10)
 - [ ] White balance presets from the camera's own, where a maker
       note carries them (Canon, Nikon), under the fixed six (§636)
+- [ ] The filter bar folded or closed from the grid itself: today
+      only Settings turns it off (2026-11-15)
 - [ ] Calibration as Lightroom's: a hue and a saturation for each of
       the camera's primaries and a shadow tint, before the develop's
       color work, beside the camera profile (issue 131, 2026-11-11)
