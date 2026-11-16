@@ -1190,13 +1190,28 @@ mod tests {
             st.own_cell(st.file_by_path(&s.files[i]).unwrap()).unwrap()
         };
         let row = crate::panel::browser::row_of(&s.state.borrow(), c).unwrap() as i32;
+        // Named before the set starts, as the worker names it: nothing
+        // is there yet.
+        let out = out_of(&s.files[i], None);
         s.app.invoke_select(row);
         s.app.invoke_menu_edit_in(0);
         crate::rows::land_pending(&s.state, &s.app, &s.worker);
         let set = s.state.borrow().work.exporting.clone().expect("the set");
-        // The test's worker writes nothing: the file is the test's.
+        // The file is the test's. A worker that took the frame before
+        // the cancel exports it all the same, to `out`: waited out, so
+        // that write lands before the test's, never over the file once
+        // it is handed over (as on a loaded macOS runner, where the
+        // export's key was lost and a save's thumbnail never came).
         set.cancel();
-        let out = out_of(&s.files[i], None);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while {
+            let t = set.tally();
+            t.exported + t.canceled + t.skipped + t.failed.len()
+        } == 0
+        {
+            assert!(Instant::now() < deadline, "waiting for the set's frame");
+            std::thread::sleep(Duration::from_millis(1));
+        }
         // What the worker writes: the frame as a TIFF.
         write(&out);
         crate::panel::deliver::deliver(
@@ -1426,8 +1441,7 @@ mod tests {
         /// What the worker says taken in until `until` holds, as the
         /// window's event loop would take it.
         fn pump(&self, until: &dyn Fn(&Heard) -> bool, what: &str) {
-            // Long, for a loaded CI runner: a pass never waits it out.
-            let deadline = Instant::now() + Duration::from_secs(120);
+            let deadline = Instant::now() + Duration::from_secs(30);
             while !until(self) {
                 assert!(Instant::now() < deadline, "waiting for {what}");
                 self.take(Duration::from_millis(50));
@@ -1548,9 +1562,18 @@ mod tests {
         let dark = h.thumb_of(tiff);
         let list = h.s.state.borrow().work.edit_in.watches.clone();
         let held = || list.lock().unwrap()[0].held.clone();
+        let tried = list.lock().unwrap()[0].held_tried;
         assert!(look(&list).is_empty(), "the app has not saved");
         let exported = crate::worker::thumb_key(&out).unwrap();
-        assert_eq!(held(), Some(exported.clone()), "the export's key");
+        // A miss says why: the stamp at the hand-over against the
+        // file's now, and whether a look had tried before this one.
+        let handed = list.lock().unwrap()[0].settle.taken();
+        assert_eq!(
+            held(),
+            Some(exported.clone()),
+            "the export's key: handed {handed:?}, now {:?}, tried before: {tried}",
+            how::stamp_of(&out)
+        );
         let size = h.s.state.borrow().views.thumb_made[tiff];
         let worker = h.s.worker.clone();
         let cached = |(hash, stamp): &(String, u64)| {
