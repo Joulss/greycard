@@ -1469,6 +1469,24 @@ clears or a tester asks for it.
       the width of F's mat a setting (discussion 59, 2026-11-10)
 - [ ] White balance presets from the camera's own, where a maker
       note carries them (Canon, Nikon), under the fixed six (§636)
+- [ ] The folder tree scrolls to the folder that opens, as from
+      Recently opened (discussion 59, 2026-11-15)
+- [ ] Remove from a collection in any view: the frame menu lists the
+      collections the frame is in, not only the open one (discussion
+      59, 2026-11-15)
+- [ ] A saved filter switched on and off from the left pane for
+      whatever is open, without the filter bar showing; today a smart
+      collection opens the place it was saved from. Covers "raws
+      only" (discussion 59, 2026-11-15)
+- [ ] A favorite: a shortcut in the left pane to a folder inside a
+      root, where adding it as a root is refused (discussion 59,
+      2026-11-15)
+- [ ] A color label as its dot alone in the grid, without the cell's
+      tint, by a setting (discussion 59, 2026-11-15)
+- [ ] The left pane's actions told from its rows: "+ Add a root..."
+      and "+ New collection..." read as rows, the Export queue row as
+      an afterthought; weight where it helps (discussion 59,
+      2026-11-15)
 - [ ] The filter bar folded or closed from the grid itself: today
       only Settings turns it off (2026-11-15)
 - [ ] Calibration as Lightroom's: a hue and a saturation for each of
