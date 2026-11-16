@@ -11,6 +11,10 @@ import { FolderRow } from "../structs.slint";
 
 export component FoldersSection inherits Section {
     in property <[FolderRow]> rows;
+    /// The open folder's row, -1 for none, and a count that goes up
+    /// when that row is to be brought into the list's view.
+    in property <int> open-row: -1;
+    in property <int> reveal: 0;
     in-out property <bool> subfolders;
     in-out property <bool> collapsed-folders;
     /// A folder chosen, by its row.
@@ -30,7 +34,7 @@ export component FoldersSection inherits Section {
         checked <=> root.subfolders;
         toggled => { root.subfolders-changed(); root.focus-keys(); }
     }
-    if root.rows.length > 0: Rectangle {
+    if root.rows.length > 0: folder-box := Rectangle {
         // Three rows, or the list when shorter, and as much more of the
         // list as the pane's share gives it (app.slint), the rest a
         // scroll away, so a root of a thousand folders never pushes
@@ -40,6 +44,32 @@ export component FoldersSection inherits Section {
         min-height: self.floor;
         max-height: folder-list.preferred-height;
         vertical-stretch: 1;
+        // The open folder's row brought wholly into view, by the least
+        // scroll, a row to spare where there is room: when a folder is
+        // opened anew (the count goes up), and when the list is built.
+        // A row already in view moves nothing. On a timer, after the
+        // rows have their heights: a scroll set while the layout is
+        // still settling lands wrong (§693).
+        property <int> served: -1;
+        Timer {
+            interval: 1ms;
+            running: folder-box.served != root.reveal;
+            triggered => {
+                folder-box.served = root.reveal;
+                folder-box.bring-in(root.open-row);
+            }
+        }
+        function bring-in(i: int) {
+            if (i < 0 || i >= root.rows.length) { return; }
+            let h = Theme.control-height - 8px;
+            let top = folder-list.padding-top + i * (h + folder-list.spacing);
+            let view = folder-pane.visible-height;
+            let at = -folder-pane.content-y;
+            if (top >= at && top + h <= at + view) { return; }
+            let spare = clamp((view - h) / 2, 0px, h + folder-list.spacing);
+            let to = top < at ? top - spare : top + h + spare - view;
+            folder-pane.content-y = -clamp(to, 0px, max(0px, folder-pane.content-height - view));
+        }
         folder-pane := ScrollPane {
             folder-list := VerticalLayout {
                 spacing: 1px;

@@ -240,6 +240,9 @@ design note behind it.
 - A frame full of fine texture (mesh, fabric, foliage) no longer reads
   as noisy, which had the profiled denoise smooth it far too much
   ([§694](https://github.com/jessolmstead/greycard/blob/master/docs/notes/694-a-mosaics-noise-line-past-texture.md)).
+- The folder tree scrolls to the folder that opens, as from Recently
+  opened, when its row was out of view (discussion 59,
+  [§698](https://github.com/jessolmstead/greycard/blob/master/docs/notes/698-the-tree-scrolls-to-the-folder-open.md)).
 - Zooming in while a frame is still developing no longer snaps back
   to fit when the develop finishes
   ([§697](https://github.com/jessolmstead/greycard/blob/master/docs/notes/697-a-zoom-over-the-stand-in-survives-the-develop.md)).

@@ -1005,6 +1005,11 @@ export component App inherits Window {
     in property <bool> folder-tree-shown: false;
     in property <[FolderRow]> folder-tree: [];
     in-out property <bool> folder-tree-subfolders: false;
+    /// The open folder's row in the tree, -1 for none; and a count that
+    /// goes up when a folder is opened anew other than by a click on
+    /// its row, which brings that row into the list's view.
+    in property <int> folder-tree-open-row: -1;
+    in property <int> folder-tree-reveal: 0;
     /// The FOLDERS section's fold, kept for each view: the section
     /// folds as on screen, and the view off screen keeps its own for
     /// when it comes back (see `changed grid-open`). Whose the
@@ -5800,6 +5805,8 @@ export component App inherits Window {
                                 reorder-ended(commit) => { return left-stack.end(commit); }
                                 boxed: false;
                                 rows: root.folder-tree;
+                                open-row: root.folder-tree-open-row;
+                                reveal: root.folder-tree-reveal;
                                 subfolders <=> root.folder-tree-subfolders;
                                 collapsed-folders <=> root.collapsed-folders;
                                 animated <=> root.folders-animated;

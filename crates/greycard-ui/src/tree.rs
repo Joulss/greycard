@@ -75,6 +75,14 @@ pub(crate) struct Tree {
     /// folders above it unfolded once, so the mark is in sight however
     /// it was opened, and a fold made after is left alone.
     revealed: Option<PathBuf>,
+    /// The open folder whose row the pane last brought into view, once
+    /// that row was there: a folder opened anew has its row scrolled
+    /// to, and a fold, a resize, or the same folder shown again does
+    /// not move the list.
+    in_view: RefCell<Option<PathBuf>>,
+    /// The folder chosen by a click on its own row, until it is marked:
+    /// its row is under the pointer, and the list stays where it is.
+    clicked: RefCell<Option<PathBuf>>,
     /// The rows as the pane shows them: one model for the session, its
     /// rows replaced only when they change.
     rows: Rc<VecModel<FolderRow>>,
@@ -739,7 +747,30 @@ pub(crate) fn show(st: &State, app: &App) {
         model.set_vec(rows);
         app.invoke_hide_tip();
     }
+    bring_into_view(st, app, open);
     show_tiles(st, app);
+}
+
+/// The open folder's row brought into the list's view when the folder
+/// is opened anew, however it was opened, except by a click on that
+/// row. A folder not built into the tree yet is brought in when its row
+/// lands. The pane scrolls only when the row is not wholly in view
+/// already (`FoldersSection`).
+fn bring_into_view(st: &State, app: &App, open: Option<&Path>) {
+    let tree = &st.views.tree;
+    let row = tree.rows.iter().position(|r| r.open);
+    app.set_folder_tree_open_row(row.map_or(-1, |i| i as i32));
+    let Some(open) = open else {
+        *tree.in_view.borrow_mut() = None;
+        return;
+    };
+    if row.is_none() || tree.in_view.borrow().as_deref() == Some(open) {
+        return;
+    }
+    *tree.in_view.borrow_mut() = Some(open.to_path_buf());
+    if tree.clicked.take().as_deref() != Some(open) {
+        app.set_folder_tree_reveal(app.get_folder_tree_reveal().wrapping_add(1));
+    }
 }
 
 /// The folder of the row shown at `row`.
@@ -759,6 +790,7 @@ fn picked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, row: i32) {
     let Some(folder) = row_folder(&state.borrow(), row) else {
         return;
     };
+    *state.borrow().views.tree.clicked.borrow_mut() = Some(folder.clone());
     open(state, app, worker, &folder, "the tree");
 }
 
@@ -2612,6 +2644,127 @@ mod tests {
         );
         land_sent(&state, &app, &worker);
         assert_eq!(tiles(&app), [("day".into(), 3)]);
+        drop(worker);
+        done(&dir, state);
+    }
+
+    /// The tree's list in the window: its top and its foot.
+    fn list_view(app: &App) -> (f32, f32) {
+        use i_slint_backend_testing::ElementHandle;
+        crate::testing::settle(app);
+        let pane = ElementHandle::find_by_element_id(app, "FoldersSection::folder-pane")
+            .next()
+            .expect("the tree's list");
+        let (at, size) = crate::testing::bounds_of(&pane);
+        (at.y, at.y + size.height)
+    }
+
+    /// The row for `folder`, its top left and size in the window; none
+    /// when the list's scroll has it wholly out of sight, where the
+    /// search does not look.
+    fn row_bounds(app: &App, folder: &Path) -> Option<crate::testing::Bounds> {
+        use i_slint_backend_testing::ElementHandle;
+        let path = folder.to_string_lossy();
+        let name = folder.file_name().unwrap().to_string_lossy();
+        ElementHandle::find_by_accessible_label(app, &name)
+            .find(|e| e.accessible_description().as_deref() == Some(&*path))
+            .map(|row| crate::testing::bounds_of(&row))
+    }
+
+    /// The top and foot in the window of the row for `folder`.
+    fn row_at(app: &App, folder: &Path) -> Option<(f32, f32)> {
+        row_bounds(app, folder).map(|(at, size)| (at.y, at.y + size.height))
+    }
+
+    fn wholly_in_view(app: &App, folder: &Path) -> bool {
+        let (top, foot) = list_view(app);
+        row_at(app, folder).is_some_and(|(y, end)| y >= top - 0.5 && end <= foot + 0.5)
+    }
+
+    /// A folder opened other than by its own row (Recently opened, back
+    /// and forward) has its row brought into the list's view by the
+    /// least scroll; one in view already moves nothing, and nor does a
+    /// click on a row the list's foot cuts.
+    #[test]
+    fn the_open_folders_row_is_brought_into_the_trees_view() {
+        let dir = scratch("in-view");
+        let root = dir.join("archive");
+        let names: Vec<String> = (0..60).map(|i| format!("f{i:02}")).collect();
+        for n in &names {
+            frames(&root.join(n), &["x.tif"]);
+        }
+        let (app, state, worker) = open_root(&dir, &root, Some((1200.0, 700.0)));
+        let folder = |i: usize| root.join(&names[i]);
+        let marked = |app: &App, name: &str| rows(app).iter().any(|r| r.0 == name && r.3);
+        assert!(
+            !wholly_in_view(&app, &folder(55)),
+            "the list has nothing to prove: {:?} holds f55 at {:?}",
+            list_view(&app),
+            row_at(&app, &folder(55))
+        );
+
+        // Recently opened.
+        app.invoke_recent_chosen(folder(55).to_string_lossy().as_ref().into());
+        land_sent(&state, &app, &worker);
+        assert!(marked(&app, "f55"), "{:?}", rows(&app));
+        assert!(
+            wholly_in_view(&app, &folder(55)),
+            "f55 at {:?} in {:?}",
+            row_at(&app, &folder(55)),
+            list_view(&app)
+        );
+        // By the least scroll, a row to spare: f56 in view under it,
+        // and no further.
+        assert!(wholly_in_view(&app, &folder(56)), "a row to spare");
+        assert!(!wholly_in_view(&app, &folder(57)), "the least scroll");
+
+        // One in view already: nothing moves.
+        let was = row_at(&app, &folder(55));
+        app.invoke_recent_chosen(folder(53).to_string_lossy().as_ref().into());
+        land_sent(&state, &app, &worker);
+        assert!(marked(&app, "f53"), "{:?}", rows(&app));
+        assert_eq!(row_at(&app, &folder(55)), was, "f53 was in view");
+
+        // Back: the folder before, f55, in view still; again: the
+        // root's view, its row at the top brought in.
+        app.invoke_visit_folder(true);
+        land_sent(&state, &app, &worker);
+        assert!(marked(&app, "f55"), "{:?}", rows(&app));
+        assert_eq!(row_at(&app, &folder(55)), was, "f55 was in view");
+        app.invoke_visit_folder(true);
+        land_sent(&state, &app, &worker);
+        assert!(rows(&app)[0].3, "the root marked: {:?}", rows(&app));
+        assert!(wholly_in_view(&app, &root));
+        assert!(!wholly_in_view(&app, &folder(55)));
+        // Forward: f55 again, brought in.
+        app.invoke_visit_folder(false);
+        land_sent(&state, &app, &worker);
+        assert!(marked(&app, "f55"), "{:?}", rows(&app));
+        assert!(wholly_in_view(&app, &folder(55)));
+
+        // A click on a row cut by the list's foot opens it and leaves
+        // the list where it is.
+        let (_, foot) = list_view(&app);
+        let cut = (0..names.len())
+            .find(|&i| {
+                row_at(&app, &folder(i)).is_some_and(|(y, end)| y < foot - 4.0 && end > foot + 0.5)
+            })
+            .or_else(|| {
+                (0..names.len())
+                    .rev()
+                    .find(|&i| wholly_in_view(&app, &folder(i)))
+            })
+            .unwrap();
+        let (at, size) = row_bounds(&app, &folder(cut)).unwrap();
+        let was = row_at(&app, &folder(cut));
+        click(
+            &app,
+            at.x + size.width / 2.0,
+            (at.y + foot.min(at.y + size.height)) / 2.0,
+        );
+        land_sent(&state, &app, &worker);
+        assert!(marked(&app, &names[cut]), "{:?}", rows(&app));
+        assert_eq!(row_at(&app, &folder(cut)), was, "the click scrolled");
         drop(worker);
         done(&dir, state);
     }

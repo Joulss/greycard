@@ -709,3 +709,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§695. ISO and focal length as ranges](notes/695-iso-and-focal-length-as-ranges.md) (2026-11-15)
 - [§696. The current frame's ring, a pixel wider](notes/696-the-current-frames-ring-a-pixel-wider.md) (2026-11-15)
 - [§697. A zoom over the stand-in survives the develop](notes/697-a-zoom-over-the-stand-in-survives-the-develop.md) (2026-11-15)
+- [§698. The tree scrolls to the folder open](notes/698-the-tree-scrolls-to-the-folder-open.md) (2026-11-15)
