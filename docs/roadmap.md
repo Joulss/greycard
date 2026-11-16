@@ -1496,7 +1496,9 @@ clears or a tester asks for it.
       of its own (issue 123, 2026-11-11)
 - [ ] Stars, flag, and label set by the mouse on the picture's own
       marks: five outline stars when none is set, a click to rate and
-      the same click to clear; in the grid too (issue 123, 2026-11-12)
+      the same click to clear, and beside them pick and reject as
+      buttons, for whoever does not use the keys; in the grid too
+      (issue 123, 2026-11-12)
 - [ ] A tooltip on a switch's label cut short, with the slider
       labels' (§642: three French labels are cut at the default panel
       width)
