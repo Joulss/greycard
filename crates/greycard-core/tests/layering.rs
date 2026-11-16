@@ -35,18 +35,19 @@ const EDGES: &[(&str, &[&str])] = &[
         ],
     ),
     ("greycard-slint", &[]),
+    ("greycard-version", &[]),
     ("greycard-i18n-probe", &[]),
     (
         "greycard-ui",
         &[
             "core", "edit", "edit-io", "lens", "gpu", "render", "ai", "library", "match", "engine",
-            "viewport", "slint",
+            "viewport", "slint", "version",
         ],
     ),
     (
         "greycard-cli",
         &[
-            "core", "edit", "edit-io", "lens", "gpu", "ai", "library", "engine",
+            "core", "edit", "edit-io", "lens", "gpu", "ai", "library", "engine", "version",
         ],
     ),
     ("greycard-bench", &["core", "ai"]),

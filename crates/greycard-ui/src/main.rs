@@ -118,7 +118,7 @@ pub(crate) use greycard_slint::*;
 #[derive(Parser)]
 #[command(
     name = "greycard-ui",
-    version,
+    version = greycard_version::LABEL,
     about = "RAW editor: open a file or a folder, develop it, export it"
 )]
 struct Cli {

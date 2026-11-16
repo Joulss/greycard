@@ -90,9 +90,11 @@ pub fn dir() -> Option<PathBuf> {
 /// directory to keep it in, and the editor goes on with the terminal
 /// alone. `verbose` is the count of `-v`: once, the terminal shows
 /// what the file keeps; twice, both go down to debug for our crates.
-/// `RUST_LOG`, when set, decides for both instead.
-pub fn start(verbose: u8) -> Option<PathBuf> {
-    let file = dir().and_then(open);
+/// `RUST_LOG`, when set, decides for both instead. `version` is the
+/// build's label for the file's first line, handed in by the binary so
+/// a new commit does not recompile this library.
+pub fn start(verbose: u8, version: &str) -> Option<PathBuf> {
+    let file = dir().and_then(|d| open(d, version));
     install(file.as_ref().map(|(_, f)| f), verbose, true);
     file.map(|(path, _)| path)
 }
@@ -106,15 +108,14 @@ pub fn start_terminal(verbose: u8) {
 
 /// The file for this run, the earlier ones moved up a place, with a
 /// first line that says what was run even if nothing else follows.
-fn open(dir: PathBuf) -> Option<(PathBuf, File)> {
+fn open(dir: PathBuf, version: &str) -> Option<(PathBuf, File)> {
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(FILE);
     rotate(&dir);
     let mut file = File::create(&path).ok()?;
     writeln!(
         file,
-        "greycard-ui {} on {} {}",
-        env!("CARGO_PKG_VERSION"),
+        "greycard-ui {version} on {} {}",
         std::env::consts::OS,
         std::env::consts::ARCH
     )
@@ -392,11 +393,11 @@ mod tests {
         // installs; the shell's setting would decide the levels.
         unsafe { std::env::remove_var(EnvFilter::DEFAULT_ENV) };
         // A run before this one, so there is something to keep.
-        let (_, mut first) = open(dir.clone()).unwrap();
+        let (_, mut first) = open(dir.clone(), "0.0.0 (test)").unwrap();
         writeln!(first, "first run").unwrap();
         drop(first);
 
-        let (path, file) = open(dir.clone()).unwrap();
+        let (path, file) = open(dir.clone(), "0.0.0 (test)").unwrap();
         install(Some(&file), 0, false);
         tracing::info!("an info line");
         tracing::debug!("a debug line");

@@ -2030,6 +2030,7 @@ dependencies = [
  "greycard-gpu",
  "greycard-lens",
  "greycard-library",
+ "greycard-version",
  "image",
  "log",
  "tracing",
@@ -2231,6 +2232,7 @@ dependencies = [
  "greycard-match",
  "greycard-render",
  "greycard-slint",
+ "greycard-version",
  "greycard-viewport",
  "half",
  "i-slint-backend-testing",
@@ -2261,6 +2263,10 @@ dependencies = [
  "x11rb",
  "zbus",
 ]
+
+[[package]]
+name = "greycard-version"
+version = "0.11.0"
 
 [[package]]
 name = "greycard-viewport"

@@ -1,0 +1,13 @@
+[package]
+name = "greycard-version"
+version.workspace = true
+description = "The build's version label: the crate version, and the commit for a build that is not a release"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true

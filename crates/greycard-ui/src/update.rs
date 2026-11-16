@@ -32,8 +32,10 @@ pub const DAY: u64 = 24 * 60 * 60;
 /// The longest the request may take, all of it.
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-/// This build's version.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// This build's version, plain: what is compared with the latest
+/// release and sent in the User-Agent. A build from a commit compares
+/// as the release it is numbered for; its label is for people.
+pub const VERSION: &str = greycard_version::VERSION;
 
 /// What the settings keep of the check.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -499,6 +501,18 @@ mod tests {
         }
         assert!(!is_newer("v9.9.9", "not a version"));
         assert_eq!(parse_version(VERSION).map(|_| ()), Some(()));
+    }
+
+    /// A build from a commit compares, and names itself to GitHub, as
+    /// its plain version does: the constant both use has no commit.
+    #[test]
+    fn a_build_from_a_commit_compares_as_its_version() {
+        assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
+        let v = parse_version(VERSION).unwrap();
+        let next = format!("v{}.{}.{}", v.major, v.minor, v.patch + 1);
+        assert!(is_newer(&next, VERSION));
+        assert!(!is_newer(&format!("v{VERSION}"), VERSION));
+        assert_eq!(VERSION, greycard_version::VERSION);
     }
 
     #[test]

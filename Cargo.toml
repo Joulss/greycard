@@ -19,6 +19,7 @@ members = [
     "crates/greycard-library",
     "crates/greycard-match",
     "crates/ort-dylib",
+    "crates/greycard-version",
 ]
 
 [workspace.package]

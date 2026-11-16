@@ -330,7 +330,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
             .map(|d| d.join(log::FILE))
             .filter(|p| p.is_file());
         let report = Report {
-            version: env!("CARGO_PKG_VERSION").into(),
+            version: greycard_version::LABEL.into(),
             os: os(),
             gpu: state.borrow().develop.gpu.clone().unwrap_or_default(),
             log: log

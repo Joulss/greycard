@@ -698,7 +698,7 @@ pub(crate) fn about_dirs() -> [String; 4] {
 
 /// The About category's words, which hold for the run.
 fn show_about(app: &App) {
-    app.set_about_version(crate::update::VERSION.into());
+    app.set_about_version(greycard_version::LABEL.into());
     let [settings, library, caches, log] = about_dirs();
     app.set_about_settings_dir(settings.into());
     app.set_about_library_dir(library.into());
@@ -1694,9 +1694,9 @@ mod tests {
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
         app.set_settings_category("About".into());
         app.invoke_settings_asked();
-        assert_eq!(app.get_about_version(), crate::update::VERSION);
+        assert_eq!(app.get_about_version(), greycard_version::LABEL);
         assert_eq!(
-            crate::testing::count_labeled(&app, crate::update::VERSION),
+            crate::testing::count_labeled(&app, greycard_version::LABEL),
             1
         );
         assert_eq!(crate::testing::count_labeled(&app, "Check now"), 1);

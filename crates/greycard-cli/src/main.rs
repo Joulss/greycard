@@ -26,7 +26,7 @@ mod stack;
 #[derive(Parser)]
 #[command(
     name = "greycard",
-    version,
+    version = greycard_version::LABEL,
     about = "RAW pre-processor: decode, white balance and camera color, done right"
 )]
 struct Cli {

@@ -77,6 +77,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # The build shows the plain version, no commit, even when the
+  # checkout cannot see the tag (crates/greycard-version).
+  GREYCARD_RELEASE: "1"
 
 jobs:
   version:

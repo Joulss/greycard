@@ -64,7 +64,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     }
     // Before anything is said. The line is for the person at the
     // terminal, not the log, which knows where it is.
-    if let Some(log) = log::start(cli.verbose) {
+    if let Some(log) = log::start(cli.verbose, greycard_version::LABEL) {
         eprintln!("log: {}", log.display());
     }
     // Whether the models can run here, asked of the processor and the

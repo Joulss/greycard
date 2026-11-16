@@ -10,6 +10,9 @@ design note behind it.
 - Every package carries THIRD-PARTY-NOTICES beside LICENSE, for the
   libraries, artwork, ported code, and crates greycard is built from
   ([§660](https://github.com/jessolmstead/greycard/blob/master/docs/notes/660-third-party-notices-in-every-package.md)).
+- A build from source shows its commit after the version, in the log,
+  `--version`, Settings, and a problem report
+  ([§700](https://github.com/jessolmstead/greycard/blob/master/docs/notes/700-the-builds-commit-in-its-version.md)).
 - Each release carries a SHA256SUMS file: check downloads with
   `sha256sum -c SHA256SUMS --ignore-missing`, or `shasum -a 256 -c` on
   a Mac
