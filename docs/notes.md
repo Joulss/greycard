@@ -713,3 +713,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§699. The left pane's sections boxed as the right's](notes/699-the-left-panes-sections-boxed-as-the-rights.md) (2026-11-15)
 - [§700. The build's commit in its version](notes/700-the-builds-commit-in-its-version.md) (2026-11-15)
 - [§701. The hand-kept lists the compiler keeps](notes/701-the-hand-kept-lists-the-compiler-keeps.md) (2026-11-15)
+- [§702. The parity sweep names every field](notes/702-the-parity-sweep-names-every-field.md) (2026-11-15)

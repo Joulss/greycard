@@ -7,6 +7,10 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] lavapipe is 2.7 to 3.8 levels off the CPU on three of the
+      widened parity sweep's 8,000 edits (seeds 2, 17, and 20), all
+      under a profile tone curve flat at black and at white; a real
+      card is within 1.1 on the same edits; cause not found (§702)
 - [ ] The frame open in Cull is not remembered for the next run:
       `remember_last_file` runs only where a develop lands
       (panel/deliver.rs), and Cull shows the camera's JPEG without

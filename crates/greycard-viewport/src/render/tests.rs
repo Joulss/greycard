@@ -2929,7 +2929,7 @@ impl Rng {
 /// The parts of an edit the parity test draws, a bit each, so a
 /// failing edit can be drawn again with one part left at its
 /// default to see which part the difference is in.
-const PARTS: [&str; 20] = [
+const PARTS: [&str; 25] = [
     "light",
     "light switch",
     "point curves",
@@ -2950,6 +2950,11 @@ const PARTS: [&str; 20] = [
     "display curve",
     "local white",
     "local detail",
+    "opacity",
+    "refine edge",
+    "output sharpen",
+    "profile curve",
+    "baseline",
 ];
 
 fn part(name: &str) -> u32 {
@@ -2971,6 +2976,36 @@ struct Case {
     /// The detail planes are handed to both sides (the test's
     /// `planes`), for the masks' Detail to read.
     planes: bool,
+    /// A camera profile's tone curve in the display curve's place, one
+    /// of `profile_tones`, as `ProfileTone::of` hands the viewport and
+    /// the export the profile's when `Camera::tone_curve` is on.
+    profile_tone: Option<greycard_render::profile_tone::ProfileTone>,
+}
+
+/// The profile tone curves the cases draw from, made once: one of
+/// Adobe's shape that ends at one, with an offset down; and one with a
+/// toe that reaches one at 0.85, flat after, with no offset.
+fn profile_tones() -> Vec<greycard_render::profile_tone::ProfileTone> {
+    use greycard_core::tone_curve::ToneCurve;
+    use greycard_render::profile_tone::ProfileTone;
+    let adobe: Vec<[f32; 2]> = (0..128)
+        .map(|i| {
+            let x = i as f32 / 127.0;
+            let y = 1.0 - (1.0 - x).powf(2.2);
+            [x, (0.85 * y + 0.15 * x * x * (3.0 - 2.0 * x)).min(1.0)]
+        })
+        .collect();
+    let toe: Vec<[f32; 2]> = (0..64)
+        .map(|i| {
+            let x = i as f32 / 63.0;
+            let t = (x / 0.85).min(1.0);
+            [x, t * t * (3.0 - 2.0 * t)]
+        })
+        .collect();
+    vec![
+        ProfileTone::new(Arc::new(ToneCurve::new(&adobe).unwrap()), Some(-0.64)),
+        ProfileTone::new(Arc::new(ToneCurve::new(&toe).unwrap()), None),
+    ]
 }
 
 /// A point curve: the ends at x 0 and 1, up to three points
@@ -3360,6 +3395,7 @@ fn random_case(
     aspect: f32,
     pool: &(Vec<(Shape, RasterRef)>, RasterRef),
     tables: &[Arc<lut::Lut3d>],
+    tones: &[greycard_render::profile_tone::ProfileTone],
 ) -> Case {
     use greycard_edit::grain::Kind;
     let has = |name: &str| skip & part(name) == 0;
@@ -3460,6 +3496,77 @@ fn random_case(
         }
     }
     let planes = !rng.chance(0.2) && has("local detail");
+    // What follows was added after the draws above, and is drawn after
+    // them for the same reason.
+    // Each mask's Opacity, at its ends two fifths of the times it is
+    // moved.
+    for a in &mut edit.adjustments {
+        let opacity = rng.slider(0.5, 0.0, 1.0, 1.0);
+        if has("opacity") {
+            a.opacity = opacity;
+        }
+    }
+    // Each mask's Refine edge, 0 to 1, now and then: the refined
+    // raster stands in for the mask's shapes on both sides.
+    for a in &mut edit.adjustments {
+        let refine = rng.slider(0.25, 0.0, 1.0, 0.0);
+        if has("refine edge") {
+            a.mask.refine = refine;
+        }
+    }
+    // Each mask's white balance as an offset from the picture's, now
+    // and then, over the panel's ranges, in place of whatever it was.
+    for a in &mut edit.adjustments {
+        use greycard_edit::white::{OFFSET_MIRED_RANGE, OFFSET_TINT_RANGE};
+        let on = rng.chance(0.25);
+        let mired = rng.range(-1.0, 1.0) as f64 * OFFSET_MIRED_RANGE;
+        let tint = rng.range(-1.0, 1.0) as f64 * OFFSET_TINT_RANGE;
+        if on && has("local white") {
+            a.look.white_balance = greycard_edit::LocalWhite::Relative { mired, tint };
+        }
+    }
+    // The output sharpen over the panel's ranges, its switch off now
+    // and then.
+    {
+        use greycard_edit::output_sharpen::{AMOUNT_MAX, RADIUS_MAX, RADIUS_MIN, THRESHOLD_MAX};
+        let sharpen = greycard_edit::OutputSharpen {
+            enabled: !rng.chance(0.1),
+            amount: rng.slider(0.4, 0.0, AMOUNT_MAX, 0.0),
+            radius: rng.moved(RADIUS_MIN, RADIUS_MAX),
+            threshold: rng.moved(0.0, THRESHOLD_MAX),
+        };
+        if has("output sharpen") {
+            edit.output_sharpen = sharpen;
+        }
+    }
+    // A camera profile's tone curve, a third of the time, with the
+    // switch that asks for it.
+    let toned = rng.chance(0.3);
+    let tone = tones[rng.below(tones.len())].clone();
+    let profile_tone = (toned && has("profile curve")).then_some(tone);
+    edit.camera.tone_curve = profile_tone.is_some();
+    // The baselines: the zero an older edit keeps, the body's, a
+    // merge's headroom, and a DNG's own `BaselineExposure`, which only
+    // the profile's curve reads.
+    let mut either = |p: f32, lo: f32, hi: f32| {
+        let on = rng.chance(p);
+        let v = rng.range(lo, hi);
+        on.then_some(v)
+    };
+    let kept = either(0.2, 0.0, 1.5);
+    let body = either(0.5, 0.0, 1.5);
+    let headroom = either(0.2, 0.0, 3.0);
+    let dng = either(0.3, -1.0, 1.0);
+    let mut baseline = greycard_render::finish::Baseline::DEFAULT;
+    if has("baseline") {
+        edit.light.baseline = kept;
+        if let Some(stops) = body {
+            baseline = greycard_render::finish::Baseline::of_stops(stops);
+        }
+        baseline = baseline
+            .with_headroom(headroom.unwrap_or(0.0))
+            .with_dng(dng);
+    }
     Case {
         edit,
         rasters,
@@ -3467,8 +3574,9 @@ fn random_case(
         source: if display && has("display source") {
             Source::Display
         } else {
-            Source::SCENE
+            Source::Scene(baseline)
         },
+        profile_tone,
         guide: (guide && has("guide plane")).then_some(usize::from(coarse)),
         space: if has("output space") {
             space
@@ -3600,6 +3708,9 @@ struct Outcome {
     /// The steep pixels among the lit ones (`lit`), which
     /// `STEEP_SHARE` holds.
     steep_lit: usize,
+    /// The lit pixels of this edit: those of the frame, less, under an
+    /// output sharpen, any within its reach of one that is not.
+    lit: usize,
     wide: usize,
     /// Channels whose answers the finest nudges alone spread
     /// wider than the tolerance (`FINEST`).
@@ -3711,7 +3822,9 @@ const STEEP: f32 = 2.5 / 255.0;
 /// none lit; the same on every device, since it is the CPU's own
 /// spread). The lit share's steepest over seeds 1 to 150 is 0.78%
 /// (seed 63, edit 133); a break that made answers jump shows in
-/// many times that. `STEEP_MEAN` holds the run as a whole.
+/// many times that. `STEEP_MEAN` holds the run as a whole. Under an
+/// output sharpen a pixel is lit only where every pixel its blur
+/// reads is (`lit_within` in the test).
 const STEEP_SHARE: f64 = 0.03;
 /// The most of the pixels that may be steep over the whole run, so
 /// that a change that made every answer jump cannot pass by
@@ -4495,18 +4608,21 @@ fn stacked_flattenings_agree_on_both_sides() {
 /// switch, the point, parametric and color curves, the grading,
 /// the mixer, the color, the black and white, the tint, the
 /// vignette and the grain), two or three local adjustments with
-/// their own looks, half of them with a white balance of their own
-/// (through `testing::white_shift`'s profile), under masks of
+/// their own looks, half of them with a white balance of their own,
+/// absolute or an offset (through `testing::white_shift`'s profile), under masks of
 /// gradients, radials, brushes, a
 /// learned raster (Subject) present or missing, and luminance and
-/// color windows, in every mode, a look table, a source of a scene
-/// or a picture already rendered, an output space and a guide
-/// plane; and each mask's Detail, read from a random set of detail
-/// planes.
+/// color windows, in every mode, some refined; their opacities; a
+/// look table, a source of a scene (at a body's baseline, an older
+/// edit's, a merge's headroom, and a DNG's own) or a picture already
+/// rendered, a camera profile's tone curve, the output sharpen, an
+/// output space and a guide plane; and each mask's Detail, read from
+/// a random set of detail planes. `the_sweep_names_every_field`
+/// keeps the list whole.
 ///
 /// Both sides are built from the edit the way the app builds them:
-/// the locals by `Local::of`, as the viewport and the export bake
-/// them, the view's look by `View::with_look`, the guide handed to
+/// the locals by `Local::of` and refined, as the viewport and the
+/// export bake them, the view's look by `View::with_look`, the guide handed to
 /// the CPU only where `export::reads_guide` says the export reads
 /// it, the vignette and the grain by frame position as
 /// `export::render` has them. The CPU is handed the picture, the
@@ -4609,6 +4725,10 @@ fn the_shader_is_the_cpu_over_random_edits() {
     });
     let pool = raster_pool(seed, aspect);
     let tables = look_tables();
+    let tones = profile_tones();
+    // What a mask's Refine edge is drawn onto: the picture, as the
+    // export's guide carries it.
+    let picture = greycard_render::refine::mask_picture(&seen);
     let shift = greycard_render::testing::white_shift();
     let planes = Arc::new(parity_planes(w, h));
     let planes_image = planes.to_image();
@@ -4668,9 +4788,36 @@ fn the_shader_is_the_cpu_over_random_edits() {
             top > 0.0 && px.iter().all(|&v| v > NUDGE * top)
         })
         .collect();
+    // The lit pixels under an output sharpen reaching `r` pixels: those
+    // whose every pixel within `r` is lit. The sharpen's blur reads
+    // them all, so an unlit pixel's spread reaches the lit ones about
+    // it, and a lit pixel there is steep for its neighbor's sake, not
+    // its own (seed 6 edit 56: no lit pixel steep without the sharpen,
+    // 4.9% with it at 1.56 and a radius of 1.59, the GPU 0.6 levels
+    // from the CPU at worst).
+    let lit_within = |r: usize| -> Vec<bool> {
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                (y.saturating_sub(r)..(y + r + 1).min(h))
+                    .all(|yy| (x.saturating_sub(r)..(x + r + 1).min(w)).all(|xx| lit[yy * w + xx]))
+            })
+            .collect()
+    };
+    let mut lit_by_reach: std::collections::HashMap<usize, Vec<bool>> =
+        std::collections::HashMap::new();
     // One case through both sides.
     let mut run = |case: &Case| -> Outcome {
         let edit = &case.edit;
+        let lit: &[bool] =
+            match greycard_render::output_sharpen::Params::of(&edit.output_sharpen, 1.0) {
+                None => &lit,
+                Some(p) => lit_by_reach
+                    .entry(p.reach())
+                    .or_insert_with(|| lit_within(p.reach())),
+            };
+        let global = Baked::global(edit, case.source).with_profile_tone(case.profile_tone.clone());
+        let stops = case.source.baseline(&edit.light) + edit.light.exposure;
         let locals: Vec<Local> = edit
             .adjustments
             .iter()
@@ -4678,9 +4825,14 @@ fn the_shader_is_the_cpu_over_random_edits() {
             .take(MAX_LOCALS)
             // A raw's locals have their white balance; a picture
             // already rendered has none to move (`local_white_shift`).
+            // Refined as `export::render` refines them.
             .map(|(a, rasters)| {
                 let white = (case.source.is_scene()).then_some(&shift);
-                Local::of(a, rasters.clone(), white)
+                let mut local = Local::of(a, rasters.clone(), white);
+                if local.enabled {
+                    local.refine(&picture, aspect, global.light.exposure, stops);
+                }
+                local
             })
             .collect();
         renderer.set_look(case.look.as_ref());
@@ -4695,6 +4847,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
             frame_size: (w as f32, h as f32),
             locals: locals.clone(),
             source: case.source,
+            profile_tone: case.profile_tone.clone(),
             ..View::with_look(edit)
         };
         let target = renderer.render(w as u32, h as u32, &view).0;
@@ -4702,7 +4855,6 @@ fn the_shader_is_the_cpu_over_random_edits() {
         // The export's side, as `export::render` sets it up: the
         // guide only where it says the export reads one.
         let reads = greycard_render::export::reads_guide(edit);
-        let global = Baked::global(edit, case.source);
         let (iw, ih) = (w as f32, h as f32);
         let vignette = edit.vignette;
         let grain = edit.grain;
@@ -4742,6 +4894,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
             gpu: [0.0; 3],
             steep: 0,
             steep_lit: 0,
+            lit: lit.iter().filter(|l| **l).count(),
             wide: 0,
             unsettled: 0,
             refined: 0,
@@ -4815,7 +4968,6 @@ fn the_shader_is_the_cpu_over_random_edits() {
     };
     let tolerance = TOLERANCE;
     let pixels = (w * h) as f64;
-    let lit_pixels = lit.iter().filter(|l| **l).count() as f64;
     let mut failed = Vec::new();
     let mut overall = 0.0f32;
     let mut steep_sum = 0.0f64;
@@ -4830,7 +4982,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
         None => 0..edits,
     };
     for k in range {
-        let case = random_case(seed, k, skip, aspect, &pool, &tables);
+        let case = random_case(seed, k, skip, aspect, &pool, &tables, &tones);
         let Outcome {
             worst: d,
             at: (x, y, c),
@@ -4838,6 +4990,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
             gpu,
             steep,
             steep_lit,
+            lit: lit_pixels,
             wide: n,
             unsettled: u,
             refined: r,
@@ -4850,7 +5003,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
         }
         refined += r;
         let share = steep as f64 / pixels;
-        let share_lit = steep_lit as f64 / lit_pixels;
+        let share_lit = steep_lit as f64 / lit_pixels.max(1) as f64;
         steep_sum += share;
         if share > steepest.0 {
             steepest = (share, k);
@@ -4887,10 +5040,10 @@ fn the_shader_is_the_cpu_over_random_edits() {
         let mut parts = Vec::new();
         if failed.len() < 3 {
             for (b, name) in PARTS.iter().enumerate() {
-                let without = random_case(seed, k, skip | 1 << b, aspect, &pool, &tables);
+                let without = random_case(seed, k, skip | 1 << b, aspect, &pool, &tables, &tones);
                 let o = run(&without);
                 if o.worst <= tolerance
-                    && o.steep_lit as f64 / lit_pixels <= STEEP_SHARE
+                    && o.steep_lit as f64 / o.lit.max(1) as f64 <= STEEP_SHARE
                     && o.unsettled <= UNSETTLED_MAX
                 {
                     parts.push(*name);
@@ -4901,11 +5054,14 @@ fn the_shader_is_the_cpu_over_random_edits() {
         if only.is_some() {
             eprintln!("  {:#?}", case.edit);
             eprintln!(
-                "  look {:?}, source {:?}, guide {:?}, space {:?}",
+                "  look {:?}, source {:?}, guide {:?}, space {:?}, profile curve {:?}",
                 case.look.as_ref().map(|l| (l.lut.size, l.strength)),
                 case.source,
                 case.guide,
-                case.space
+                case.space,
+                case.profile_tone
+                    .as_ref()
+                    .map(|t| (t.table().len(), t.gain()))
             );
         }
         failed.push((k, d, share_lit, parts));
@@ -4957,6 +5113,477 @@ fn the_shader_is_the_cpu_over_random_edits() {
             ))
             .collect::<Vec<_>>()
     );
+}
+
+/// Which fields the sweep has moved off their defaults, by name.
+#[derive(Default)]
+struct Moved(std::collections::BTreeMap<String, bool>);
+
+impl Moved {
+    fn mark(&mut self, name: impl Into<String>, moved: bool) {
+        *self.0.entry(name.into()).or_default() |= moved;
+    }
+}
+
+/// Each field named after the struct it is in has been moved off its
+/// default (`$d`'s): the destructuring before it is what names every
+/// field, and this marks them.
+macro_rules! mark_off {
+    ($seen:expr, $prefix:expr, $d:expr, $($f:ident),+ $(,)?) => {{
+        let d = $d;
+        $( $seen.mark(format!("{}.{}", $prefix, stringify!($f)), *$f != d.$f); )+
+    }};
+}
+
+/// Every field of `case` and of what it holds that reaches the
+/// finish, marked as moved or not; and every one that does not, or
+/// that the sweep leaves alone, named here with the reason. Each
+/// struct is destructured with no `..`, as `PrepareOptions`' equality
+/// does, so a field added later does not compile here until it is
+/// marked, which `the_sweep_names_every_field` then holds
+/// `random_case` to moving, or put down as exempt.
+fn case_fields(case: &Case, seen: &mut Moved) {
+    use greycard_edit::{
+        Adjustment, Camera, Detail, LocalWhite, OutputSharpen, Parametric, Tone, grading::Wheel,
+    };
+    let Case {
+        edit,
+        // What the brushes and the learned shape are painted into:
+        // marked by the shapes that read them.
+        rasters: _,
+        look,
+        source,
+        guide,
+        space,
+        planes,
+        profile_tone,
+    } = case;
+    seen.mark("look table", look.is_some());
+    seen.mark("source display", !source.is_scene());
+    if let Source::Scene(b) = source {
+        let d = greycard_render::finish::Baseline::DEFAULT;
+        seen.mark("baseline body", b.stops() != d.stops());
+        seen.mark("baseline headroom", b.headroom() != 0.0);
+        seen.mark("baseline dng", b.dng().is_some());
+    }
+    seen.mark("guide own", *guide == Some(0));
+    seen.mark("guide coarse", *guide == Some(1));
+    for s in greycard_render::export::Space::ALL {
+        seen.mark(format!("space {s:?}"), *space == s);
+    }
+    seen.mark("detail planes", *planes);
+    seen.mark("profile curve", profile_tone.is_some());
+    let greycard_edit::Edit {
+        // Neither reaches a pixel (`develop_key_by`).
+        version: _,
+        frame_pending: _,
+        light,
+        display_curve,
+        // The develop's, before the finish; the viewport's preview of
+        // it (`View::white`) is not covered.
+        white_balance: _,
+        // The develop's, before the finish.
+        noise: _,
+        detail: _,
+        sharpen: _,
+        output_sharpen,
+        curves,
+        mixer,
+        color,
+        bw,
+        grading,
+        tint,
+        // A table by name, which the loader reads: the case hands both
+        // sides the table itself (`Case::look`).
+        look_lut: _,
+        // The develop's, before the finish.
+        lens: _,
+        // Not covered: the geometry.
+        geometry: _,
+        vignette,
+        grain,
+        // The develop's, before the finish.
+        demosaic: _,
+        camera,
+        adjustments,
+        // The develop's, before the finish.
+        retouch: _,
+    } = edit;
+    light_fields(seen, "light", light, true);
+    for c in greycard_edit::DisplayCurve::ALL {
+        seen.mark(format!("display curve {c:?}"), *display_curve == c);
+    }
+    let OutputSharpen {
+        enabled,
+        amount,
+        radius,
+        threshold,
+    } = output_sharpen;
+    mark_off!(
+        seen,
+        "output sharpen",
+        OutputSharpen::default(),
+        enabled,
+        amount,
+        radius,
+        threshold
+    );
+    curves_fields(seen, "curves", curves);
+    mixer_fields(seen, "mixer", mixer);
+    color_fields(seen, "color", color);
+    let BlackWhite {
+        enabled,
+        weights,
+        strength,
+    } = bw;
+    mark_off!(
+        seen,
+        "bw",
+        BlackWhite::default(),
+        enabled,
+        weights,
+        strength
+    );
+    grading_fields(seen, "grading", grading);
+    tint_fields(seen, "tint", tint);
+    let Vignette {
+        enabled,
+        amount,
+        midpoint,
+        feather,
+        roundness,
+    } = vignette;
+    mark_off!(
+        seen,
+        "vignette",
+        Vignette::default(),
+        enabled,
+        amount,
+        midpoint,
+        feather,
+        roundness
+    );
+    let Grain {
+        enabled,
+        amount,
+        size,
+        kind,
+    } = grain;
+    mark_off!(seen, "grain", Grain::default(), enabled, amount, size);
+    for k in greycard_edit::grain::Kind::ALL {
+        seen.mark(format!("grain kind {k:?}"), *kind == k);
+    }
+    let Camera {
+        // The develop's: the matrix the sensor's color is taken through.
+        profile: _,
+        // The develop's: the profile's own look table, before the
+        // finish.
+        look_table: _,
+        tone_curve,
+    } = camera;
+    seen.mark("camera.tone_curve", *tone_curve);
+    assert_eq!(
+        *tone_curve,
+        profile_tone.is_some(),
+        "the switch and the curve"
+    );
+    seen.mark("adjustments", !adjustments.is_empty());
+    for a in adjustments {
+        let Adjustment {
+            // Neither reaches a pixel (`develop_key_by`).
+            id: _,
+            name: _,
+            enabled,
+            mask,
+            look,
+            opacity,
+        } = a;
+        mark_off!(seen, "local", Adjustment::default(), enabled, opacity);
+        let Mask {
+            components,
+            invert,
+            refine,
+        } = mask;
+        mark_off!(seen, "local.mask", Mask::default(), invert, refine);
+        for c in components {
+            let Component {
+                shape,
+                mode,
+                invert,
+                enabled,
+            } = c;
+            mark_off!(
+                seen,
+                "local.mask.component",
+                Component::default(),
+                invert,
+                enabled
+            );
+            for m in Mode::ALL {
+                seen.mark(format!("mode {m:?}"), *mode == m);
+            }
+            let kind = match shape {
+                Shape::Linear { .. } => "linear",
+                Shape::Radial { .. } => "radial",
+                Shape::Brush { .. } => "brush",
+                Shape::Subject {} => "subject",
+                Shape::Luminance { .. } => "luminance",
+                Shape::Color { .. } => "color",
+                // Rasters read as Subject's is, not drawn.
+                Shape::Background {}
+                | Shape::Sky { .. }
+                | Shape::Landscape { .. }
+                | Shape::Object { .. }
+                | Shape::Part { .. } => "a raster as Subject's",
+                // Counted as nothing.
+                Shape::Unknown => "unknown",
+            };
+            for k in ["linear", "radial", "brush", "subject", "luminance", "color"] {
+                seen.mark(format!("shape {k}"), kind == k);
+            }
+        }
+        let Look {
+            light,
+            curves,
+            mixer,
+            color,
+            grading,
+            tint,
+            white_balance,
+            detail,
+        } = look;
+        light_fields(seen, "local.light", light, false);
+        curves_fields(seen, "local.curves", curves);
+        mixer_fields(seen, "local.mixer", mixer);
+        color_fields(seen, "local.color", color);
+        grading_fields(seen, "local.grading", grading);
+        tint_fields(seen, "local.tint", tint);
+        let white = match white_balance {
+            LocalWhite::Absolute { .. } => "absolute",
+            LocalWhite::Relative { .. } => "relative",
+            // Kept for when it goes on again: off at the render
+            // (`LocalWhite::acting`).
+            LocalWhite::Kept { .. } | LocalWhite::KeptRelative { .. } | LocalWhite::Off => "off",
+        };
+        for k in ["absolute", "relative"] {
+            seen.mark(format!("local white {k}"), white == k);
+        }
+        let Detail {
+            enabled,
+            texture,
+            clarity,
+            structure,
+            dehaze,
+            sharpen,
+        } = detail;
+        mark_off!(
+            seen,
+            "local.detail",
+            Detail::default(),
+            enabled,
+            texture,
+            clarity,
+            structure,
+            dehaze,
+            sharpen
+        );
+    }
+
+    fn light_fields(seen: &mut Moved, prefix: &str, light: &Light, global: bool) {
+        let Light {
+            enabled,
+            exposure,
+            tone,
+            baseline,
+        } = light;
+        mark_off!(seen, prefix, Light::default(), enabled, exposure);
+        // A mask's look keeps no zero of its own: the edit's is the
+        // one read (`Edit::set_look`, `Source::baseline`).
+        if global {
+            mark_off!(seen, prefix, Light::default(), baseline);
+        }
+        let Tone {
+            contrast,
+            highlights,
+            midtones,
+            shadows,
+            whites,
+            blacks,
+        } = tone;
+        mark_off!(
+            seen,
+            format!("{prefix}.tone"),
+            Tone::default(),
+            contrast,
+            highlights,
+            midtones,
+            shadows,
+            whites,
+            blacks
+        );
+    }
+
+    fn curves_fields(seen: &mut Moved, prefix: &str, curves: &greycard_edit::Curves) {
+        let greycard_edit::Curves {
+            enabled,
+            parametric,
+            rgb,
+            red,
+            green,
+            blue,
+            red_green,
+            blue_yellow,
+        } = curves;
+        mark_off!(
+            seen,
+            prefix,
+            greycard_edit::Curves::default(),
+            enabled,
+            rgb,
+            red,
+            green,
+            blue,
+            red_green,
+            blue_yellow
+        );
+        let Parametric {
+            highlights,
+            lights,
+            darks,
+            shadows,
+            splits,
+        } = parametric;
+        mark_off!(
+            seen,
+            format!("{prefix}.parametric"),
+            Parametric::default(),
+            highlights,
+            lights,
+            darks,
+            shadows,
+            splits
+        );
+    }
+
+    fn mixer_fields(seen: &mut Moved, prefix: &str, mixer: &Mixer) {
+        let Mixer {
+            enabled,
+            hue,
+            saturation,
+            luminance,
+        } = mixer;
+        mark_off!(
+            seen,
+            prefix,
+            Mixer::default(),
+            enabled,
+            hue,
+            saturation,
+            luminance
+        );
+    }
+
+    fn color_fields(seen: &mut Moved, prefix: &str, color: &Color) {
+        let Color {
+            enabled,
+            saturation,
+            vibrance,
+        } = color;
+        mark_off!(
+            seen,
+            prefix,
+            Color::default(),
+            enabled,
+            saturation,
+            vibrance
+        );
+    }
+
+    fn grading_fields(seen: &mut Moved, prefix: &str, grading: &greycard_edit::Grading) {
+        let greycard_edit::Grading {
+            enabled,
+            shadows,
+            midtones,
+            highlights,
+            balance,
+        } = grading;
+        mark_off!(
+            seen,
+            prefix,
+            greycard_edit::Grading::default(),
+            enabled,
+            balance
+        );
+        for (name, wheel) in [
+            ("shadows", shadows),
+            ("midtones", midtones),
+            ("highlights", highlights),
+        ] {
+            let Wheel { hue, saturation } = wheel;
+            mark_off!(
+                seen,
+                format!("{prefix}.{name}"),
+                Wheel::default(),
+                hue,
+                saturation
+            );
+        }
+    }
+
+    fn tint_fields(seen: &mut Moved, prefix: &str, tint: &Tint) {
+        let Tint {
+            enabled,
+            hue,
+            amount,
+        } = tint;
+        mark_off!(seen, prefix, Tint::default(), enabled, hue, amount);
+    }
+}
+
+/// The sweep moves every field it names (`case_fields`) off its
+/// default in some edit of the default run: no part of an edit that
+/// reaches the finish can be left at its default unseen, as a mask's
+/// Opacity, the output sharpen, and the profile's tone curve were.
+/// The CPU's side of the draw alone, so it needs no GPU.
+#[test]
+fn the_sweep_names_every_field() {
+    let image = parity_frame();
+    let aspect = image.height as f32 / image.width as f32;
+    let seed = 0x6772_6579;
+    let pool = raster_pool(seed, aspect);
+    let tables = look_tables();
+    let tones = profile_tones();
+    let mut seen = Moved::default();
+    for k in 0..400 {
+        case_fields(
+            &random_case(seed, k, 0, aspect, &pool, &tables, &tones),
+            &mut seen,
+        );
+    }
+    let never: Vec<&String> = seen
+        .0
+        .iter()
+        .filter(|(_, m)| !**m)
+        .map(|(n, _)| n)
+        .collect();
+    assert!(never.is_empty(), "never moved over 400 edits: {never:?}");
+    // And a part left out leaves its fields alone: what the parts'
+    // replay of a failing edit leans on.
+    let mut quiet = Moved::default();
+    let skip = part("opacity") | part("output sharpen") | part("profile curve");
+    for k in 0..100 {
+        case_fields(
+            &random_case(seed, k, skip, aspect, &pool, &tables, &tones),
+            &mut quiet,
+        );
+    }
+    for name in ["local.opacity", "output sharpen.amount", "profile curve"] {
+        assert_eq!(
+            quiet.0.get(name),
+            Some(&false),
+            "{name} with its part left out"
+        );
+    }
 }
 
 /// A grey picture whose left half is a fine checker and whose right
