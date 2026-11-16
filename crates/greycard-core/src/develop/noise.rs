@@ -183,7 +183,7 @@ pub fn estimate_noise(
             r * r * scale
         })
     };
-    Ok(fit_bins(rows, Line::Counts))
+    Ok(fit_bins(rows, Line::Mosaic))
 }
 
 /// The noise of a developed picture, on the denoiser's luma and two
@@ -780,7 +780,8 @@ fn block_rows(
 /// How [`fit_bins`] draws its line through the bins' quiet variances.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Line {
-    /// Least squares weighted by each bin's blocks: a mosaic's.
+    /// Least squares weighted by each bin's blocks: a picture's first
+    /// pass, before its quiet blocks are sorted from its smooth ones.
     Counts,
     /// Weighted by each bin's blocks over the square of its variance,
     /// since a variance read from blocks scatters in proportion to
@@ -791,6 +792,26 @@ enum Line {
     /// the grain; weighted by its blocks alone, one such bin tilts the
     /// line until it reads texture at every level.
     Relative,
+    /// A mosaic's ([`estimate_noise`]): weighted by each bin's blocks
+    /// over its variance, the first power where [`Line::Relative`]
+    /// takes the second, fitted again past the bins of texture as that
+    /// one is, and then again without the bins whose level is under
+    /// the line's own sigma there, where the clamp at black has cut the
+    /// noise short.
+    ///
+    /// Weighted by blocks alone, a band of levels that is texture from
+    /// top to bottom (a mesh, a hedge) tilted the line until the denoise
+    /// smoothed the whole frame. Weighted by blocks over variance
+    /// squared, every block counts the same in relative error, so the
+    /// shadows, where a frame's blocks crowd and where the black's own
+    /// handling makes them quieter than the line, drew it: a panorama's
+    /// red read half its grain, and a crushed black background a third.
+    /// At the first power a bin's say grows with its level, between the
+    /// two, and the line holds the midtones the denoise and the dual
+    /// demosaic's threshold read it at. Chosen against frames with
+    /// known noise added (high ISO, mild, clipped, a night frame) and
+    /// 89 frames from a dozen bodies.
+    Mosaic,
 }
 
 /// A bin whose quiet variance is past this many times the line is
@@ -844,6 +865,7 @@ fn fit_bins(rows: BlockRows, line: Line) -> NoiseEstimate {
         let (a, b) = match line {
             Line::Counts => weighted_line(&points),
             Line::Relative => relative_line(&points),
+            Line::Mosaic => mosaic_line(&points),
         };
         model.a[c] = a as f32;
         model.b[c] = b as f32;
@@ -890,16 +912,49 @@ fn weighted_line(points: &[(f64, f64, f64)]) -> (f64, f64) {
     (a, b)
 }
 
-/// [`Line::Relative`]'s line through `points`, each (level, variance,
-/// blocks): weighted first by the blocks over the bin's own variance
-/// squared, then, a few times over or until the bins kept stop
-/// changing, by the blocks over the line's, without the bins past
-/// [`TEXTURE_BIN`] times the line or under it over [`QUIET_FLOOR`]:
-/// crushed or clipped shadows, which relative error would let hold
-/// the line's foot down. The weights are scaled to a mean of 1, which
-/// moves no line, so the test for a line through one level reads as
-/// it does weighted by blocks.
+/// [`Line::Relative`]'s line through `points`: [`line_by`] at the
+/// second power, the variance squared.
 fn relative_line(points: &[(f64, f64, f64)]) -> (f64, f64) {
+    line_by(points, 2)
+}
+
+/// [`Line::Mosaic`]'s line through `points`, each (level, variance,
+/// blocks): [`line_by`] at the first power, then again, a few times
+/// over or until the bins kept stop changing, without the bins whose
+/// level is under the line's sigma there (each round read against all
+/// the bins). Their noise reaches black, where the levels are clamped
+/// at zero, and they read quieter than it, which tilts the line up past
+/// them; in a night frame, whose every level is a few sigmas from
+/// black, by half again.
+fn mosaic_line(points: &[(f64, f64, f64)]) -> (f64, f64) {
+    let (mut a, mut b) = line_by(points, 1);
+    let mut kept = points.to_vec();
+    for _ in 0..3 {
+        let clear: Vec<_> = points
+            .iter()
+            .copied()
+            .filter(|&(x, _, _)| x * x >= a * x + b)
+            .collect();
+        if clear.len() < 2 || clear == kept {
+            break;
+        }
+        (a, b) = line_by(&clear, 1);
+        kept = clear;
+    }
+    (a, b)
+}
+
+/// The line through `points`, each (level, variance, blocks), weighted
+/// by the blocks over the variance to `power`: first by the bin's own
+/// variance, a bin far under the others counted as no quieter than
+/// [`START_FLOOR`] under their median, then by the line's, a few times
+/// over or until the bins kept stop changing, without the bins past
+/// [`TEXTURE_BIN`] times the line or under it over [`QUIET_FLOOR`]:
+/// crushed or clipped shadows, which relative error would let hold the
+/// line's foot down. The weights are scaled to a mean of 1, which moves
+/// no line, so the test for a line through one level reads as it does
+/// weighted by blocks.
+fn line_by(points: &[(f64, f64, f64)], power: i32) -> (f64, f64) {
     const TINY: f64 = 1e-30;
     let weigh = |mut p: Vec<(f64, f64, f64)>| {
         let mean = p.iter().map(|q| q.2).sum::<f64>() / p.len().max(1) as f64;
@@ -919,7 +974,7 @@ fn relative_line(points: &[(f64, f64, f64)]) -> (f64, f64) {
     let first = weigh(
         points
             .iter()
-            .map(|&(x, y, n)| (x, y, n / y.max(low).powi(2)))
+            .map(|&(x, y, n)| (x, y, n / y.max(low).powi(power)))
             .collect(),
     );
     let (mut a, mut b) = weighted_line(&first);
@@ -937,7 +992,7 @@ fn relative_line(points: &[(f64, f64, f64)]) -> (f64, f64) {
             .iter()
             .zip(&keep)
             .filter(|(_, k)| **k)
-            .map(|(&(x, y, n), _)| (x, y, n / at(x).powi(2)))
+            .map(|(&(x, y, n), _)| (x, y, n / at(x).powi(power)))
             .collect();
         (a, b) = weighted_line(&weigh(kept));
         was = keep;
@@ -1066,6 +1121,139 @@ pub(crate) mod tests {
                 (got / want - 1.0).abs() < 0.25,
                 "channel {c}: sigma {got} vs {want}; {est:?}"
             );
+        }
+    }
+
+    /// A ramp with noise, and a band of its levels texture from top to
+    /// bottom (a mesh, a hedge, a tiled wall), every block of those bins
+    /// texture, so their quiet quarter is texture too; the estimate's
+    /// worst error, signed, over the channels at `levels`.
+    fn textured_band_error(band: (f32, f32), seed: u64, levels: &[f32]) -> f32 {
+        let (w, h) = (768, 384);
+        let pattern = CfaPattern::rggb();
+        let truth = NoiseModel {
+            a: [1e-4; 3],
+            b: [1e-6; 3],
+        };
+        let textured: Vec<f32> = ramp(w, h)
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| {
+                let (x, y) = (i % w, i / w);
+                if (band.0..band.1).contains(&v) {
+                    v * (1.0 + 0.25 * (((x / 3) + (y / 3)) % 2) as f32)
+                } else {
+                    v
+                }
+            })
+            .collect();
+        let cfa = noisy(&textured, &pattern, w, &truth, seed);
+        let est = estimate_noise(&cfa, w, h, &pattern).unwrap();
+        worst_error(&est.model, &truth, levels)
+    }
+
+    /// The signed error of `model` against `truth` farthest from zero
+    /// over the channels and `levels`.
+    fn worst_error(model: &NoiseModel, truth: &NoiseModel, levels: &[f32]) -> f32 {
+        let mut worst = 0.0f32;
+        for c in 0..3 {
+            for &level in levels {
+                let e = model.sigma(c, level) / truth.sigma(c, level) - 1.0;
+                if e.abs() > worst.abs() {
+                    worst = e;
+                }
+            }
+        }
+        worst
+    }
+
+    /// The line goes past bins of texture and through the flat ones,
+    /// rather than being tilted up by them in proportion to their
+    /// blocks: weighted by blocks alone, it read the noise at 0.1
+    /// several times over, and the denoise at its lowest strength
+    /// smoothed such a frame as if it were stops noisier.
+    #[test]
+    fn bins_of_texture_do_not_tilt_the_line() {
+        for seed in [13, 1, 7] {
+            let e = textured_band_error((0.25, 0.6), seed, &[0.05, 0.1, 0.7]);
+            assert!(e.abs() < 0.15, "seed {seed}: {e:+.3}");
+        }
+    }
+
+    /// A frame most of whose blocks are a black background under a
+    /// fiftieth of white, quieter than its grain (a twentieth of the
+    /// variance in the deepest of them, a quarter above), as a frame
+    /// with crushed blacks reads: its deep bins hold most of the
+    /// blocks, and weighted by them over their variance squared they
+    /// drew the line, every bin above read as texture, and the red came
+    /// out at a third of its grain. Weighted by the first power, the
+    /// levels above them hold the line, and it does not read short.
+    /// A guard against the relative line: the line by blocks alone
+    /// passes it too.
+    #[test]
+    fn a_dense_black_background_does_not_draw_the_line() {
+        let (w, h) = (1024, 512);
+        let pattern = CfaPattern::rggb();
+        let truth = NoiseModel {
+            a: [2.4e-5; 3],
+            b: [1e-8; 3],
+        };
+        let split = w * 6 / 10;
+        for seed in [29, 1, 7] {
+            let mut g = Gauss(seed);
+            let cfa: Vec<f32> = (0..w * h)
+                .map(|i| {
+                    let (x, y) = (i % w, i / w);
+                    let c = pattern.color_at(y, x).rgb_index().unwrap();
+                    if x < split {
+                        // Levels packed toward black, the deepest the
+                        // quietest.
+                        let t = (y * split + x) as f32 / (h * split) as f32;
+                        let v = 0.0003 + 0.02 * t * t * t;
+                        let quiet = if v < 0.003 { 0.22 } else { 0.5 };
+                        v + g.next() * quiet * truth.sigma(c, v)
+                    } else {
+                        let v = 0.02 + 0.6 * (x - split) as f32 / (w - split) as f32;
+                        v + g.next() * truth.sigma(c, v)
+                    }
+                })
+                .collect();
+            let est = estimate_noise(&cfa, w, h, &pattern).unwrap();
+            let e = worst_error(&est.model, &truth, &[0.1, 0.18, 0.5]);
+            assert!(e.abs() < 0.1, "seed {seed}: {e:+.3}; {est:?}");
+        }
+    }
+
+    /// A night frame: every level under a sixtieth of white, read noise
+    /// the most of its grain, and the levels clamped at black as the
+    /// develop clamps them. The bins whose noise reaches black read
+    /// short and tilted the line up past them, until it read a fifth
+    /// short at the frame's own levels; left out, the line holds them.
+    #[test]
+    fn a_night_frame_reads_its_own_levels() {
+        let (w, h) = (768, 512);
+        let pattern = CfaPattern::rggb();
+        for (a, b) in [(1e-4, 1e-5), (4e-4, 4e-6)] {
+            let truth = NoiseModel {
+                a: [a; 3],
+                b: [b; 3],
+            };
+            for seed in [3, 11] {
+                let mut g = Gauss(seed);
+                let cfa: Vec<f32> = (0..w * h)
+                    .map(|i| {
+                        let (x, y) = (i % w, i / w);
+                        let c = pattern.color_at(y, x).rgb_index().unwrap();
+                        // Mostly near black, as a night sky is.
+                        let t = (x as f32 / w as f32).powi(2);
+                        let v = 0.0005 + 0.0155 * t;
+                        (v + g.next() * truth.sigma(c, v)).max(0.0)
+                    })
+                    .collect();
+                let est = estimate_noise(&cfa, w, h, &pattern).unwrap();
+                let e = worst_error(&est.model, &truth, &[0.004, 0.008, 0.012]);
+                assert!(e.abs() < 0.1, "a {a}, b {b}, seed {seed}: {e:+.3}; {est:?}");
+            }
         }
     }
 

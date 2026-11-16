@@ -2662,8 +2662,7 @@ impl Ai {
 
     /// The patch's fill read from its slot on disk into memory, if it
     /// is there as the patch is now and its print is `print`'s within
-    /// [`PRINT_TOLERANCE`]; else from its slot at the version before,
-    /// once.
+    /// [`PRINT_TOLERANCE`].
     fn fill_from_disk(
         &mut self,
         patch: &Patch,
@@ -2675,11 +2674,13 @@ impl Ai {
         let Some(path) = self.fill_path(patch, region, size, window) else {
             return false;
         };
+        if let Some(root) = path.parent() {
+            sweep_stale_fills(root);
+        }
         let dims = (region.width, region.height);
         let read = read_slot(&path, size, window, dims, |stored| {
             prints_agree(stored, print, PRINT_TOLERANCE, Compare::Every)
-        })
-        .or_else(|| self.fill_from_hashed_slot(patch, region, size, window, print, &path));
+        });
         let Some((engine, stored, data)) = read else {
             return false;
         };
@@ -2694,33 +2695,6 @@ impl Ai {
             (patch.clone(), window, stored, engine, data),
         );
         true
-    }
-
-    /// The patch's fill from its slot at [`FILL_VERSION_HASHED`], named
-    /// with `print` hashed in, kept again in the slot `path` with the
-    /// print, and the old file let go once it is: a machine whose base
-    /// did not move keeps its fills across the change of version.
-    fn fill_from_hashed_slot(
-        &self,
-        patch: &Patch,
-        region: &Region,
-        size: (usize, usize),
-        window: Window,
-        print: &[[u16; 3]],
-        path: &Path,
-    ) -> Option<(Engine, WindowPrint, Vec<f32>)> {
-        let old = self.fill_path_hashed(patch, region, size, window, print)?;
-        let dims = (region.width, region.height);
-        let (engine, _, data) = read_fill(&old, FILL_VERSION_HASHED, size, window, dims, |_| true)?;
-        if write_slot(path, engine, size, window, dims, print, &data) {
-            // Read meanwhile by another run, or held open on Windows: left.
-            let _ = std::fs::remove_file(&old);
-        }
-        tracing::info!(
-            "fill {}: kept again from the fill cache's last version",
-            patch.name()
-        );
-        Some((engine, print.to_vec(), data))
     }
 
     /// Where the fills on disk live: beside the made rasters.
@@ -2762,29 +2736,6 @@ impl Ai {
             region,
             size,
             window,
-            None,
-        ))
-    }
-
-    /// [`Ai::fill_path`] as it was at [`FILL_VERSION_HASHED`], with the
-    /// window's print hashed into the name.
-    fn fill_path_hashed(
-        &self,
-        patch: &Patch,
-        region: &Region,
-        size: (usize, usize),
-        window: Window,
-        print: &[[u16; 3]],
-    ) -> Option<PathBuf> {
-        let file = self.file.as_ref()?;
-        Some(fill_slot(
-            &self.fills_root()?,
-            file,
-            patch,
-            region,
-            size,
-            window,
-            Some(print_hash(print)),
         ))
     }
 
@@ -6182,17 +6133,105 @@ fn evict_other_bases(path: &Path) {
 /// kept in the fill ([`regrain`]), so a change to how it is measured or
 /// drawn counts: 4, the surround's line drawn to its bins' relative
 /// error, without the bins of texture; 5, the window's print kept in
-/// the file and compared, no longer hashed into its name.
-const FILL_VERSION: u8 = 5;
+/// the file and compared, no longer hashed into its name; 6, the
+/// mosaic's noise line drawn past its bins of texture, so a frame
+/// whose old line read its grain several times over is denoised less,
+/// and a fill made on the smoother base would sit smooth in a grainier
+/// surround.
+const FILL_VERSION: u8 = 6;
 
-/// The version before the print was kept in the file: its slot is named
-/// with the print hashed in, and its file holds none. Read once, where
-/// a fill at [`FILL_VERSION`] is not, and kept again at it
-/// ([`Ai::fill_from_hashed_slot`]).
+/// The version before the print was kept in the file, whose file holds
+/// none: what [`read_fill`] and [`write_fill`] tell the two layouts
+/// apart by. Its slots are not read any more: their fills were made on
+/// a base denoised by the old noise line.
 const FILL_VERSION_HASHED: u8 = 4;
 
 /// The first bytes of a fill kept on disk.
 const FILL_MAGIC: &[u8; 6] = b"GCFILL";
+
+/// The stamp a fills' folder keeps once [`sweep_fills_folder`] has
+/// gone over it at [`FILL_VERSION`].
+fn sweep_stamp(root: &Path) -> PathBuf {
+    root.join(format!("fills-swept-{FILL_VERSION}"))
+}
+
+/// The fills kept in `root` at a version older than [`FILL_VERSION`]
+/// let go, once a run for each folder ([`sweep_fills_folder`]).
+fn sweep_stale_fills(root: &Path) {
+    static SWEPT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
+        std::sync::OnceLock::new();
+    let first = SWEPT
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(root.to_path_buf());
+    if first {
+        sweep_fills_folder(root);
+    }
+}
+
+/// The fills kept in `root` at a version older than [`FILL_VERSION`]
+/// let go: nothing reads them again, and nothing else deletes them.
+/// Only a `.fill` file that opens with [`FILL_MAGIC`]: the folder holds
+/// the masks' rasters too, and a file of anyone else's is left alone; a
+/// newer build's fills stay for it. Once for the folder: a sweep that
+/// went over every entry and let go of every stale fill leaves
+/// [`sweep_stamp`], and a folder with the stamp is not read again. A
+/// stamp that could not be written, or a fill held open, means the next
+/// run sweeps again.
+fn sweep_fills_folder(root: &Path) {
+    let stamp = sweep_stamp(root);
+    if stamp.exists() {
+        return;
+    }
+    let Ok(dir) = std::fs::read_dir(root) else {
+        return;
+    };
+    let (mut gone, mut whole) = (0, true);
+    for entry in dir {
+        let Ok(entry) = entry else {
+            whole = false;
+            continue;
+        };
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("fills-swept-") && path != stamp {
+            // A stamp of another version's sweep.
+            let _ = std::fs::remove_file(&path);
+        } else if name.ends_with(".fill")
+            && entry.file_type().is_ok_and(|t| t.is_file())
+            && stale_fill(&path)
+        {
+            if std::fs::remove_file(&path).is_ok() {
+                gone += 1;
+            } else {
+                whole = false;
+            }
+        }
+    }
+    if gone > 0 {
+        tracing::info!(
+            "fill cache: {gone} fills of an older version let go in {}",
+            root.display()
+        );
+    }
+    if whole {
+        let _ = std::fs::write(&stamp, b"");
+    }
+}
+
+/// Whether `path` opens as a fill of ours at a version older than
+/// [`FILL_VERSION`].
+fn stale_fill(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; FILL_MAGIC.len() + 1];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok()
+        && head[..FILL_MAGIC.len()] == FILL_MAGIC[..]
+        && head[FILL_MAGIC.len()] < FILL_VERSION
+}
 
 /// A fill kept on disk's header: the magic, the version and engine
 /// bytes, and [`fill_numbers`] as u32s.
@@ -6326,13 +6365,6 @@ pub(crate) fn fill_print(
 ) -> WindowPrint {
     let (window, _) = window_for(region, width, height);
     reduced_print(image, region, window, factor)
-}
-
-/// A print hashed, as the slots at [`FILL_VERSION_HASHED`] were named.
-fn print_hash(print: &[[u16; 3]]) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    print.to_vec().hash(&mut h);
-    h.finish()
 }
 
 /// A coarse print of the picture a fill is made from: the means of the
@@ -6629,9 +6661,7 @@ fn read_fill(
 
 /// Where a fill lives on disk under `root`: named by a hash of the
 /// file, the patch as [`same_fill`] compares it, its seed, the
-/// picture's size, the region, the window, and both engines' models;
-/// at [`FILL_VERSION_HASHED`], `print` hashed in too.
-#[allow(clippy::too_many_arguments)]
+/// picture's size, the region, the window, and both engines' models.
 fn fill_slot(
     root: &Path,
     file: &Path,
@@ -6639,7 +6669,6 @@ fn fill_slot(
     region: &Region,
     size: (usize, usize),
     window: Window,
-    print: Option<u64>,
 ) -> PathBuf {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     file.hash(&mut h);
@@ -6668,9 +6697,6 @@ fn fill_slot(
     greycard_ai::FILL.id.hash(&mut h);
     REMOVE.id.hash(&mut h);
     REMOVE_FAST.id.hash(&mut h);
-    if let Some(print) = print {
-        print.hash(&mut h);
-    }
     root.join(format!("{:016x}.fill", h.finish()))
 }
 
@@ -6703,15 +6729,7 @@ impl FillReader {
         }
         let full_region = patch.region(full.0, full.1)?;
         let (window, _) = window_for(&full_region, full.0, full.1);
-        let path = fill_slot(
-            &self.root,
-            &self.file,
-            patch,
-            &full_region,
-            full,
-            window,
-            None,
-        );
+        let path = fill_slot(&self.root, &self.file, patch, &full_region, full, window);
         let print = reduced_print(image, &full_region, window, factor);
         let (fw, fh) = (full_region.width, full_region.height);
         let (_, _, data) = read_slot(&path, full, window, (fw, fh), |stored| {
@@ -7201,7 +7219,7 @@ mod tests {
         let size = (640, 480);
         let region = patch.region(size.0, size.1).unwrap();
         let (window, _) = window_for(&region, size.0, size.1);
-        let slot = fill_slot(root, file, &patch, &region, size, window, None);
+        let slot = fill_slot(root, file, &patch, &region, size, window);
         assert_eq!(slot, old_slot(root, file, &patch, &region, size, window));
         // The print hashes the patch's JSON, which is as it was.
         let json = serde_json::to_string(&patch).unwrap();
@@ -7216,12 +7234,12 @@ mod tests {
         let grown_region = grown.region(size.0, size.1).unwrap();
         let (grown_window, _) = window_for(&grown_region, size.0, size.1);
         assert_ne!(
-            fill_slot(root, file, &grown, &grown_region, size, grown_window, None),
-            fill_slot(root, file, &grown, &region, size, window, None),
+            fill_slot(root, file, &grown, &grown_region, size, grown_window),
+            fill_slot(root, file, &grown, &region, size, window),
             "the window grew"
         );
         assert_ne!(
-            fill_slot(root, file, &grown, &region, size, window, None),
+            fill_slot(root, file, &grown, &region, size, window),
             slot,
             "the strokes count even in the same window"
         );
@@ -8077,6 +8095,21 @@ mod tests {
         );
         ai.forget(Some(file.clone()));
         assert!(!ai.fill_kept(&patch, &region, &image));
+        // And at the version just before, with its print: a fill made
+        // on a base the old noise line denoised.
+        let print = window_print(&image, &region, window);
+        write_fill(
+            &path,
+            FILL_VERSION - 1,
+            Engine::Remove,
+            size,
+            window,
+            dims,
+            &print,
+            &kept,
+        );
+        ai.forget(Some(file.clone()));
+        assert!(!ai.fill_kept(&patch, &region, &image));
 
         // A failure is not kept on disk.
         ai.remember_failure(&varied, window, "refused".into());
@@ -8214,55 +8247,83 @@ mod tests {
         ));
     }
 
-    /// A fill kept at the version before, under its print hashed into
-    /// the name, is read once, kept again at this version under the new
-    /// name, and its old slot let go.
+    /// The sweep lets go of a fill of ours at an older version and of
+    /// nothing else: not a fill at this version or a newer build's, not
+    /// a mask's raster beside them, not a `.fill` of anyone else's.
     #[test]
-    fn a_fill_of_the_version_before_is_kept_again_once() {
-        let dir = crate::testing::scratch_dir("fill-hashed");
-        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
-        ai.providers = vec![Provider::Cpu];
-        let file = PathBuf::from("open.CR3");
-        ai.forget(Some(file.clone()));
-        let (image, patch, region) = print_case();
-        let (window, _) = ai.window_of(&patch, &region, &image);
-        let size = (image.width, image.height);
-        let dims = (region.width, region.height);
-        let print = window_print(&image, &region, window);
-        let old = ai
-            .fill_path_hashed(&patch, &region, size, window, &print)
-            .unwrap();
-        let new = ai.fill_path(&patch, &region, size, window).unwrap();
-        assert_ne!(old, new);
-        let data: Vec<f32> = (0..dims.0 * dims.1 * 3)
-            .map(|i| half::f16::from_f32(i as f32 * 1e-4).to_f32())
-            .collect();
-        write_fill(
-            &old,
-            FILL_VERSION_HASHED,
-            Engine::Remove,
-            size,
-            window,
-            dims,
-            &[],
-            &data,
-        );
-        // Another picture does not find it under its own print.
-        assert!(!ai.fill_kept(&patch, &region, &scaled(&image, 1.5)));
-        assert!(old.is_file());
-        // This one does, and keeps it again.
-        assert!(ai.fill_kept(&patch, &region, &image));
-        let first = slot_files(&new)[0].clone();
-        assert!(!old.exists() && first.is_file());
-        let (engine, stored, read) =
-            read_fill(&first, FILL_VERSION, size, window, dims, |_| true).unwrap();
-        assert_eq!((engine, &stored, &read), (Engine::Remove, &print, &data));
-        ai.forget(Some(file));
-        match ai.fill(&patch, &region, &image) {
-            Ok((served, engine)) => assert_eq!((served, engine), (data, Engine::Remove)),
-            Err(e) => panic!("{e:?}"),
-        }
+    fn the_sweep_lets_go_of_old_fills_alone() {
+        let dir = crate::testing::scratch_dir("fill-sweep");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = sweep_test_fill(&dir, "a-0.fill", FILL_VERSION - 1);
+        let older = sweep_test_fill(&dir, "b-0.fill", FILL_VERSION_HASHED);
+        let current = sweep_test_fill(&dir, "c-0.fill", FILL_VERSION);
+        let newer = sweep_test_fill(&dir, "g-0.fill", FILL_VERSION + 1);
+        let raster = dir.join("d.png");
+        std::fs::write(&raster, b"GCFILL\x01 not a fill").unwrap();
+        let foreign = dir.join("e.fill");
+        std::fs::write(&foreign, b"someone else's").unwrap();
+        sweep_fills_folder(&dir);
+        assert!(!old.exists() && !older.exists());
+        assert!(current.is_file() && newer.is_file());
+        assert!(raster.is_file() && foreign.is_file());
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A sweep leaves its stamp, and a folder with the stamp is not
+    /// swept again, in this run or the next; the stamp of an older
+    /// version's sweep goes.
+    #[test]
+    fn the_sweep_runs_once_for_a_folder() {
+        let dir = crate::testing::scratch_dir("fill-sweep-once");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old_stamp = dir.join(format!("fills-swept-{}", FILL_VERSION - 1));
+        std::fs::write(&old_stamp, b"").unwrap();
+        let old = sweep_test_fill(&dir, "a-0.fill", FILL_VERSION - 1);
+        sweep_fills_folder(&dir);
+        assert!(!old.exists() && !old_stamp.exists());
+        assert!(sweep_stamp(&dir).is_file());
+        let later = sweep_test_fill(&dir, "b-0.fill", FILL_VERSION - 1);
+        sweep_fills_folder(&dir);
+        assert!(later.is_file());
+        // Without the stamp, as when it could not be written, the next
+        // sweep goes over the folder again.
+        std::fs::remove_file(sweep_stamp(&dir)).unwrap();
+        sweep_fills_folder(&dir);
+        assert!(!later.exists());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// However many masks' rasters share the folder, the sweep reaches
+    /// every stale fill.
+    #[test]
+    fn the_sweep_reaches_past_any_number_of_rasters() {
+        let dir = crate::testing::scratch_dir("fill-sweep-rasters");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Stale fills among the rasters from first to last, whatever
+        // order the folder lists them in.
+        let mut old = Vec::new();
+        for i in 0..5000 {
+            if i % 500 == 0 {
+                old.push(sweep_test_fill(
+                    &dir,
+                    &format!("f{i}-0.fill"),
+                    FILL_VERSION - 1,
+                ));
+            }
+            std::fs::write(dir.join(format!("r{i}-0.png")), b"").unwrap();
+        }
+        sweep_fills_folder(&dir);
+        assert!(old.iter().all(|f| !f.exists()));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A fill's head at `version` in `dir`, as the sweep reads it.
+    fn sweep_test_fill(dir: &Path, name: &str, version: u8) -> PathBuf {
+        let path = dir.join(name);
+        let mut bytes = FILL_MAGIC.to_vec();
+        bytes.extend([version, 1, 0, 0]);
+        std::fs::write(&path, bytes).unwrap();
+        path
     }
 
     /// Virtual copies of one frame, a white balance each past the
@@ -8320,60 +8381,6 @@ mod tests {
         assert!(near(served(&mut ai, 3), 3));
         assert!(served(&mut ai, 0).is_none());
         assert!(near(served(&mut ai, 1), 1) && near(served(&mut ai, 2), 2));
-        crate::testing::remove_dir_retry(&dir);
-    }
-
-    /// The fill of the version before is left where it is when it
-    /// cannot be kept again: a slot that cannot be written to.
-    #[test]
-    fn the_version_before_stays_when_it_cannot_be_kept_again() {
-        let dir = crate::testing::scratch_dir("fill-hashed-unwritable");
-        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
-        ai.providers = vec![Provider::Cpu];
-        ai.forget(Some(PathBuf::from("open.CR3")));
-        let (image, patch, region) = print_case();
-        let (window, _) = ai.window_of(&patch, &region, &image);
-        let size = (image.width, image.height);
-        let dims = (region.width, region.height);
-        let print = window_print(&image, &region, window);
-        let old = ai
-            .fill_path_hashed(&patch, &region, size, window, &print)
-            .unwrap();
-        let data = vec![0.25; dims.0 * dims.1 * 3];
-        assert!(write_fill(
-            &old,
-            FILL_VERSION_HASHED,
-            Engine::Remove,
-            size,
-            window,
-            dims,
-            &[],
-            &data
-        ));
-        // Every file of the new slot a directory: no write lands.
-        let slot = ai.fill_path(&patch, &region, size, window).unwrap();
-        for f in slot_files(&slot) {
-            std::fs::create_dir_all(&f).unwrap();
-        }
-        assert!(!write_slot(
-            &slot,
-            Engine::Remove,
-            size,
-            window,
-            dims,
-            &print,
-            &data
-        ));
-        // Served all the same, from the old file, which stays.
-        assert!(ai.fill_kept(&patch, &region, &image));
-        assert!(old.is_file());
-        assert!(
-            std::fs::read_dir(old.parent().unwrap())
-                .unwrap()
-                .flatten()
-                .all(|e| !e.file_name().to_string_lossy().ends_with(".fill-part")),
-            "no part file left behind"
-        );
         crate::testing::remove_dir_retry(&dir);
     }
 

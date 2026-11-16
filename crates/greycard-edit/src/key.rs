@@ -48,7 +48,10 @@ use crate::mask::{LandscapeGroup, Shape};
 /// 4: a baseline per body (`baseline::for_body`), which the edit does
 /// not store, 2026-10-17.
 /// 5: a DNG's own warps and bad-pixel lists, 2026-11-01.
-pub const DEVELOP_RECIPE: u32 = 5;
+/// 6: the mosaic's noise line drawn past its bins of texture, which
+/// the automatic dual demosaic threshold and the hot-pixel repair
+/// read by default, 2026-11-15.
+pub const DEVELOP_RECIPE: u32 = 6;
 
 /// The capture sharpen's guide, by version: taken into the key of an
 /// edit whose sharpen reads one ([`Edit::sharpen_reads_guide`]), so

@@ -234,6 +234,9 @@ design note behind it.
   ([§674](https://github.com/jessolmstead/greycard/blob/master/docs/notes/674-an-open-dropped-by-a-develop-asked-while-it-decodes.md)).
 - `greycard rawtherapee --write` puts a new sidecar where the
   editor's setting says, no longer always beside the raw.
+- A frame full of fine texture (mesh, fabric, foliage) no longer reads
+  as noisy, which had the profiled denoise smooth it far too much
+  ([§694](https://github.com/jessolmstead/greycard/blob/master/docs/notes/694-a-mosaics-noise-line-past-texture.md)).
 - The right panel no longer stays scrolled past its last section,
   hiding the sections above, after a section gets shorter (issue 157,
   [§693](https://github.com/jessolmstead/greycard/blob/master/docs/notes/693-the-panel-keeps-to-its-sections.md)).

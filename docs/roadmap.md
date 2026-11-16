@@ -1106,6 +1106,9 @@ clears or a tester asks for it.
       rework four demosaics, the CA passes, and the denoise's
       transform. Waits on an ISO 12800 frame with true black in it;
       `examples/below_black.rs` takes the table again
+- [ ] The mosaic's noise line, what is left (§694): texture confined
+      to a band of shadows still reads high, and two X-Trans frames
+      read 10 to 20% under their grain
 - [ ] The profiled denoise's Strength reaching its wavelet stage,
       which runs at its own strength whatever the slider says, so the
       low end leaves the mottling and color noise it asks to keep;
