@@ -1072,6 +1072,19 @@ clears or a tester asks for it.
 
 #### Engine
 
+- [ ] A step's kind as a field, not its English label: the Lightroom
+      import and the reconcile read the label today, so a translated
+      label would fork state ids between machines, and history rows
+      stay English in a translated window
+- [ ] A token from a sidecar's load that its save requires: says
+      whether the sidecar was read from disk or is a default (§640
+      and §645 were this mistake), and lets a save see that the file
+      changed under it
+- [ ] One maker-note container reader: `decode/style.rs` holds three
+      TIFF readers, two BMFF walkers, and the Nikon header parsed
+      twice, so a bounds fix on untrusted bytes is made more than once
+- [ ] A sidecar keeps the fields a later build wrote (built, held on
+      a branch); with it, the note on which versions refuse which
 - [ ] The window's horizon call (`greycard_core::horizon::horizon` in
       panel/crop.rs) moved behind the engine; a core op outside
       develop, so the layering test (§540) cannot see it
