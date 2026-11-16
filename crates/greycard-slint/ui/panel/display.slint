@@ -21,38 +21,41 @@ export component ProofSection inherits Section {
     switchable: true;
     on <=> root.proofing;
     switched => { root.proof-changed(); }
-    Segmented {
-        options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
-        labels: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", @tr("File")];
-        current <=> root.proof-profile;
-        selected(p) => { root.proof-changed(); }
-    }
-    if root.proof-profile == "File": HorizontalLayout {
-        spacing: Theme.space-2;
-        Text {
-            text: root.proof-file == "" ? @tr("No profile chosen") : root.proof-file;
-            color: root.proof-file == "" ? Theme.text-muted : Theme.text-secondary;
-            font-size: Theme.font-sm;
-            vertical-alignment: center;
-            overflow: elide;
-            horizontal-stretch: 1;
+    VerticalLayout {
+        spacing: Theme.space-1;
+        Segmented {
+            options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
+            labels: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", @tr("File")];
+            current <=> root.proof-profile;
+            selected(p) => { root.proof-changed(); }
         }
-        PanelButton {
-            text: @tr("Choose...");
-            clicked => { root.choose-proof-file(); }
+        if root.proof-profile == "File": HorizontalLayout {
+            spacing: Theme.space-2;
+            Text {
+                text: root.proof-file == "" ? @tr("No profile chosen") : root.proof-file;
+                color: root.proof-file == "" ? Theme.text-muted : Theme.text-secondary;
+                font-size: Theme.font-sm;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            PanelButton {
+                text: @tr("Choose...");
+                clicked => { root.choose-proof-file(); }
+            }
         }
-    }
-    Segmented {
-        options: ["Perceptual", "Relative"];
-        labels: [@tr("Perceptual"), @tr("Relative")];
-        current <=> root.proof-intent;
-        selected(i) => { root.proof-changed(); }
-    }
-    Toggle {
-        label: @tr("Gamut warning");
-        enabled: root.proofing;
-        checked <=> root.gamut-warning;
-        toggled => { root.proof-changed(); }
+        Segmented {
+            options: ["Perceptual", "Relative"];
+            labels: [@tr("Perceptual"), @tr("Relative")];
+            current <=> root.proof-intent;
+            selected(i) => { root.proof-changed(); }
+        }
+        Toggle {
+            label: @tr("Gamut warning");
+            enabled: root.proofing;
+            checked <=> root.gamut-warning;
+            toggled => { root.proof-changed(); }
+        }
     }
 }
 
@@ -72,47 +75,51 @@ export component MonitorSection inherits Section {
     title: @tr("MONITOR");
     icon: @image-url("../icons/maximize.svg");
     collapsed <=> root.collapsed-monitor;
-    Segmented {
-        options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
-        labels: [@tr("System"), "sRGB", "Adobe RGB", "Display P3", @tr("File")];
-        current <=> root.display-profile;
-        selected(p) => { root.display-changed(); }
-    }
-    if root.display-profile == "System" && root.monitors.length > 1: Segmented {
-        options: root.monitors;
-        current <=> root.display-monitor;
-        selected(m) => { root.display-changed(); }
-    }
-    if root.display-profile == "File": HorizontalLayout {
-        spacing: Theme.space-2;
+    VerticalLayout {
+        spacing: Theme.space-1;
+        Segmented {
+            options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
+            labels: [@tr("System"), "sRGB", "Adobe RGB", "Display P3", @tr("File")];
+            current <=> root.display-profile;
+            selected(p) => { root.display-changed(); }
+        }
+        if root.display-profile == "System" && root.monitors.length > 1: Segmented {
+            options: root.monitors;
+            current <=> root.display-monitor;
+            selected(m) => { root.display-changed(); }
+        }
+        if root.display-profile == "File": HorizontalLayout {
+            spacing: Theme.space-2;
+            Text {
+                text: root.display-file == "" ? @tr("No profile chosen") : root.display-file;
+                color: root.display-file == "" ? Theme.text-muted : Theme.text-secondary;
+                font-size: Theme.font-sm;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            PanelButton {
+                text: @tr("Choose...");
+                clicked => { root.choose-display-file(); }
+            }
+        }
         Text {
-            text: root.display-file == "" ? @tr("No profile chosen") : root.display-file;
-            color: root.display-file == "" ? Theme.text-muted : Theme.text-secondary;
-            font-size: Theme.font-sm;
-            vertical-alignment: center;
-            overflow: elide;
-            horizontal-stretch: 1;
+            text: root.display-note;
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            wrap: word-wrap;
         }
-        PanelButton {
-            text: @tr("Choose...");
-            clicked => { root.choose-display-file(); }
-        }
-    }
-    Text {
-        text: root.display-note;
-        color: Theme.text-muted;
-        font-size: Theme.font-xs;
-        wrap: word-wrap;
-    }
-    HorizontalLayout {
-        spacing: Theme.space-2;
-        // Monitor section: the canvas shade row
-        Text { text: @tr("Canvas"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-        Swatches {
-            colors: root.canvas-colors;
-            ringed: true;
-            current <=> root.canvas-choice;
-            selected(i) => { root.canvas-changed(); }
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            padding-top: Theme.space-2;
+            // Monitor section: the canvas shade row
+            Text { text: @tr("Canvas"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+            Swatches {
+                colors: root.canvas-colors;
+                ringed: true;
+                current <=> root.canvas-choice;
+                selected(i) => { root.canvas-changed(); }
+            }
         }
     }
 }

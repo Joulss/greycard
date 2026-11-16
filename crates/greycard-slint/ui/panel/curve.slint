@@ -46,6 +46,7 @@ export component CurvesSection inherits Section {
     Segmented {
         options: ["Parametric", "Point"];
         labels: [@tr("Parametric"), @tr("Point")];
+        equal-width: true;
         current <=> root.curve-mode;
         selected(v) => { root.curve-mode-changed(); }
     }
