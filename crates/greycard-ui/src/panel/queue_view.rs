@@ -1431,9 +1431,9 @@ mod tests {
         teardown(s);
     }
 
-    /// The Export queue row stands under the collections in no section
-    /// of its own, so COLLECTIONS folded (a fold the settings keep)
-    /// still leaves the one way into the queue's view on screen.
+    /// The Export queue's header is a section of its own (§699), so
+    /// COLLECTIONS folded (a fold the settings keep) still leaves the
+    /// one way into the queue's view on screen.
     #[test]
     fn the_queue_row_is_there_with_collections_folded() {
         let s = setup("folded", 1);

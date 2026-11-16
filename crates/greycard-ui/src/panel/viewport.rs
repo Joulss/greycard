@@ -7085,8 +7085,8 @@ pub(crate) mod tests {
         assert_eq!(app.get_tip_text(), "Show panel");
     }
 
-    /// NAVIGATOR is one height, its header and a box the pane's width
-    /// at 3:2, with a 3:2 frame, a 16:9 one, a portrait one, and a
+    /// NAVIGATOR is one height, its header and a box the width inside
+    /// the section's box at 3:2, with a 3:2 frame, a 16:9 one, a portrait one, and a
     /// chosen frame whose picture is on its way: nothing below it
     /// moves. The frame sits centered in the box at its own shape,
     /// and a press on it navigates by where it fell on the frame, not
@@ -7128,9 +7128,10 @@ pub(crate) mod tests {
                 (held.height - held.width / 1.5).abs() < 0.5,
                 "the box at 3:2: {held:?}"
             );
+            // Inside the section's box: 8 px of padding under it.
             assert!(
                 held_at.y > section_at.y
-                    && (held_at.y + held.height - section_at.y - section.height).abs() < 0.5,
+                    && (held_at.y + held.height + 8.0 - section_at.y - section.height).abs() < 0.5,
                 "the header, then the box: {held_at:?} {held:?} in {section_at:?} {section:?}"
             );
             let (at, shown) = find("NavigatorSection::shown");
@@ -7217,8 +7218,9 @@ pub(crate) mod tests {
         let section = find("App::navigator-section").1;
         let (_, held) = find("NavigatorSection::held");
         let (_, shown) = find("NavigatorSection::shown");
+        // The section's box, less its 6 px sides.
         assert!(
-            held.width > 400.0 && (held.width - section.width).abs() < 0.5,
+            held.width > 400.0 && (held.width + 12.0 - section.width).abs() < 0.5,
             "the box the pane's width: {held:?} in {section:?}"
         );
         assert!((held.height - tallest).abs() < 0.5, "capped: {held:?}");

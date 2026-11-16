@@ -458,18 +458,17 @@ export component Section inherits VerticalLayout {
     // one child of the body that stretches. Its other children must
     // each have a bounded height.
     in property <bool> shares: false;
-    // A raised box round the body, the header above it and the body
-    // padded inside it, as the right panel's sections are. Off, the
-    // left pane's: a header over a rule, the body unpadded, so its
-    // lists keep the pane's width and their floors (§669).
-    in property <bool> boxed: true;
-    // Unboxed, the hairline along the section's top; off where a rule
-    // is drawn there already (over the pinned Navigator).
-    in property <bool> line-above: true;
+    // The gap between the body's children. The panel's sections set
+    // their own gaps between groups; the left pane's lists keep 4 px
+    // between a list and what is under it.
+    in property <length> body-spacing: 0px;
+    // Nothing in the body for now (NAVIGATOR with no frame): the
+    // header over the 1 px line, as folded, with no empty box.
+    in property <bool> empty: false;
     // The width the body gives its rows, inside its padding.
     out property <length> body-width: body.width - body.padding-left - body.padding-right;
     // The header under the pointer: all of it answers at once.
-    property <bool> lit: root.boxed ? row.has-hover : head.has-hover;
+    property <bool> lit: row.has-hover;
     function fold-clicked() {
         // A focused slider elsewhere in the panel keeps the keys, and
         // the panel keeps it in view as this section opens or folds;
@@ -488,22 +487,16 @@ export component Section inherits VerticalLayout {
             root.show-opened();
         }
     }
-    spacing: root.boxed ? 0px : 6px;
-    padding-top: root.boxed ? 0px : Theme.space-1;
-    // The header, in one look in both panes, boxed or not: chevron,
-    // icon, and title in `Theme.text`, and under the pointer the
-    // hover's fill, as a button's, not the accent, which is what is
-    // chosen. Boxed, it stays above the body as it folds away, and the
-    // whole row takes the press. Unboxed, with a hairline along the
-    // section's top, in the padding above it: a run of folded sections
-    // reads as a list of headers. Drawn outside the header's box, so it
-    // takes no room.
+    // The header, in one look in both panes: chevron, icon, and title
+    // in `Theme.text`, and under the pointer the hover's fill, as a
+    // button's, not the accent, which is what is chosen. It heads a
+    // raised box round the body and stays above it as it folds away,
+    // and the whole row takes the press.
     Rectangle {
         border-radius: Theme.radius-sm;
         background: root.lit ? Theme.hover : transparent;
         animate background { duration: Theme.quick; }
         row := TouchArea {
-            enabled: root.boxed;
             mouse-cursor: root.reorder-dragging ? MouseCursor.grabbing : MouseCursor.pointer;
             pointer-event(e) => { root.reorder-press(e, self.absolute-position.y + self.mouse-y); }
             moved => { root.reorder-motion(self.absolute-position.x + self.mouse-x,
@@ -511,16 +504,13 @@ export component Section inherits VerticalLayout {
             clicked => { root.header-clicked(); }
         }
         HorizontalLayout {
-            spacing: root.boxed ? Theme.space-3 : Theme.space-2;
-            padding-top: root.boxed ? Theme.space-2 : 0px;
-            padding-bottom: root.boxed ? Theme.space-2 : 0px;
-            padding-right: root.boxed ? Theme.space-1 : 0px;
+            spacing: Theme.space-3;
+            padding-top: Theme.space-2;
+            padding-bottom: Theme.space-2;
+            padding-right: Theme.space-1;
             Rectangle {
                 horizontal-stretch: 1;
                 HorizontalLayout {
-                    // Unboxed, a row of 20 px round the 16 px icons.
-                    padding-top: root.boxed ? 0px : Theme.space-1 / 2;
-                    padding-bottom: root.boxed ? 0px : Theme.space-1 / 2;
                     spacing: Theme.space-2;
                     alignment: start;
                     Image {
@@ -578,14 +568,6 @@ export component Section inherits VerticalLayout {
                     vertical-alignment: center;
                     height: 100%;
                 }
-                head := TouchArea {
-                    enabled: !root.boxed;
-                    mouse-cursor: root.reorder-dragging ? MouseCursor.grabbing : MouseCursor.pointer;
-                    pointer-event(e) => { root.reorder-press(e, self.absolute-position.y + self.mouse-y); }
-                    moved => { root.reorder-motion(self.absolute-position.x + self.mouse-x,
-                        self.absolute-position.y + self.mouse-y); }
-                    clicked => { root.header-clicked(); }
-                }
             }
             if root.action != "": Rectangle {
                 width: action-text.preferred-width + 2 * Theme.space-1;
@@ -615,30 +597,20 @@ export component Section inherits VerticalLayout {
                 toggled => { root.switched(); }
             }
         }
-        Rectangle {
-            y: -root.padding-top;
-            height: 1px;
-            width: 100%;
-            background: Theme.border;
-            visible: !root.boxed && root.line-above;
-        }
     }
-    if !root.boxed: Rectangle {
-        height: 1px;
-        background: Theme.border;
-    }
-    // The body, clipped to nothing when folded. Boxed, it folds down
-    // to a solid 1 px line under the header.
+    // The body, clipped to nothing when folded: it folds down to a
+    // solid 1 px line under the header.
     fold-box := Rectangle {
         width: 100%;
         clip: true;
-        property <bool> line-only: root.collapsed && self.height <= 1px;
-        background: !root.boxed ? transparent : self.line-only ? Theme.border : Theme.raised;
+        property <bool> shut-or-empty: root.collapsed || root.empty;
+        property <bool> line-only: self.shut-or-empty && self.height <= 1px;
+        background: self.line-only ? Theme.border : Theme.raised;
         border-color: Theme.border;
-        border-width: root.boxed && !self.line-only ? 1px : 0px;
-        // Boxed, never under the line it folds to.
-        property <length> least: root.boxed ? 1px : 0px;
-        property <length> full: root.collapsed ? 0px : body.preferred-height;
+        border-width: self.line-only ? 0px : 1px;
+        // Never under the line it folds to.
+        property <length> least: 1px;
+        property <length> full: self.shut-or-empty ? 0px : body.preferred-height;
         animate full { duration: root.fold-time; easing: ease-out; }
         // For the sliders' focus walk alone: closed all the way, the
         // body is put far to the left, out of every column, so comma
@@ -678,12 +650,12 @@ export component Section inherits VerticalLayout {
             changed laid => { if (self.settled && self.laid > 0) { fold-box.held = self.laid; } }
         }
         body := VerticalLayout {
-            // Boxed, 8 px above and below and 6 at the sides: the body
-            // as wide as before the box, so a button's words keep
-            // their letters.
-            padding: root.boxed ? Theme.space-2 : 0px;
-            padding-left: root.boxed ? Theme.space-2 - 2px : 0px;
-            padding-right: root.boxed ? Theme.space-2 - 2px : 0px;
+            // 8 px above and below and 6 at the sides: the body as
+            // wide as before the box, so a button's words keep their
+            // letters.
+            padding: Theme.space-2;
+            padding-left: Theme.space-2 - 2px;
+            padding-right: Theme.space-2 - 2px;
             x: parent.shut >= 1 ? -100000px : 0;
             y: 0;
             width: 100%;
@@ -691,7 +663,7 @@ export component Section inherits VerticalLayout {
             // rather than squeezing its list.
             height: !root.shares ? self.preferred-height
                 : max(parent.height, self.preferred-height, parent.folding ? parent.span : 0px);
-            spacing: root.boxed ? 0px : Theme.space-1;
+            spacing: root.body-spacing;
             opacity: (root.switchable && !root.on) || root.superseded ? 0.45 : 1;
             animate opacity { duration: Theme.quick; }
             @children
@@ -893,16 +865,18 @@ export component SectionStack inherits VerticalLayout {
 // One place in a SectionStack, holding whichever section its name is.
 // One the view does not show holds nothing and takes no room: a layout
 // lays out every child it has, shown or not, so the stack has no
-// spacing of its own and each slot on show keeps its own `gap` above
-// it instead, which the owner leaves out above the first. Draws the
-// drop's line, and in the left pane carries the gap's edge that moves
-// room between its list and the one above (`DragEdge`).
+// spacing of its own. Sections abut: a box shows where one ends, and
+// the next header's 8 px above its title are the gap. Draws the drop's
+// line, and in the left pane carries the edge that moves room between
+// its list and the one above (`DragEdge`), over the 8 px of padding at
+// the foot of the box above.
 export component SectionSlot inherits Rectangle {
     in property <int> index;
     in property <SectionDragState> drag: { index: -1, slot: -1, last: -1, revision: 0 };
-    in property <length> gap: 0px;
     in property <length> spacing: 0px;
-    in property <bool> boxed: true;
+    // The left pane's slots, which share its height: each as tall as
+    // its section's bounds, so the room goes where the stretches say.
+    in property <bool> fills: false;
     in property <float> stretch: 0;
     // The lists either side of the gap above, by their share index; no
     // edge unless both are.
@@ -915,7 +889,6 @@ export component SectionSlot inherits Rectangle {
     callback resize-evened();
     callback consider(int, length);
     out property <bool> shown: inner.preferred-height > 0;
-    property <length> top: root.shown ? root.gap : 0px;
     min-height: content.min-height;
     preferred-height: content.preferred-height;
     max-height: content.max-height;
@@ -925,37 +898,40 @@ export component SectionSlot inherits Rectangle {
         // Within the header, however tall the body under it: a tall open
         // body does not put the place past the foot of the view.
         if (root.shown) {
-            root.consider(root.index, root.absolute-position.y + root.top + min(inner.height / 2, Theme.space-4));
+            root.consider(root.index, root.absolute-position.y + min(inner.height / 2, Theme.space-4));
         }
     }
     content := VerticalLayout {
-        padding-top: root.top;
         inner := VerticalLayout {
             spacing: root.spacing;
-            alignment: root.boxed ? LayoutAlignment.start : LayoutAlignment.stretch;
+            alignment: root.fills ? LayoutAlignment.stretch : LayoutAlignment.start;
             @children
         }
     }
-    if root.drag.index < 0 && root.shown && root.top > 0 && root.resize-a >= 0 && root.resize-b >= 0: DragEdge {
-        y: 0;
+    // Over the 8 px of padding at the foot of the box above: the owner
+    // gives `resize-a` only where the slot above ends in an open list's
+    // box, so the edge never lies over a row or a header, and the
+    // header below keeps the whole of its row for its fold.
+    if root.drag.index < 0 && root.shown && root.resize-a >= 0 && root.resize-b >= 0: DragEdge {
+        y: -Theme.space-2;
         width: 100%;
-        height: root.top;
+        height: Theme.space-2;
         live: root.resize-live;
         hovering => { root.resize-hovered(); }
         started => { root.resize-started(); }
         dragged(d) => { root.resize-dragged(d); }
         evened => { root.resize-evened(); }
     }
-    // The drop's line: boxed, on the section's top edge, or under the
-    // last one's foot; unboxed, in the middle of the gap above or below.
+    // The drop's line: on the section's top edge, or under the last
+    // one's foot.
     if root.drag.index >= 0 && root.shown && root.drag.slot == root.index: Rectangle {
-        y: root.boxed ? 0px : root.top - (Theme.space-2 + 1px) / 2;
+        y: 0px;
         height: 1px;
         width: 100%;
         background: Theme.accent;
     }
     if root.drag.index >= 0 && root.shown && root.drag.slot > root.drag.last && root.drag.last == root.index: Rectangle {
-        y: root.boxed ? root.height - 1px : root.height + (Theme.space-2 - 1px) / 2;
+        y: root.height - 1px;
         height: 1px;
         width: 100%;
         background: Theme.accent;
@@ -2992,6 +2968,12 @@ export component ScrollBand inherits TouchArea {
     /// Whether the thumb fades away at rest; false keeps it drawn,
     /// as a list's bar is. A bar set to stay never fades.
     in property <bool> fades: true;
+    /// From the band's outer edge to its track and to its thumb, and
+    /// the most either may be across: a band laid over another's margin
+    /// (the left pane's) keeps them to a strip of it.
+    in property <length> track-inset: 2px;
+    in property <length> thumb-inset: 4px;
+    in property <length> most: 1000px;
     /// A drag of the thumb or a press in the track: the offset wanted,
     /// which the owner holds to its range as it holds the wheel's.
     callback scroll-to(length);
@@ -3135,8 +3117,8 @@ export component ScrollBand inherits TouchArea {
         // more each side, so it keeps to the outer edge of the band and
         // a list's padding clears it.
         Rectangle {
-            property <length> across: ScrollBars.lit + 4px;
-            property <length> edge: (root.horizontal ? parent.height : parent.width) - 2px;
+            property <length> across: min(ScrollBars.lit + 4px, root.most);
+            property <length> edge: (root.horizontal ? parent.height : parent.width) - root.track-inset;
             x: root.horizontal ? 0 : self.edge - self.across;
             y: root.horizontal ? self.edge - self.across : 0;
             width: root.horizontal ? parent.width : self.across;
@@ -3149,10 +3131,10 @@ export component ScrollBand inherits TouchArea {
             // On whole device pixels, so a 2 px thumb is crisp at a
             // fractional scale: its thickness across the band, 4 px in
             // from the outer edge, and its place and length along it.
-            property <length> thick: round((root.lit ? ScrollBars.lit : ScrollBars.rest) / 1phx) * 1phx;
+            property <length> thick: round(min(root.lit ? ScrollBars.lit : ScrollBars.rest, root.most) / 1phx) * 1phx;
             property <length> at: round(root.thumb-at / 1phx) * 1phx;
             property <length> long: round(root.thumb-len / 1phx) * 1phx;
-            property <length> edge: round(((root.horizontal ? parent.height : parent.width) - 4px) / 1phx) * 1phx;
+            property <length> edge: round(((root.horizontal ? parent.height : parent.width) - root.thumb-inset) / 1phx) * 1phx;
             animate thick { duration: 150ms; easing: ease-out; }
             x: root.horizontal ? self.at : self.edge - self.thick;
             y: root.horizontal ? self.edge - self.thick : self.at;
@@ -3200,6 +3182,15 @@ export component ScrollPane {
     // rewrapped, is shorter for a frame, and a pull then would move the
     // owner's scroll the next pane is built with.
     in property <bool> keep-in-reach: true;
+    // The width of the band down the right edge that takes the bar's
+    // presses. The content pads clear of it, unless it lays the band
+    // over a margin of its own (the left pane's, §669).
+    in property <length> band-width: ScrollBars.band;
+    // Where the bar down the right edge draws in its band, as
+    // `ScrollBand` takes them.
+    in property <length> bar-track-inset: 2px;
+    in property <length> bar-thumb-inset: 4px;
+    in property <length> bar-most: 1000px;
     property <bool> past-y: flick.content-y < -root.max-y || flick.content-y > 0px;
     property <bool> past-x: flick.content-x < -root.max-x || flick.content-x > 0px;
     changed past-y => {
@@ -3241,7 +3232,10 @@ export component ScrollPane {
     }
     ScrollBand {
         x: parent.width - self.width;
-        width: ScrollBars.band;
+        width: root.band-width;
+        track-inset: root.bar-track-inset;
+        thumb-inset: root.bar-thumb-inset;
+        most: root.bar-most;
         height: root.max-x > 0 ? parent.height - ScrollBars.band : parent.height;
         fades: false;
         // Spoken by a screen reader: a scroll bar

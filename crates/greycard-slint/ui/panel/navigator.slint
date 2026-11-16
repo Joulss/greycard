@@ -23,6 +23,7 @@ export component NavigatorSection inherits Section {
     icon: @image-url("../icons/maximize.svg");
     note: root.zoom-text;
     collapsed <=> root.collapsed-navigator;
+    empty: root.navigator.width <= 0 && !root.reserve;
     // One height, the pane's width at 3:2 but never past a 3:2 box
     // 260 px wide, whatever the frame's shape and while it is on its
     // way: a frame loading, or a portrait after a landscape, moves

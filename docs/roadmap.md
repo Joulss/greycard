@@ -1482,9 +1482,10 @@ clears or a tester asks for it.
 - [ ] A color label as its dot alone in the grid, without the cell's
       tint, by a setting (discussion 59, 2026-11-15)
 - [ ] The left pane's actions told from its rows: "+ Add a root..."
-      and "+ New collection..." read as rows, the Export queue row as
-      an afterthought; weight where it helps (discussion 59,
-      2026-11-15)
+      and "+ New collection..." read as rows; weight where it helps
+      (discussion 59, 2026-11-15)
+- [ ] One touch area for a header's reorder drag: the Export queue's
+      header carries a copy of `Section`'s (§699)
 - [ ] The filter bar folded or closed from the grid itself: today
       only Settings turns it off (2026-11-15)
 - [ ] Calibration as Lightroom's: a hue and a saturation for each of

@@ -128,6 +128,7 @@ export component CollectionsSection inherits Section {
     icon: @image-url("../icons/bookmark.svg");
     collapsed <=> root.collapsed-collections;
     shares: true;
+    body-spacing: Theme.space-1;
 
     function open-menu(c: CollectionChip, x: length, y: length) {
         root.focus-keys();

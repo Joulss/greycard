@@ -28,8 +28,11 @@ design note behind it.
 - Drag a section's title to reorder a pane, and **Reset section order**
   in Settings, Interface puts it back. Thanks to Joulss (PR 156,
   [§689](https://github.com/jessolmstead/greycard/blob/master/docs/notes/689-sections-keep-the-order-they-are-dragged-into.md)).
+- The left pane's sections sit in boxes like the right panel's, and
+  the Export queue is a header you can drag like the rest (discussion 59,
+  [§699](https://github.com/jessolmstead/greycard/blob/master/docs/notes/699-the-left-panes-sections-boxed-as-the-rights.md)).
 - The Navigator stays in sight however far the left pane's lists
-  scroll, and the lists take less room. Thanks to Joulss (PR 138,
+  scroll. Thanks to Joulss (PR 138,
   [§669](https://github.com/jessolmstead/greycard/blob/master/docs/notes/669-the-left-pane-navigator-pinned-lists-unframed.md)).
 - Quit in full screen and greycard starts in full screen
   ([§649](https://github.com/jessolmstead/greycard/blob/master/docs/notes/649-the-window-opens-full-screen-as-it-was-closed.md)).

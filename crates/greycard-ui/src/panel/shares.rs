@@ -173,10 +173,54 @@ mod tests {
         assert!((a - b).abs() <= 2.0, "{said}: {a} against {b}");
     }
 
-    /// The middle of the gap above `id`'s section, in the left pane.
+    /// The middle of the share edge above `id`'s section, in the left
+    /// pane: over the 8 px of padding at the foot of the box above.
     fn gap_above(app: &App, id: &str) -> (f32, f32) {
         let (top, _) = section(app, id);
         (100.0, top - 4.0)
+    }
+
+    /// A click anywhere in a header's row folds its section, the top
+    /// 8 px above the title too, whether the share edge above it is
+    /// live or dead: the edge lies over the box above, not the header.
+    /// And where it is live, a drag on it still moves room.
+    #[test]
+    fn a_click_at_a_headers_top_folds_it_under_a_live_or_dead_edge() {
+        for (rows, live) in [(60, true), (5, false)] {
+            let app = pane(rows, rows);
+            sized(&app, 1600.0);
+            let (x, y) = gap_above(&app, "snapshots-section");
+            for dy in [0.0, 1.0] {
+                app.window()
+                    .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                        position: slint::LogicalPosition::new(x, y + dy),
+                    });
+                tick();
+            }
+            assert_eq!(app.invoke_share_live(2, 3), live, "the edge live: {live}");
+            for dy in [1.0, 4.0, 7.0] {
+                let (top, _) = section(&app, "snapshots-section");
+                click(&app, 100.0, top + dy);
+                settle(&app);
+                assert!(
+                    app.get_collapsed_snapshots(),
+                    "SNAPSHOTS folded by a click {dy} px into its header, edge live {live}"
+                );
+                app.set_collapsed_snapshots(false);
+                settle(&app);
+                settle(&app);
+            }
+            assert!(read(&app).is_empty(), "no share moved: {:?}", read(&app));
+            if live {
+                let before = heights(&app);
+                let (x, y) = gap_above(&app, "snapshots-section");
+                drag(&app, &[(x, y), (x, y + 20.0), (x, y + 40.0)]);
+                settle(&app);
+                let after = heights(&app);
+                near(after[1], before[1] + 40.0, "PRESETS took the drag");
+                near(after[2], before[2] - 40.0, "SNAPSHOTS gave it");
+            }
+        }
     }
 
     #[test]
@@ -554,9 +598,10 @@ mod tests {
         assert!(app.invoke_share_live(0, 2), "a move asked: live again");
     }
 
-    /// The share edges lie in the gaps between the sections, never
-    /// over a section's foot: a press low on TAKE takes a snapshot,
-    /// and one low on the last folder row picks that folder.
+    /// The share edges lie over the padding at a box's foot, never over
+    /// what the box holds nor the header below: a press low on TAKE
+    /// takes a snapshot, one low on the last folder row picks that
+    /// folder, and one on the title under an edge folds its section.
     #[test]
     fn a_press_at_a_sections_foot_is_the_sections() {
         use i_slint_backend_testing::ElementHandle;
@@ -590,6 +635,177 @@ mod tests {
             click(&app, at.x + size.width / 2.0, at.y + dy);
             settle(&app);
             assert_eq!(picked.get(), 2, "the last folder {dy} px down its {size:?}");
+        }
+        let e = ElementHandle::find_by_element_type_name(&app, "Text")
+            .find(|e| e.accessible_label().as_deref() == Some("SNAPSHOTS"))
+            .expect("SNAPSHOTS in the left pane");
+        let (at, size) = (e.absolute_position(), e.size());
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        settle(&app);
+        assert!(
+            app.get_collapsed_snapshots(),
+            "SNAPSHOTS folded by its title"
+        );
+    }
+
+    /// Library's pane with FOLDERS and COLLECTIONS open, `rows` rows
+    /// each, in `order`.
+    fn library_pane(rows: usize, order: &[&str]) -> App {
+        let app = pane(rows, 0);
+        let chips: Vec<CollectionChip> = (0..rows)
+            .map(|i| CollectionChip {
+                id: format!("c{i}").into(),
+                name: format!("collection {i}").into(),
+                ..Default::default()
+            })
+            .collect();
+        app.set_collections(ModelRc::new(VecModel::from(chips)));
+        app.set_grid_open(true);
+        let order: Vec<slint::SharedString> = order.iter().map(|s| (*s).into()).collect();
+        app.set_left_order(ModelRc::new(VecModel::from(order)));
+        settle(&app);
+        sized(&app, 1600.0);
+        app
+    }
+
+    /// Library's first order, and the queue between COLLECTIONS and
+    /// FOLDERS, where no edge lies between the two.
+    const LIBRARY_ORDERS: [&[&str]; 2] = [
+        &[
+            "roots",
+            "folders",
+            "collections",
+            "queue",
+            "metadata",
+            "presets",
+            "snapshots",
+            "history",
+        ],
+        &[
+            "roots",
+            "collections",
+            "queue",
+            "folders",
+            "metadata",
+            "presets",
+            "snapshots",
+            "history",
+        ],
+    ];
+
+    /// FOLDERS straight under COLLECTIONS: COLLECTIONS' slot ends in its
+    /// box, so the edge over its foot moves room and a double-click
+    /// there evens the two.
+    #[test]
+    fn folders_under_the_collections_have_their_edge() {
+        let order = [
+            "roots",
+            "collections",
+            "folders",
+            "queue",
+            "metadata",
+            "presets",
+            "snapshots",
+            "history",
+        ];
+        let app = library_pane(60, &order);
+        let ids = ["collections-section", "folders-section"];
+        let measure = |app: &App| -> Vec<f32> { ids.iter().map(|id| section(app, id).1).collect() };
+        let before = measure(&app);
+        let (x, y) = gap_above(&app, "folders-section");
+        drag(&app, &[(x, y), (x, y + 20.0), (x, y + 40.0)]);
+        settle(&app);
+        let moved = measure(&app);
+        near(moved[0], before[0] + 40.0, "COLLECTIONS took");
+        near(moved[1], before[1] - 40.0, "FOLDERS gave");
+        assert!(app.get_share_collections() > 1.0 && app.get_share_folders() < 1.0);
+        let (x, y) = gap_above(&app, "folders-section");
+        click(&app, x, y);
+        click(&app, x, y);
+        settle(&app);
+        assert_eq!(
+            app.get_share_collections(),
+            app.get_share_folders(),
+            "evened"
+        );
+    }
+
+    /// The Export queue's header takes every press down its row, in the
+    /// first order and between COLLECTIONS and FOLDERS: no share edge
+    /// lies over it, nor over any row or header, only over the foot
+    /// padding of an open list's box.
+    #[test]
+    fn every_y_of_the_queue_header_opens_its_view() {
+        use i_slint_backend_testing::ElementHandle;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        for order in LIBRARY_ORDERS {
+            let app = library_pane(60, order);
+            let opened = Rc::new(Cell::new(0));
+            let o = opened.clone();
+            app.on_queue_view_picked(move || o.set(o.get() + 1));
+            let e = ElementHandle::find_by_element_type_name(&app, "QueueHeader")
+                .find(|e| e.size().height > 0.0)
+                .expect("the queue's header in Library");
+            let (at, size) = (e.absolute_position(), e.size());
+            assert!(size.height >= 30.0, "a header's height: {size:?}");
+            let mut dy = 0.5;
+            while dy < size.height {
+                let before = opened.get();
+                click(&app, at.x + size.width / 2.0, at.y + dy);
+                settle(&app);
+                assert_eq!(
+                    opened.get(),
+                    before + 1,
+                    "a press {dy} px down the queue's {size:?} in {order:?}"
+                );
+                dy += 1.0;
+            }
+            assert!(read(&app).is_empty(), "no share moved: {:?}", read(&app));
+        }
+    }
+
+    /// Library's lists too: a press low on the last folder row and on
+    /// the last collection row is the row's, whichever is above.
+    #[test]
+    fn a_press_at_a_library_lists_foot_is_the_lists() {
+        use i_slint_backend_testing::ElementHandle;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        for order in LIBRARY_ORDERS {
+            let app = library_pane(3, order);
+            let folder = Rc::new(Cell::new(-1));
+            let f = folder.clone();
+            app.on_folder_tree_picked(move |i| f.set(i));
+            let collection = Rc::new(Cell::new(String::new()));
+            let c = collection.clone();
+            app.on_collection_picked(move |id| c.set(id.to_string()));
+            let found = |label: &str| {
+                let e = ElementHandle::find_by_accessible_label(&app, label)
+                    .next()
+                    .unwrap_or_else(|| panic!("{label} in the left pane"));
+                (e.absolute_position(), e.size())
+            };
+            for dy_from_foot in [2.0, 1.0] {
+                folder.set(-1);
+                let (at, size) = found("folder 2");
+                click(
+                    &app,
+                    at.x + size.width / 2.0,
+                    at.y + size.height - dy_from_foot,
+                );
+                settle(&app);
+                assert_eq!(folder.get(), 2, "the last folder in {order:?}");
+                collection.set(String::new());
+                let (at, size) = found("collection 2");
+                click(
+                    &app,
+                    at.x + size.width / 2.0,
+                    at.y + size.height - dy_from_foot,
+                );
+                settle(&app);
+                assert_eq!(collection.take(), "c2", "the last collection in {order:?}");
+            }
         }
     }
 

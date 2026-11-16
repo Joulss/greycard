@@ -147,8 +147,8 @@ fn every_move_lands_where_it_was_dropped() {
     }
 }
 
-/// The left pane looks back six places for the list above and counts
-/// seven (`left-before` and `left-shown-count` in app.slint): its
+/// The left pane looks back seven places for the list above and counts
+/// eight (`left-before` and `left-shown-count` in app.slint): its
 /// model stays that short. Library's and the Loupe's orders come back
 /// whole from the one model, whatever either is: FOLDERS once, each
 /// view's own in its order.
@@ -156,7 +156,7 @@ fn every_move_lands_where_it_was_dropped() {
 fn the_left_pane_holds_both_views_in_one_model() {
     let library = names_of(first_of("library"));
     let loupe = names_of(first_of("loupe"));
-    assert!(pane_order(&[library.clone(), loupe.clone()]).len() <= 7);
+    assert!(pane_order(&[library.clone(), loupe.clone()]).len() <= 8);
     let own = |model: &[String], first: &[&str]| -> Vec<String> {
         model
             .iter()
@@ -164,13 +164,13 @@ fn the_left_pane_holds_both_views_in_one_model() {
             .cloned()
             .collect()
     };
-    let lib = ["roots", "folders", "collections", "metadata"];
+    let lib = ["roots", "folders", "collections", "queue", "metadata"];
     let lou = ["folders", "presets", "snapshots", "history"];
     for a in permutations(&lib) {
         for b in permutations(&lou) {
             let (a, b) = (names_of(&a), names_of(&b));
             let model = pane_order(&[a.clone(), b.clone()]);
-            assert_eq!(model.len(), 7);
+            assert_eq!(model.len(), 8);
             assert_eq!(own(&model, &lib), a);
             assert_eq!(own(&model, &lou), b);
         }
@@ -510,6 +510,11 @@ fn sections_in(slot: &ElementHandle) -> usize {
         .match_inherits("Section")
         .find_all()
         .len()
+        + slot
+            .query_descendants()
+            .match_type_name("QueueHeader")
+            .find_all()
+            .len()
 }
 
 /// A drop takes one row out of the order and puts it back in: the
@@ -697,11 +702,11 @@ fn permutations(list: &[&'static str]) -> Vec<Vec<&'static str>> {
     out
 }
 
-/// The Export queue's row is under the collections in every Library
-/// order, the folder tree shown or not: once, and with no other list
-/// between them.
+/// The Export queue's header stands where its order puts it, in
+/// every Library order with the folder tree shown or not: once, in its
+/// own slot, and with the sections above and below it in that order.
 #[test]
-fn the_export_queue_row_follows_the_collections() {
+fn the_export_queue_header_stands_where_its_order_puts_it() {
     let app = window(3);
     app.window()
         .set_size(slint::LogicalSize::new(1500.0, 1000.0));
@@ -712,36 +717,96 @@ fn the_export_queue_row_follows_the_collections() {
         ("collections", "COLLECTIONS"),
         ("metadata", "METADATA"),
     ];
+    let queue_y = |app: &App, said: &str| {
+        let queue: Vec<_> = ElementHandle::find_by_element_type_name(app, "QueueHeader")
+            .filter(|e| e.size().height > 0.0)
+            .collect();
+        assert_eq!(queue.len(), 1, "{said}");
+        queue[0].absolute_position().y
+    };
     for order in permutations(first_of("library")) {
         for tree in [false, true] {
             library(&app, &order, tree);
-            let queue: Vec<_> = ElementHandle::find_by_element_type_name(&app, "RootRow")
-                .filter(|e| {
-                    e.size().height > 0.0
-                        && e.query_descendants()
-                            .match_predicate(|t| {
-                                t.accessible_label().as_deref() == Some("Export queue")
-                            })
-                            .find_first()
-                            .is_some()
-                })
-                .collect();
-            assert_eq!(queue.len(), 1, "{order:?} tree {tree}");
-            let queue = queue[0].absolute_position().y;
-            let collections = header(&app, "COLLECTIONS").1;
-            assert!(collections < queue, "{order:?} tree {tree}");
+            let said = format!("{order:?} tree {tree}");
+            let queue = queue_y(&app, &said);
+            let at = order.iter().position(|n| *n == "queue").unwrap();
             for (name, title) in titles {
-                if name == "collections" || (name == "folders" && !tree) {
+                if name == "folders" && !tree {
                     continue;
                 }
                 let y = header(&app, title).1;
-                assert!(
-                    !(collections < y && y < queue),
-                    "{title} between COLLECTIONS and the queue: {order:?} tree {tree}"
-                );
+                let above = order.iter().position(|n| *n == name).unwrap() < at;
+                assert_eq!(y < queue, above, "{title} against the queue: {said}");
             }
         }
     }
+}
+
+/// A fresh Library has the queue under COLLECTIONS, and an order kept
+/// before the queue was a section gets it there too, wherever the user
+/// had put COLLECTIONS.
+#[test]
+fn an_order_without_the_queue_gets_it_after_the_collections() {
+    let first = first_of("library");
+    let at = first.iter().position(|n| *n == "collections").unwrap();
+    assert_eq!(first[at + 1], "queue", "{first:?}");
+    let saved = names_of(&["metadata", "collections", "roots", "folders"]);
+    assert_eq!(
+        reconcile(first, &saved),
+        names_of(&["metadata", "collections", "queue", "roots", "folders"])
+    );
+    let app = window(3);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 1000.0));
+    install(&app);
+    show(&app, &[("library".to_string(), saved)].into());
+    app.set_grid_open(true);
+    settle(&app);
+    assert_eq!(
+        order_of(&app, "library"),
+        names_of(&["metadata", "collections", "queue", "roots", "folders"])
+    );
+}
+
+/// The queue's header moves by its own drag, as a section's does: up
+/// above FOLDERS, and COLLECTIONS moved after leaves it there.
+#[test]
+fn the_export_queue_header_is_dragged_as_a_section() {
+    let _scratch = Scratch::new("queuedrag");
+    let app = window(3);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 1000.0));
+    install(&app);
+    app.set_folder_tree_shown(true);
+    app.set_grid_open(true);
+    settle(&app);
+    let queue = || {
+        let e = ElementHandle::find_by_element_type_name(&app, "QueueHeader")
+            .find(|e| e.size().height > 0.0)
+            .expect("the queue's header");
+        let (p, s) = (e.absolute_position(), e.size());
+        (p.x + s.width / 2.0, p.y + s.height / 2.0)
+    };
+    let from = queue();
+    let folders = header(&app, "FOLDERS");
+    drag_through(
+        &app,
+        from,
+        &[(from.0, from.1 - 12.0), (from.0, folders.1 - 10.0)],
+    );
+    let want = names_of(&["roots", "queue", "folders", "collections", "metadata"]);
+    assert_eq!(order_of(&app, "library"), want, "the queue above FOLDERS");
+    assert_eq!(saved().get("library"), Some(&want));
+    assert!(queue().1 < header(&app, "FOLDERS").1, "on screen too");
+    assert!(!app.get_queue_view_on(), "a drag opens nothing");
+    // COLLECTIONS to the top: the queue stays where it was put.
+    let len = want.len() as i32;
+    app.invoke_section_moved("library".into(), 3, 0, len);
+    settle(&app);
+    assert_eq!(
+        order_of(&app, "library"),
+        names_of(&["collections", "roots", "queue", "folders", "metadata"])
+    );
 }
 
 /// A list the view hides takes no room wherever the order puts it: the
@@ -1454,9 +1519,11 @@ fn the_windows_release_hook_never_takes_a_drop() {
 /// and 2, drawn by Slint's software renderer: Library, the Loupe with
 /// Develop, the Masks tab with a mask, Crop, Retouch, and Cull, each at
 /// rest, and at scale 1 a header of each pane under the pointer and
-/// folded too. Beside each picture, the place and size of every title
-/// and 16 px icon, and at scale 1 the ink and ground of each, read from
-/// the pixels. Run with `GREYCARD_SECTION_CAPTURES=DIR` and
+/// folded too, and a folder row under the pointer. Library and the
+/// Loupe again with the left pane at its narrowest, the lists filled.
+/// Beside each picture, the place and size of every title and 16 px
+/// icon, and at scale 1 the ink and ground of each and each header's
+/// box (top rule, left rule, fill), read from the pixels. Run with `GREYCARD_SECTION_CAPTURES=DIR` and
 /// `--ignored`.
 #[test]
 #[ignore]
@@ -1544,7 +1611,7 @@ fn capture_the_section_headers() {
                 .partial_cmp(&(side(b.0), b.1, b.0))
                 .unwrap()
         });
-        for (x, y, bw, bh, label) in titles {
+        for (x, y, bw, bh, label) in titles.clone() {
             let _ = write!(
                 out,
                 "{}\ttext\t{label}\t{x:.1}\t{y:.1}\t{bw:.1}\t{bh:.1}",
@@ -1554,6 +1621,45 @@ fn capture_the_section_headers() {
                 let _ = write!(out, "\t{ink}\t{ground}");
             }
             out.push('\n');
+        }
+        // Each header's box, read under its chevron (the first icon on
+        // the title's line): the header row is 32 px round the title,
+        // the box's top rule its last line, its left rule under the
+        // chevron, and its fill 3 px inside both. A folded section has
+        // the top rule alone.
+        if let Some(img) = img {
+            let at = |x: f32, y: f32| {
+                let (px, py) = ((x * scale).round() as u32, (y * scale).round() as u32);
+                (px < img.width() && py < img.height()).then(|| {
+                    let p = img.get_pixel(px, py);
+                    hex([p[0], p[1], p[2]])
+                })
+            };
+            for (x, y, _, bh, label) in &titles {
+                let mid = y + bh / 2.0;
+                let Some(&(cx, _)) = icons
+                    .iter()
+                    .filter(|(ix, iy)| {
+                        side(*ix) == side(*x) && *ix < *x && (iy + 8.0 - mid).abs() < 3.0
+                    })
+                    .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+                else {
+                    continue;
+                };
+                let foot = (mid + 16.0).round();
+                let (Some(top), Some(left), Some(fill)) = (
+                    at(cx + 10.0, foot),
+                    at(cx, foot + 4.0),
+                    at(cx + 3.0, foot + 3.0),
+                ) else {
+                    continue;
+                };
+                let _ = writeln!(
+                    out,
+                    "{}\tbox\t{label}\ttop {top}\tleft {left}\tfill {fill}",
+                    side(*x)
+                );
+            }
         }
         for (x, y) in icons {
             let _ = write!(out, "{}\ticon\t-\t{x:.1}\t{y:.1}\t16\t16", side(x));
@@ -1570,9 +1676,80 @@ fn capture_the_section_headers() {
             slint::platform::update_timers_and_animations();
         }
     };
+    // The left pane's lists with rows in them: a tree three deep with
+    // a long name and the open folder, roots, a collection, presets in
+    // a group, snapshots, and history, so the rows' reach and hover
+    // show inside their boxes.
+    let fill = |app: &App| {
+        use slint::{ModelRc, VecModel};
+        let folder = |name: &str, depth: i32, children: bool, open: bool| crate::FolderRow {
+            name: name.into(),
+            path: format!("/nowhere/{name}").into(),
+            depth,
+            count: 12,
+            children,
+            expanded: children,
+            open,
+        };
+        app.set_folder_tree(ModelRc::new(VecModel::from(vec![
+            folder("2026", 0, true, false),
+            folder("2026-11-14 a folder named at some length", 1, true, false),
+            folder("selects", 2, false, true),
+            folder("2025", 0, false, false),
+        ])));
+        app.set_folder_tree_shown(true);
+        app.set_library_roots(ModelRc::new(VecModel::from(vec![crate::RootChip {
+            name: "Pictures".into(),
+            path: "/nowhere".into(),
+            count: 48,
+            on: true,
+            ..Default::default()
+        }])));
+        app.set_collections(ModelRc::new(VecModel::from(vec![crate::CollectionChip {
+            id: "c0".into(),
+            name: "Portfolio".into(),
+            count: 9,
+            ..Default::default()
+        }])));
+        let presets = ["Soft", "Punchy", "Mono"];
+        app.set_preset_names(ModelRc::new(VecModel::from(
+            presets
+                .iter()
+                .map(|p| slint::SharedString::from(*p))
+                .collect::<Vec<_>>(),
+        )));
+        let mut rows = vec![crate::PresetRow {
+            header: true,
+            text: "Mine".into(),
+            group: "Mine".into(),
+            ..Default::default()
+        }];
+        rows.extend(presets.iter().enumerate().map(|(i, p)| crate::PresetRow {
+            text: (*p).into(),
+            index: i as i32,
+            group: "Mine".into(),
+            under: true,
+            ..Default::default()
+        }));
+        app.set_preset_list_rows(ModelRc::new(VecModel::from(rows)));
+        app.set_snapshot_names(ModelRc::new(VecModel::from(vec![
+            slint::SharedString::from("Before"),
+            "Warm".into(),
+        ])));
+        app.set_history_rows(ModelRc::new(VecModel::from(
+            ["Open", "Exposure", "Contrast", "Look"]
+                .iter()
+                .map(|n| crate::HistoryRow {
+                    name: (*n).into(),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>(),
+        )));
+    };
     type Setup = fn(&App);
-    let views: [(&str, Setup); 6] = [
+    let views: [(&str, Setup); 7] = [
         ("library", |app| {
+            show(app, &Default::default());
             app.set_culling(false);
             app.set_grid_open(true);
             app.set_folder_tree_shown(true);
@@ -1609,6 +1786,22 @@ fn capture_the_section_headers() {
             app.invoke_target_changed(0);
             app.set_panel_tab("Cull".into());
         }),
+        // Library with the queue's header dragged above FOLDERS.
+        ("library-queue-up", |app| {
+            show(
+                app,
+                &[(
+                    "library".to_string(),
+                    names_of(&["roots", "queue", "folders", "collections", "metadata"]),
+                )]
+                .into(),
+            );
+            app.set_culling(false);
+            app.set_grid_open(true);
+            app.set_folder_tree_shown(true);
+            app.invoke_target_changed(0);
+            app.set_panel_tab("Develop".into());
+        }),
     ];
     for theme in ["Charcoal", "Grey", "Light"] {
         app.global::<crate::Theme>().set_name(theme.into());
@@ -1624,14 +1817,37 @@ fn capture_the_section_headers() {
             app.window().dispatch_event(WindowEvent::Resized {
                 size: slint::LogicalSize::new(w, h),
             });
-            for (view, setup) in views {
+            // The left pane at its narrowest too, in its two views.
+            let narrow: [(&str, Setup); 2] =
+                [("narrow-library", views[0].1), ("narrow-loupe", views[1].1)];
+            for (view, setup) in views.into_iter().chain(narrow) {
+                app.set_left_size(if view.starts_with("narrow") {
+                    200.0
+                } else {
+                    crate::panel::sizes::LEFT
+                });
                 setup(&app);
+                fill(&app);
                 settle(&app);
                 let stem = format!("{}-x{}-{view}", theme.to_lowercase(), scale as u32);
                 let img = shot(&app);
                 img.save(dir.join(format!("{stem}.png"))).unwrap();
                 let table = describe(&app, (scale == 1.0).then_some(&img), scale);
                 std::fs::write(dir.join(format!("{stem}.tsv")), table).unwrap();
+                // The Export queue's header under the pointer.
+                if view.starts_with("library") {
+                    let e = ElementHandle::find_by_element_type_name(&app, "QueueHeader")
+                        .find(|e| e.size().height > 0.0)
+                        .expect("the queue's header");
+                    let (p, s) = (e.absolute_position(), e.size());
+                    pointer(&app, "move", (p.x + s.width / 2.0, p.y + s.height / 2.0));
+                    run();
+                    shot(&app)
+                        .save(dir.join(format!("{stem}-hover-queue.png")))
+                        .unwrap();
+                    pointer(&app, "move", (0.0, 0.0));
+                    run();
+                }
                 if scale != 1.0 || !(view == "loupe" || view == "library") {
                     continue;
                 }
@@ -1671,7 +1887,71 @@ fn capture_the_section_headers() {
                     click(&app, at.0, at.1);
                     settle(&app);
                 }
+                // A folder row under the pointer: its fill's reach in
+                // the box.
+                pointer(&app, "move", header(&app, "2025"));
+                run();
+                shot(&app)
+                    .save(dir.join(format!("{stem}-hover-folder-row.png")))
+                    .unwrap();
             }
+            // A short window, where the left pane scrolls as a whole:
+            // its bar over the margin and the boxes' right padding, at
+            // rest and under the pointer.
+            let short = 680.0f32;
+            let sized = |height: f32| {
+                app.window().set_size(slint::PhysicalSize::new(
+                    (w * scale) as u32,
+                    (height * scale) as u32,
+                ));
+                app.window().dispatch_event(WindowEvent::Resized {
+                    size: slint::LogicalSize::new(w, height),
+                });
+            };
+            sized(short);
+            for (view, setup) in &views[..2] {
+                app.set_left_size(crate::panel::sizes::LEFT);
+                setup(&app);
+                fill(&app);
+                settle(&app);
+                let stem = format!("{}-x{}-short-{view}", theme.to_lowercase(), scale as u32);
+                shot(&app).save(dir.join(format!("{stem}.png"))).unwrap();
+                pointer(&app, "move", (crate::panel::sizes::LEFT - 7.0, 200.0));
+                run();
+                shot(&app)
+                    .save(dir.join(format!("{stem}-hover-bar.png")))
+                    .unwrap();
+                pointer(&app, "move", (0.0, 0.0));
+                run();
+            }
+            // The Loupe's bar at every size, fading and staying, at rest
+            // and lit.
+            let bars = app.global::<crate::ScrollBars>();
+            for size in ["Thin", "Medium", "Wide"] {
+                for mode in ["Fade", "Stay"] {
+                    bars.set_size(size.into());
+                    bars.set_mode(mode.into());
+                    views[1].1(&app);
+                    fill(&app);
+                    settle(&app);
+                    let stem = format!(
+                        "{}-x{}-short-loupe-{size}-{mode}",
+                        theme.to_lowercase(),
+                        scale as u32
+                    );
+                    shot(&app).save(dir.join(format!("{stem}.png"))).unwrap();
+                    pointer(&app, "move", (crate::panel::sizes::LEFT - 7.0, 200.0));
+                    run();
+                    shot(&app)
+                        .save(dir.join(format!("{stem}-lit.png")))
+                        .unwrap();
+                    pointer(&app, "move", (0.0, 0.0));
+                    run();
+                }
+            }
+            bars.set_size("Thin".into());
+            bars.set_mode("Fade".into());
+            sized(h);
         }
     }
 }

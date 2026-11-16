@@ -5,7 +5,7 @@
 // path, a new name for it, and taking it out.
 
 import { Theme } from "../theme.slint";
-import { Section } from "../controls.slint";
+import { Section, SectionDrag } from "../controls.slint";
 import { RootChip } from "../structs.slint";
 
 // A row: what it names, how many files at its right, muted, or
@@ -127,6 +127,165 @@ export component RootRow inherits Rectangle {
         }
         Text {
             text: root.offline ? @tr("offline") : root.count;
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+}
+
+// The Export queue, a section of the left pane's own in a header's look
+// and with a header's drag: the chevron's room left empty, so its icon
+// and title line up with theirs, its count at the right, and the whole
+// row lit under the pointer and opening the queue's view, lit as chosen
+// while it shows. Nothing to fold: no body and no box. The drag is
+// `Section`'s, as its header moves its section in a SectionStack.
+export component QueueHeader inherits Rectangle {
+    in property <int> count;
+    in property <bool> on;
+    callback clicked();
+    /// Whether a menu is up: the press that closes it reaches the row
+    /// under it too, and is not a press there.
+    pure callback menu-shown() -> bool;
+    /// The whole title as hover text, when the row cuts it short, and
+    /// where it goes, in the window's pixels; an empty text takes it
+    /// down. A sheet up over the window (`quiet`) puts none up.
+    callback tip(string, length, length);
+    in property <bool> quiet;
+    property <bool> tipped;
+    in property <bool> reorderable: false;
+    callback reorder-started();
+    callback reorder-moved(length, length);
+    callback reorder-ended(bool) -> bool;
+    property <bool> reorder-armed: false;
+    property <bool> reorder-dragging: false;
+    property <bool> reorder-swallow: false;
+    property <length> reorder-down-y;
+    // As `Section.reorder-press`: a drag past 8 px up or down moves the
+    // header; another button puts it back; a release off the row drops.
+    function reorder-press(e: PointerEvent, y: length) {
+        if ((e.kind == PointerEventKind.down || e.kind == PointerEventKind.up)
+            && e.button != PointerEventButton.left) {
+            if (root.reorder-armed || root.reorder-dragging) {
+                root.reorder-swallow = root.reorder-dragging;
+                root.reorder-finish(false);
+                root.reorder-armed = false;
+            }
+            return;
+        }
+        if (e.kind == PointerEventKind.down) {
+            root.reorder-swallow = false;
+            root.reorder-armed = root.reorderable && e.button == PointerEventButton.left;
+            root.reorder-down-y = y;
+            root.reorder-dragging = false;
+        } else if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) {
+            root.reorder-finish(e.kind == PointerEventKind.up);
+            root.reorder-armed = false;
+        }
+    }
+    function reorder-motion(x: length, y: length) {
+        if (!root.reorder-armed) { return; }
+        if (!root.reorder-dragging && abs(y - root.reorder-down-y) > 8px) {
+            root.reorder-dragging = true;
+            root.untip();
+            root.reorder-started();
+        }
+        if (root.reorder-dragging) { root.reorder-moved(x, y); }
+    }
+    function reorder-finish(commit: bool) -> bool {
+        if (!root.reorder-dragging) { return false; }
+        root.reorder-dragging = false;
+        return root.reorder-ended(commit);
+    }
+    property <int> drag-cancels: SectionDrag.cancels;
+    changed drag-cancels => {
+        if (root.reorder-dragging) {
+            root.reorder-dragging = false;
+            root.reorder-armed = false;
+            root.reorder-swallow = true;
+        }
+    }
+    function untip() {
+        if (root.tipped) {
+            root.tipped = false;
+            root.tip("", 0, 0);
+        }
+    }
+    border-radius: Theme.radius-sm;
+    background: root.on ? Theme.selection : ta.has-hover ? Theme.hover : transparent;
+    animate background { duration: Theme.quick; }
+    accessible-role: button;
+    accessible-label: @tr("Export queue");
+    accessible-value: root.count;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.on;
+    accessible-action-default => { root.clicked(); }
+    // The whole title, once the pointer has rested on a row that cuts
+    // it short, as a root's row has its name.
+    Timer {
+        interval: 600ms;
+        running: ta.has-hover && title.preferred-width > title.width && !root.tipped
+            && !root.quiet && !root.reorder-dragging;
+        triggered => {
+            root.tipped = true;
+            root.tip(title.text, root.absolute-position.x, root.absolute-position.y + root.height + 2px);
+        }
+    }
+    ta := TouchArea {
+        property <bool> skip;
+        mouse-cursor: root.reorder-dragging ? MouseCursor.grabbing : MouseCursor.pointer;
+        changed has-hover => {
+            if (!self.has-hover) { root.untip(); }
+        }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.untip();
+                self.skip = root.menu-shown() || e.button != PointerEventButton.left;
+            }
+            root.reorder-press(e, self.absolute-position.y + self.mouse-y);
+        }
+        moved => {
+            root.reorder-motion(self.absolute-position.x + self.mouse-x,
+                self.absolute-position.y + self.mouse-y);
+        }
+        clicked => {
+            if (root.reorder-swallow) {
+                root.reorder-swallow = false;
+                return;
+            }
+            if (root.reorder-finish(true)) { return; }
+            if (self.skip) { return; }
+            root.clicked();
+        }
+    }
+    // As `Section`'s header: 8 px above and below the 16 px icons, the
+    // chevron's room, the icon, and the title 8 px apart.
+    HorizontalLayout {
+        padding-top: Theme.space-2;
+        padding-bottom: Theme.space-2;
+        padding-right: Theme.space-2;
+        spacing: Theme.space-2;
+        Rectangle { width: Theme.icon; }
+        Image {
+            source: @image-url("../icons/image-down.svg");
+            colorize: Theme.text;
+            width: Theme.icon;
+            height: Theme.icon;
+            y: (parent.height - self.height) / 2;
+        }
+        title := Text {
+            text: @tr("Export queue").to-uppercase();
+            color: Theme.text;
+            font-size: Theme.font-xs;
+            font-weight: Theme.weight-semibold;
+            letter-spacing: 0.8px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: root.count;
             color: Theme.text-muted;
             font-size: Theme.font-xs;
             vertical-alignment: center;

@@ -90,6 +90,7 @@ export component PresetsSection inherits Section {
     icon: @image-url("../icons/bookmark.svg");
     collapsed <=> root.collapsed-presets;
     shares: true;
+    body-spacing: Theme.space-1;
 
     // The list: a click lays the preset over the edit, as one step;
     // the bin at the row's end asks to remove it from the store. A

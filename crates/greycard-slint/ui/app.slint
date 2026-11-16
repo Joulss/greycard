@@ -56,7 +56,7 @@ import { FrameMenu } from "panel/frame-menu.slint";
 import { RootSheet } from "panel/root-sheet.slint";
 import { FolderName, RecentMenu } from "panel/recent.slint";
 import { FoldersSection } from "panel/folders.slint";
-import { RootsSection, RootRow } from "panel/roots.slint";
+import { RootsSection, QueueHeader } from "panel/roots.slint";
 import { CollectionsSection } from "panel/collections.slint";
 import { MetaSection } from "panel/meta.slint";
 import { CollectionSheet } from "panel/collection-sheet.slint";
@@ -1524,15 +1524,15 @@ export component App inherits Window {
     // Loupe's without, the folders by the open root's tree, the presets,
     // snapshots, and history not in culling), as its slot's `if` says;
     // the one on show above another is what the gap between them sits
-    // under, and moves room with. Looked back six places and counted
-    // over seven, the model's length (`panel::order`'s test holds it
+    // under, and moves room with. Looked back seven places and counted
+    // over eight, the model's length (`panel::order`'s test holds it
     // to that).
     pure function left-name(i: int) -> string {
         return root.left-order[i];
     }
     pure function left-shown(name: string) -> bool {
         return name == "folders" ? root.folder-tree-shown
-            : name == "roots" || name == "collections" || name == "metadata" ? root.grid-open
+            : name == "roots" || name == "collections" || name == "queue" || name == "metadata" ? root.grid-open
             : name == "presets" || name == "snapshots" || name == "history"
                 ? !root.grid-open && !root.cull-mode && !root.frozen
             : false;
@@ -1544,13 +1544,14 @@ export component App inherits Window {
             : i >= 4 && root.left-shown(root.left-name(i - 4)) ? root.left-name(i - 4)
             : i >= 5 && root.left-shown(root.left-name(i - 5)) ? root.left-name(i - 5)
             : i >= 6 && root.left-shown(root.left-name(i - 6)) ? root.left-name(i - 6)
+            : i >= 7 && root.left-shown(root.left-name(i - 7)) ? root.left-name(i - 7)
             : "";
     }
     pure function left-shown-count() -> int {
         return (root.left-shown(root.left-name(0)) ? 1 : 0) + (root.left-shown(root.left-name(1)) ? 1 : 0)
             + (root.left-shown(root.left-name(2)) ? 1 : 0) + (root.left-shown(root.left-name(3)) ? 1 : 0)
             + (root.left-shown(root.left-name(4)) ? 1 : 0) + (root.left-shown(root.left-name(5)) ? 1 : 0)
-            + (root.left-shown(root.left-name(6)) ? 1 : 0);
+            + (root.left-shown(root.left-name(6)) ? 1 : 0) + (root.left-shown(root.left-name(7)) ? 1 : 0);
     }
     // Two lists on show at least, or a drag would only move one past
     // lists the view hides.
@@ -5555,14 +5556,12 @@ export component App inherits Window {
             background: Theme.border;
         }
         // The Navigator stays in sight above the scrolling sections,
-        // as Analysis does on the right. It is the Loupe's alone. The
-        // rule above is its line: it draws none of its own.
+        // as Analysis does on the right. It is the Loupe's alone, a
+        // header over a box as every section is.
         if !root.grid-open: VerticalLayout {
             padding-left: Theme.space-1;
             padding-right: Theme.space-1;
             navigator-section := NavigatorSection {
-                boxed: false;
-                line-above: false;
                 zoom-text: root.zoom-text;
                 collapsed-navigator <=> root.collapsed-navigator;
                 navigator: root.navigator;
@@ -5587,21 +5586,33 @@ export component App inherits Window {
             // This pane only scrolls vertically. The Flickable would
             // otherwise infer a wider content area from its children.
             content-width: self.visible-width;
+            // It scrolls as a whole only once its sections pass its
+            // height, so its bar reserves no room: its presses take the
+            // margin and a box's border and side padding, past which a
+            // list's own bar and a row's count lie (the margin's are the
+            // resize edge's), and its track and thumb keep to the box's
+            // 6 px side padding, clear of the box's border, at every
+            // size of bar.
+            band-width: Theme.space-1 + Theme.space-2 - 1px;
+            bar-track-inset: Theme.space-1 + 1px;
+            bar-thumb-inset: Theme.space-1 + 1px;
+            bar-most: Theme.space-2 - 2px;
             VerticalLayout {
                 width: parent.width;
                 // Stretched, so the lists take the room; all else
                 // here keeps its height (a stretch of none), and the
                 // room the lists leave goes to the foot below them.
+                // One margin both sides, as the buttons above and below
+                // have; the bar lies over the right one (`band-width`).
                 padding-left: Theme.space-1;
-                // Clear of the scroll bar's band, however wide it is.
-                padding-right: max(Theme.space-1, ScrollBars.band + 2px);
+                padding-right: Theme.space-1;
                 padding-top: Theme.space-2;
                 // The spacing before the room at the foot is the gap
                 // at the bottom.
                 padding-bottom: 0;
-                // A gap between each two, which the share edges below
-                // sit in: drawn over a section, they would take the
-                // presses at its foot.
+                // A gap between the way to a folder and the lists. The
+                // lists abut, each box its own end; the share edges lie
+                // over the padding at a box's foot (`SectionSlot`).
                 spacing: Theme.space-2;
                 // The way to a folder, there with FOLDERS folded or no
                 // root open.
@@ -5737,15 +5748,11 @@ export component App inherits Window {
                         index: i;
                         drag: left-stack.state;
                         consider(at, top) => { left-stack.consider(at, top); }
-                        boxed: false;
-                        // The gap between two lists, which the share
-                        // edges sit in: drawn over a section, they would
-                        // take the presses at its foot. None above the
-                        // first, whose gap is the pane's.
-                        gap: root.left-before(i) != "" ? Theme.space-2 : 0px;
-                        spacing: Theme.space-2;
+                        fills: true;
                         stretch: root.share-index(section) >= 0 ? root.share-of(root.share-index(section)) : 0;
-                        // The gap above, to the list there, when both are open.
+                        // The edge above, over the foot of the list's box
+                        // there, when both are open: none under a header
+                        // with no box (the Export queue's).
                         resize-a: root.share-open(root.left-before(i)) ? root.share-index(root.left-before(i)) : -1;
                         resize-b: root.share-open(section) ? root.share-index(section) : -1;
                         resize-live: root.share-live(root.share-index(root.left-before(i)), root.share-index(section));
@@ -5759,7 +5766,6 @@ export component App inherits Window {
                             reorder-started => { left-stack.start(i); }
                             reorder-moved(x, y) => { left-stack.move(x, y); }
                             reorder-ended(commit) => { return left-stack.end(commit); }
-                            boxed: false;
                             vertical-stretch: 0;
                             roots: root.library-roots;
                             all-on: root.library-all-on;
@@ -5803,7 +5809,6 @@ export component App inherits Window {
                                 reorder-started => { left-stack.start(i); }
                                 reorder-moved(x, y) => { left-stack.move(x, y); }
                                 reorder-ended(commit) => { return left-stack.end(commit); }
-                                boxed: false;
                                 rows: root.folder-tree;
                                 open-row: root.folder-tree-open-row;
                                 reveal: root.folder-tree-reveal;
@@ -5839,7 +5844,6 @@ export component App inherits Window {
                                 reorder-started => { left-stack.start(i); }
                                 reorder-moved(x, y) => { left-stack.move(x, y); }
                                 reorder-ended(commit) => { return left-stack.end(commit); }
-                                boxed: false;
                                 collections: root.collections;
                                 ctrl-click-menu: root.ctrl-click-menu;
                                 collapsed-collections <=> root.collapsed-collections;
@@ -5856,13 +5860,18 @@ export component App inherits Window {
                             }
                         }
                         // The frames waiting to be exported, a listing of their
-                        // own: below the collections, in their slot wherever
-                        // the order puts them, rather than among the roots,
-                        // since it is no folder, and in no section, so
-                        // folding one never hides the one way into its view.
-                        if section == "collections" && root.grid-open: RootRow {
+                        // own: a section's header of its own in the order,
+                        // first under the collections, rather than among the
+                        // roots, since it is no folder; with nothing to fold,
+                        // so folding one never hides the one way into its view.
+                        if section == "queue" && root.grid-open: QueueHeader {
+                            reorderable: left-stack.movable;
+                            reorder-started => { left-stack.start(i); }
+                            reorder-moved(x, y) => { left-stack.move(x, y); }
+                            reorder-ended(commit) => { return left-stack.end(commit); }
+                            quiet: root.sheet-open();
+                            tip(t, x, y) => { root.tip-at(t, x, y); }
                             vertical-stretch: 0;
-                            text: @tr("Export queue");
                             count: root.queue-view-count;
                             on: root.queue-view-on;
                             menu-shown => { return root.menu-shown(); }
@@ -5878,7 +5887,6 @@ export component App inherits Window {
                             reorder-started => { left-stack.start(i); }
                             reorder-moved(x, y) => { left-stack.move(x, y); }
                             reorder-ended(commit) => { return left-stack.end(commit); }
-                            boxed: false;
                             vertical-stretch: 0;
                             frame-meta-on: root.frame-meta-on;
                             frame-title: root.frame-title;
@@ -5924,7 +5932,6 @@ export component App inherits Window {
                                 reorder-started => { left-stack.start(i); }
                                 reorder-moved(x, y) => { left-stack.move(x, y); }
                                 reorder-ended(commit) => { return left-stack.end(commit); }
-                                boxed: false;
                                 selected <=> root.selected;
                                 collapsed-presets <=> root.collapsed-presets;
                                 preset-names <=> root.preset-names;
@@ -5985,7 +5992,6 @@ export component App inherits Window {
                                 reorder-started => { left-stack.start(i); }
                                 reorder-moved(x, y) => { left-stack.move(x, y); }
                                 reorder-ended(commit) => { return left-stack.end(commit); }
-                                boxed: false;
                                 selected <=> root.selected;
                                 snapshot-names <=> root.snapshot-names;
                                 snapshot-editing <=> root.snapshot-editing;
@@ -6023,7 +6029,6 @@ export component App inherits Window {
                                 reorder-started => { left-stack.start(i); }
                                 reorder-moved(x, y) => { left-stack.move(x, y); }
                                 reorder-ended(commit) => { return left-stack.end(commit); }
-                                boxed: false;
                                 history-rows <=> root.history-rows;
                                 hint: root.history-version;
                                 history-current <=> root.history-current;

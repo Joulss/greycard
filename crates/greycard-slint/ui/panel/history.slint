@@ -86,6 +86,7 @@ export component SnapshotsSection inherits Section {
     icon: @image-url("../icons/image.svg");
     collapsed <=> root.collapsed-snapshots;
     shares: true;
+    body-spacing: Theme.space-1;
     if root.snapshot-names.length > 0: Rectangle {
         // As the folders' box: three rows at least, and the pane's
         // share past them up to the whole list, so a long run of
@@ -254,6 +255,7 @@ export component HistorySection inherits Section {
     icon: @image-url("../icons/undo-2.svg");
     collapsed <=> root.collapsed-history;
     shares: true;
+    body-spacing: Theme.space-1;
     if root.history-rows.length > 0: Rectangle {
         // As the folders' box: three rows at least, whatever sits
         // below the pane's sections (the pane scrolls before this box

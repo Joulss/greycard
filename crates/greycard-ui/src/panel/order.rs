@@ -46,7 +46,7 @@ pub(crate) struct View {
 pub(crate) const VIEWS: &[View] = &[
     View {
         name: "library",
-        first: &["roots", "folders", "collections", "metadata"],
+        first: &["roots", "folders", "collections", "queue", "metadata"],
         pane: "left",
         get: App::get_left_order,
         set: App::set_left_order,

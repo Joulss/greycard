@@ -29,6 +29,7 @@ export component FoldersSection inherits Section {
     icon: @image-url("../icons/folder-open.svg");
     collapsed <=> root.collapsed-folders;
     shares: true;
+    body-spacing: Theme.space-1;
     Toggle {
         label: @tr("With subfolders");
         checked <=> root.subfolders;
