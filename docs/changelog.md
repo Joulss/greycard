@@ -28,6 +28,9 @@ design note behind it.
 
 ### Window
 
+- Margins and gaps are evened across the panels, and paired choices such
+  as Parametric and Point are equal in width
+  ([§703](https://github.com/jessolmstead/greycard/blob/master/docs/notes/703-spacing-evened-across-the-panels.md)).
 - Drag a section's title to reorder a pane, and **Reset section order**
   in Settings, Interface puts it back. Thanks to Joulss (PR 156,
   [§689](https://github.com/jessolmstead/greycard/blob/master/docs/notes/689-sections-keep-the-order-they-are-dragged-into.md)).

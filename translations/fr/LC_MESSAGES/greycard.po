@@ -926,30 +926,30 @@ msgid "Point"
 msgstr "Point"
 
 #. Curves: the input axis of the point under the pointer
-#: crates/greycard-slint/ui/panel/curve.slint:74
+#: crates/greycard-slint/ui/panel/curve.slint:75
 msgid "In"
 msgstr "Entrée"
 
-#: crates/greycard-slint/ui/panel/curve.slint:84
+#: crates/greycard-slint/ui/panel/curve.slint:85
 msgid "Point in"
 msgstr "Point d'entrée"
 
 #. Curves: the output axis of the point under the pointer
-#: crates/greycard-slint/ui/panel/curve.slint:91
+#: crates/greycard-slint/ui/panel/curve.slint:92
 msgid "Out"
 msgstr "Sortie"
 
-#: crates/greycard-slint/ui/panel/curve.slint:101
+#: crates/greycard-slint/ui/panel/curve.slint:102
 msgid "Point out"
 msgstr "Point de sortie"
 
 #. Parametric curve: the slider for the light tones
-#: crates/greycard-slint/ui/panel/curve.slint:121
+#: crates/greycard-slint/ui/panel/curve.slint:122
 msgid "Lights"
 msgstr "Tons clairs"
 
 #. Parametric curve: the slider for the dark tones
-#: crates/greycard-slint/ui/panel/curve.slint:135
+#: crates/greycard-slint/ui/panel/curve.slint:136
 msgid "Darks"
 msgstr "Tons foncés"
 
@@ -1267,34 +1267,34 @@ msgstr[1] "Vider la file de {n} ensembles ?"
 msgid "SOFT PROOF"
 msgstr "ÉPREUVAGE ÉCRAN"
 
-#: crates/greycard-slint/ui/panel/display.slint:33
+#: crates/greycard-slint/ui/panel/display.slint:34
 msgid "No profile chosen"
 msgstr "Aucun profil sélectionné"
 
 #. Spoken as the label shown.
-#: crates/greycard-slint/ui/panel/display.slint:47
+#: crates/greycard-slint/ui/panel/display.slint:48
 msgid "Perceptual"
 msgstr "Perceptif"
 
-#: crates/greycard-slint/ui/panel/display.slint:47
+#: crates/greycard-slint/ui/panel/display.slint:48
 msgid "Relative"
 msgstr "Relatif"
 
-#: crates/greycard-slint/ui/panel/display.slint:52
+#: crates/greycard-slint/ui/panel/display.slint:53
 msgid "Gamut warning"
 msgstr "Avertissement de gamut"
 
-#: crates/greycard-slint/ui/panel/display.slint:72
+#: crates/greycard-slint/ui/panel/display.slint:73
 msgid "MONITOR"
 msgstr "ÉCRAN"
 
 #. Spoken as the label shown.
-#: crates/greycard-slint/ui/panel/display.slint:77
+#: crates/greycard-slint/ui/panel/display.slint:79
 msgid "System"
 msgstr "Système"
 
 #. Monitor section: the canvas shade row
-#: crates/greycard-slint/ui/panel/display.slint:110
+#: crates/greycard-slint/ui/panel/display.slint:113
 msgid "Canvas"
 msgstr "Zone de travail"
 
@@ -1446,7 +1446,7 @@ msgstr "Cubique"
 msgid "Tabular"
 msgstr "Tabulaire"
 
-#: crates/greycard-slint/ui/panel/edit.slint:638
+#: crates/greycard-slint/ui/panel/edit.slint:639
 msgid "DEMOSAIC"
 msgstr "DÉMATRIÇAGE"
 
@@ -1494,7 +1494,7 @@ msgstr "Enregistrer..."
 msgid "FOLDERS"
 msgstr "DOSSIERS"
 
-#: crates/greycard-slint/ui/panel/folders.slint:34
+#: crates/greycard-slint/ui/panel/folders.slint:36
 msgid "With subfolders"
 msgstr "Récursif"
 

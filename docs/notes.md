@@ -714,3 +714,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§700. The build's commit in its version](notes/700-the-builds-commit-in-its-version.md) (2026-11-15)
 - [§701. The hand-kept lists the compiler keeps](notes/701-the-hand-kept-lists-the-compiler-keeps.md) (2026-11-15)
 - [§702. The parity sweep names every field](notes/702-the-parity-sweep-names-every-field.md) (2026-11-15)
+- [§703. Spacing evened across the panels](notes/703-spacing-evened-across-the-panels.md) (2026-11-16)

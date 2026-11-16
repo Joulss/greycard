@@ -21,6 +21,7 @@ export component ProofSection inherits Section {
     switchable: true;
     on <=> root.proofing;
     switched => { root.proof-changed(); }
+    body-spacing: Theme.space-1;
     Segmented {
         options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
         labels: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", @tr("File")];
@@ -72,6 +73,7 @@ export component MonitorSection inherits Section {
     title: @tr("MONITOR");
     icon: @image-url("../icons/maximize.svg");
     collapsed <=> root.collapsed-monitor;
+    body-spacing: Theme.space-1;
     Segmented {
         options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
         labels: [@tr("System"), "sRGB", "Adobe RGB", "Display P3", @tr("File")];
@@ -106,6 +108,7 @@ export component MonitorSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
+        padding-top: Theme.space-2;
         // Monitor section: the canvas shade row
         Text { text: @tr("Canvas"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Swatches {
