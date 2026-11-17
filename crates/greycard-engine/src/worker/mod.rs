@@ -56,7 +56,7 @@ pub use self::thumbs::{THUMB_RECIPE, THUMB_WIDTH, count_thumb_cache};
 pub use self::{
     decode::correct_lens_of,
     handle::order_thumbnails,
-    prefetch::{DEEPEST, Depth, Heading, Neighbor, STREAK_FOR_ONE, Side},
+    prefetch::{DEEPEST, Depth, Heading, Neighbor, ReadFirst, RemoteFs, STREAK_FOR_ONE, Side},
     shelf::FileNow,
     thumbs::{file_stat, thumb_key, thumb_tag, thumbnail},
 };
@@ -732,6 +732,13 @@ struct Queue {
     /// made again there; `Some(false)` when the editor is about to
     /// start again, which develops it anew.
     gpu_lost: Option<bool>,
+    /// The window's check of what a folder is on, handed over for the
+    /// prefetch's reads of the neighbors' sidecars (`Worker::set_remote_check`).
+    remote_check: Option<prefetch::RemoteFs>,
+    /// How many checks were handed over, and the last: for a test of
+    /// the window's wiring.
+    #[cfg(any(test, feature = "testing"))]
+    remote_checks_by_test: (usize, Option<prefetch::RemoteFs>),
     /// The newest open or develop; an older one still queued is dropped.
     develop: Option<Job>,
     /// Masks wanted, the newest shape for a key replacing an older,

@@ -46,6 +46,5 @@ standing in, refused when the card was short or a run failed.
   profile unequal to itself.
 - No test covers the stand-in and learned replacement in `put`; it
   only evicts, so the cost of a slip is budget, not a picture.
-- An edited neighbor is still never developed ahead (§379), and the
-  window still walks the profile folder on every open; both are on the
-  roadmap.
+- The window still walks the profile folder on every open; it is on
+  the roadmap. (An edited neighbor is developed ahead since §707.)

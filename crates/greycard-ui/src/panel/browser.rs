@@ -3426,11 +3426,15 @@ pub(crate) fn reread_open(st: &mut State, app: &App, worker: &Worker) -> bool {
 /// under the stand-in's default edit
 /// when the row says the sidecar holds no develop and no versions,
 /// which is what the read will give (a wrong guess only misses the
-/// shelf), its turn read off the row's. Left out, and said in the log:
-/// a frame under an offline root, which has nothing to decode, and a
-/// stand-in whose row says it is edited, whose edit only a read of the
-/// sidecar would give; that read would queue ahead of the user's own
-/// requests and put the window's bar up, so it is not asked for.
+/// shelf), its turn read off the row's. Any other stand-in (its row
+/// says it is edited, holds versions, or shows a mirror) is sent to be
+/// read first ([`crate::worker::ReadFirst`]): the worker reads its
+/// sidecar in the prefetch's own idle slot, so nothing queues ahead of
+/// the user's requests or puts the window's bar up, and nothing lands
+/// in the window's state. Left out, and said in the log: a frame under
+/// an offline root, which has nothing to decode, and a stand-in to be
+/// read first whose read is not the worker's to make
+/// ([`not_read_first`]).
 pub(crate) fn neighbors_of(st: &State, i: usize) -> Vec<crate::worker::Neighbor> {
     neighbors_said(st, i, true)
 }
@@ -3457,12 +3461,14 @@ fn neighbors_said(st: &State, i: usize, say: bool) -> Vec<crate::worker::Neighbo
                 return None;
             }
             let turn = if crate::rows::is_loaded(st, c) {
-                st.sidecar_at(c)?.turn
+                Some(st.sidecar_at(c)?.turn)
             } else if let Some(turn) = unedited_stand_in(st, c) {
-                turn
-            } else {
-                left_out("its sidecar is not read, and its row says it holds an edit or versions");
+                Some(turn)
+            } else if let Some(why) = not_read_first(st, c) {
+                left_out(why);
                 return None;
+            } else {
+                None
             };
             // In the export queue's view, a neighbor as its Loupe will
             // open it: under its queued edit.
@@ -3474,8 +3480,24 @@ fn neighbors_said(st: &State, i: usize, say: bool) -> Vec<crate::worker::Neighbo
                     seed_blend: q.seed_blend,
                     side,
                     steps,
+                    read_first: None,
                 });
             }
+            let Some(turn) = turn else {
+                // The edit, the turn, and the seed stand in until the
+                // worker's read.
+                return Some(crate::worker::Neighbor {
+                    edit: st.line(c).map(|l| l.current.clone()).unwrap_or_default(),
+                    path,
+                    turn: 0,
+                    seed_blend: false,
+                    side,
+                    steps,
+                    read_first: Some(crate::worker::ReadFirst {
+                        version: st.cell(c)?.version.clone(),
+                    }),
+                });
+            };
             Some(crate::worker::Neighbor {
                 edit: st.line(c)?.current.clone(),
                 path,
@@ -3483,6 +3505,7 @@ fn neighbors_said(st: &State, i: usize, say: bool) -> Vec<crate::worker::Neighbo
                 seed_blend: crate::rows::wants_seed(st, c),
                 side,
                 steps,
+                read_first: None,
             })
         })
         .collect()
@@ -3530,6 +3553,7 @@ impl NeighborsSent {
                     && a.steps == b.steps
                     && a.turn % 4 == b.turn % 4
                     && a.seed_blend == b.seed_blend
+                    && a.read_first == b.read_first
                     && same_base(&a.edit, &b.edit)
             })
     }
@@ -3624,6 +3648,26 @@ pub(crate) fn neighbors_back(st: &mut State, worker: &crate::worker::Worker, c: 
     ) {
         st.develop.neighbors_sent = Some(NeighborsSent::of(st, c, generation));
     }
+}
+
+/// Why the worker is not to read the sidecar of cell `c`'s frame, which
+/// stands in from its row, for a prefetch; none when it may. Not with
+/// sidecars off, when the window's open reads none either; and not once
+/// a read of it has failed, when the open opens it as it stands in. A
+/// frame in a folder on a network mount is the worker's to pass over,
+/// which asks each folder's mount itself (`Worker::set_remote_check`).
+fn not_read_first(st: &State, c: usize) -> Option<&'static str> {
+    if st.window.sidecars().is_none() {
+        return Some("its sidecar is not read, and sidecars are off");
+    }
+    if st
+        .file_at(c)
+        .and_then(|f| st.from_row.get(f))
+        .is_some_and(|r| r.unread.is_some())
+    {
+        return Some("its sidecar did not read");
+    }
+    None
 }
 
 /// The quarter turns of cell `c`'s frame when it stands in from a row
@@ -4658,10 +4702,14 @@ mod tests {
         );
         assert_eq!(near[0].seed_blend, crate::rows::wants_seed(&st, 3));
 
+        assert!(near.iter().all(|n| n.read_first.is_none()), "all read");
+
         // Listed from the index, the sidecars standing in from their
         // rows: one whose row says it holds no develop goes under the
         // stand-in's default edit at the turn its row shows taken back;
-        // one whose row says it is edited is left out, not read.
+        // one whose row says it is edited is sent for the worker to read
+        // first, under the stand-in's edit until then.
+        st.window.write_sidecars = true;
         let stand_in = |edited: bool, turns: (u8, bool)| crate::rows::FromRow {
             read: false,
             turns,
@@ -4673,19 +4721,109 @@ mod tests {
         st.from_row[0] = stand_in(true, (0, false));
         st.line_mut(3).expect("a line").current = Edit::default();
         let near = neighbors_of(&st, 1);
-        assert_eq!(near.len(), 2, "the edited stand-in left out");
-        assert_eq!(near[1].path, files[4]);
+        assert_eq!(near.len(), 3);
+        assert_eq!(near[2].path, files[4]);
         assert_eq!(
             (near[0].path.clone(), near[0].side, near[0].turn),
             (files[3].clone(), Next, 1)
         );
         assert_eq!(near[0].edit, Edit::default());
         assert!(near[0].seed_blend, "a raw never developed, by its row");
-        // A mirror the row shows is no default geometry: left out.
+        assert!(near[0].read_first.is_none(), "the row's word taken");
+        assert_eq!(
+            (near[1].path.clone(), near[1].side),
+            (files[0].clone(), Previous)
+        );
+        assert_eq!(
+            near[1].read_first,
+            Some(crate::worker::ReadFirst { version: None }),
+            "the edited stand-in read first"
+        );
+        // A mirror the row shows is no default geometry: read first.
         st.from_row[3] = stand_in(false, (1, true));
         let near = neighbors_of(&st, 1);
-        assert_eq!(near.len(), 1);
-        assert_eq!(near[0].path, files[4]);
+        assert_eq!(near.len(), 3);
+        assert!(near[0].read_first.is_some());
+        // Not by the worker: with sidecars off, or after a read of it
+        // failed. A network mount is the worker's to ask.
+        let read_firsts = |st: &State| {
+            neighbors_of(st, 1)
+                .into_iter()
+                .filter(|n| n.read_first.is_some())
+                .map(|n| n.path)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(read_firsts(&st), vec![files[3].clone(), files[0].clone()]);
+        st.from_row[3].unread = Some("it did not read".into());
+        assert_eq!(read_firsts(&st), vec![files[0].clone()]);
+        assert_eq!(neighbors_of(&st, 1).len(), 2, "left out");
+        st.window.write_sidecars = false;
+        assert!(read_firsts(&st).is_empty());
+    }
+
+    /// The neighbors as sent and as they are now differ when one sent to
+    /// be read first is now read by the window, its edit's base the
+    /// same: the worker is told again.
+    #[test]
+    fn a_neighbor_read_first_then_read_is_sent_again() {
+        let n = |read_first| crate::worker::Neighbor {
+            path: "/nowhere/IMG_0001.CR3".into(),
+            edit: Edit::default(),
+            turn: 0,
+            seed_blend: false,
+            side: crate::worker::Side::Next,
+            steps: 1,
+            read_first,
+        };
+        let sent = NeighborsSent {
+            generation: 1,
+            open: "/nowhere/IMG_0000.CR3".into(),
+            neighbors: vec![n(Some(crate::worker::ReadFirst { version: None }))],
+            filter: String::new(),
+            sort: crate::sort::Choice::Hand,
+        };
+        assert!(sent.serves(&[n(Some(crate::worker::ReadFirst { version: None }))]));
+        assert!(!sent.serves(&[n(None)]));
+        assert!(!sent.serves(&[n(Some(crate::worker::ReadFirst {
+            version: Some("v".into())
+        }))]));
+    }
+
+    /// A virtual copy's cell standing in from its row is read first from
+    /// its own line: the worker is told the version.
+    #[test]
+    fn a_version_standing_in_is_read_first_by_its_version() {
+        let app = window(3);
+        let files = crate::testing::folder(3);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        let mut st = state.borrow_mut();
+        st.window.write_sidecars = true;
+        let id = st.sidecars[2]
+            .new_version(None, Some("Warm"))
+            .expect("a version");
+        let copy = crate::versions::Cell {
+            version: Some(std::sync::Arc::from(id.as_str())),
+            ..st.cells[2].clone()
+        };
+        st.cells.push(copy);
+        st.views.shown = vec![0, 1, 3];
+        st.from_row = (0..3)
+            .map(|_| crate::rows::FromRow {
+                read: false,
+                ..crate::rows::FromRow::read()
+            })
+            .collect();
+        let near = neighbors_of(&st, 1);
+        let copy = near
+            .iter()
+            .find(|n| n.path == files[2])
+            .expect("the copy sent");
+        assert_eq!(
+            copy.read_first,
+            Some(crate::worker::ReadFirst {
+                version: Some(std::sync::Arc::from(id.as_str()))
+            })
+        );
     }
 
     /// A step is a move to the frame the right or the left key reaches;

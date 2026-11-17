@@ -62,7 +62,7 @@ pub fn load_sidecar_said(
     fresh: Fresh,
 ) -> (Sidecar, Option<Trouble>) {
     match sidecars {
-        Some(placement) => load(f, Some(placement), fresh),
+        Some(placement) => load(f, Some(placement), fresh, true),
         None => (fresh_sidecar(f, fresh), None),
     }
 }
@@ -110,19 +110,32 @@ pub fn fresh_sidecar(f: &Path, fresh: Fresh) -> Sidecar {
 /// nothing taken and nothing written, a raw with none at the default.
 /// Each of those readers gives up on a sidecar that is not there.
 pub fn read_sidecar_said(f: &Path) -> (Sidecar, Option<Trouble>) {
-    load(f, None, Fresh::default())
+    load(f, None, Fresh::default(), true)
 }
 
 /// [`read_sidecar_said`] with a raw with no sidecar starting as
 /// `fresh` says: for a reader that holds the editor's settings (a
 /// merge's frame the window has not read).
 pub fn read_sidecar_fresh(f: &Path, fresh: Fresh) -> (Sidecar, Option<Trouble>) {
-    load(f, None, fresh)
+    load(f, None, fresh, true)
+}
+
+/// [`read_sidecar_said`] for a reader that only looks ahead (the
+/// prefetch of a neighbor), which says for itself what it does about a
+/// sidecar that will not read, and says nothing else of it: nothing
+/// starts from the default edit and nothing is turned or left out, so
+/// the reader says none of what it says for an open. The window's own
+/// read says it when the frame is opened.
+pub fn peek_sidecar(f: &Path) -> (Sidecar, Option<Trouble>) {
+    load(f, None, Fresh::default(), false)
 }
 
 /// The sidecar read, and with `takes` a Lightroom develop beside it
-/// taken and written there.
-fn load(f: &Path, takes: Option<Placement>, fresh: Fresh) -> (Sidecar, Option<Trouble>) {
+/// taken and written there. `say` is whether what the read found (a
+/// sidecar that will not read, shapes this build does not know, a turn
+/// taken from an XMP, an orientation that could not be read) is said in
+/// the log ([`said`]).
+fn load(f: &Path, takes: Option<Placement>, fresh: Fresh, say: bool) -> (Sidecar, Option<Trouble>) {
     let mut trouble = None;
     // A picture that is not a raw starts from its own default.
     let fresh = || fresh_sidecar(f, fresh);
@@ -142,12 +155,17 @@ fn load(f: &Path, takes: Option<Placement>, fresh: Fresh) -> (Sidecar, Option<Tr
                 .filter(|c| c.shape == Shape::Unknown)
                 .count();
             if unknown > 0 {
-                log::warn!(
-                    "{}: sidecar: {unknown} mask shape(s) this build does not know, left out of \
-                     their masks; {dropped} of a kind it has not heard of, dropped when the edit \
-                     is saved, and {} kept as they came",
-                    file_name(f),
-                    unknown - dropped
+                said(
+                    say,
+                    module_path!(),
+                    log::Level::Warn,
+                    format!(
+                        "{}: sidecar: {unknown} mask shape(s) this build does not know, left \
+                         out of their masks; {dropped} of a kind it has not heard of, dropped \
+                         when the edit is saved, and {} kept as they came",
+                        file_name(f),
+                        unknown - dropped
+                    ),
                 );
             }
             s
@@ -157,9 +175,14 @@ fn load(f: &Path, takes: Option<Placement>, fresh: Fresh) -> (Sidecar, Option<Tr
             fresh()
         }
         Err(e) => {
-            log::warn!(
-                "{}: sidecar: {e}; starting from the default edit",
-                file_name(f)
+            said(
+                say,
+                module_path!(),
+                log::Level::Warn,
+                format!(
+                    "{}: sidecar: {e}; starting from the default edit",
+                    file_name(f)
+                ),
             );
             trouble = Some(Trouble::Unreadable(format!("{e}")));
             fresh()
@@ -178,30 +201,52 @@ fn load(f: &Path, takes: Option<Placement>, fresh: Fresh) -> (Sidecar, Option<Tr
     // a packet that carries `tiff:Orientation` at all, so a
     // folder whose XMPs are silent about it opens without
     // reading a byte of any raw.
-    let took = xmp::adopt(f, &mut sidecar, || {
-        greycard_core::decode::orientation_path(f)
-            .inspect_err(|e| log::warn!("{}: orientation: {e}", file_name(f)))
-            .ok()
-    });
+    let took = xmp::adopt_said(
+        f,
+        &mut sidecar,
+        || {
+            greycard_core::decode::orientation_path(f)
+                .inspect_err(|e| {
+                    said(
+                        say,
+                        module_path!(),
+                        log::Level::Warn,
+                        format!("{}: orientation: {e}", file_name(f)),
+                    )
+                })
+                .ok()
+        },
+        say,
+    );
     // A turn taken from somebody else's file turns the
     // picture under the user without their having pressed
     // anything, and records no state to undo it with, so it
     // is said out loud and by name.
     if took.turned.is_some() {
-        log::info!(
-            "{}: the XMP beside it says the frame stands {}; turned to match",
-            file_name(f),
-            // Where it now stands, not how far it moved to
-            // get there: a reader of the log wants the frame,
-            // not the delta.
-            turn_words(i32::from(sidecar.turn))
+        said(
+            say,
+            module_path!(),
+            log::Level::Info,
+            format!(
+                "{}: the XMP beside it says the frame stands {}; turned to match",
+                file_name(f),
+                // Where it now stands, not how far it moved to
+                // get there: a reader of the log wants the frame,
+                // not the delta.
+                turn_words(i32::from(sidecar.turn))
+            ),
         );
         if took.left_placed {
-            log::warn!(
-                "{}: its masks and repair patches stay where they are on the \
-                 screen, since nothing is decoded at a folder's opening to \
-                 measure the frame by",
-                file_name(f)
+            said(
+                say,
+                module_path!(),
+                log::Level::Warn,
+                format!(
+                    "{}: its masks and repair patches stay where they are on the \
+                     screen, since nothing is decoded at a folder's opening to \
+                     measure the frame by",
+                    file_name(f)
+                ),
             );
         }
     }
@@ -222,6 +267,24 @@ fn load(f: &Path, takes: Option<Placement>, fresh: Fresh) -> (Sidecar, Option<Tr
         }
     }
     (sidecar, trouble)
+}
+
+/// `line` in the log at `level` under `target` (the caller's module, as
+/// its own `log::warn!` would have it) when `say`; in the tests, also
+/// kept for them to read ([`SAID`]).
+pub(crate) fn said(say: bool, target: &str, level: log::Level, line: String) {
+    if !say {
+        return;
+    }
+    log::log!(target: target, level, "{line}");
+    #[cfg(test)]
+    SAID.with(|s| s.borrow_mut().push(format!("{target} {line}")));
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What [`said`] has logged on this thread.
+    static SAID: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// A raw's starting edit, its learned blend at its ISO, and the body
@@ -358,5 +421,68 @@ mod tests {
         edit.light.exposure = 0.5;
         assert!(sidecar.record(edit));
         assert!(!never_developed(&sidecar));
+    }
+
+    /// A peek says nothing of what it found, where the window's read of
+    /// the same files says each thing: a sidecar that will not read and
+    /// an orientation an XMP asks to be measured against a raw that will
+    /// not say it.
+    #[test]
+    fn a_peek_is_quiet_where_a_read_says_what_it_found() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-peek-quiet-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        std::fs::write(Sidecar::path_in(&raw, Placement::Beside), b"{ not json").unwrap();
+        std::fs::write(
+            xmp::short_path(&raw),
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:tiff="http://ns.adobe.com/tiff/1.0/" tiff:Orientation="6"/>
+ </rdf:RDF>
+</x:xmpmeta>"#,
+        )
+        .unwrap();
+        let said_now = || SAID.with(|s| std::mem::take(&mut *s.borrow_mut()));
+        said_now();
+        let (_, trouble) = peek_sidecar(&raw);
+        assert!(matches!(trouble, Some(Trouble::Unreadable(_))));
+        assert_eq!(said_now(), Vec::<String>::new(), "the peek says nothing");
+        let (_, trouble) = read_sidecar_said(&raw);
+        assert!(matches!(trouble, Some(Trouble::Unreadable(_))));
+        let lines = said_now();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("greycard_edit_io::on_disk ")
+                    && l.ends_with("; starting from the default edit")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains(": orientation: ")),
+            "{lines:?}"
+        );
+        // An XMP beside it that will not parse.
+        let broken = dir.join("IMG_0002.CR3");
+        std::fs::write(&broken, b"not a raw").unwrap();
+        std::fs::write(xmp::short_path(&broken), b"<x:xmpmeta <<< not xml").unwrap();
+        peek_sidecar(&broken);
+        assert_eq!(said_now(), Vec::<String>::new(), "the peek says nothing");
+        read_sidecar_said(&broken);
+        let lines = said_now();
+        assert!(
+            lines.iter().any(|l| l.starts_with("greycard_edit_io::xmp ")
+                && l.ends_with("; the sidecar's meta stands")),
+            "{lines:?}"
+        );
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

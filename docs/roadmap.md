@@ -374,9 +374,9 @@ On a fanless laptop the fit view follows a slider without a wait,
 the sharpen included, and the first Subject mask is there in ten
 seconds.
 
-- [ ] An edited neighbor is never developed ahead: the prefetch
-      skips a frame with a sidecar. Read the sidecar on the worker in
-      the prefetch's idle slot (discussion 168, §706, §379)
+- [ ] The prefetch's mount check on a Mac (§707): `getfsstat` is
+      untested there; open a folder on a share and one on a local
+      disk and read the log's prefetch lines
 - [ ] The window walks the profile folder and the looks on every
       open, 0.7 s on a tester's 4,439 profiles; hold the listing and
       check it off the window's thread (discussion 168, §706)

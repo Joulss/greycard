@@ -167,6 +167,10 @@ pub(super) fn run(
     // What the log was last told of the prefetch's depth and the
     // walk's direction, said again only when either changes.
     let mut depth_said: Option<(prefetch::Depth, prefetch::Side)> = None;
+    // What the reads of the neighbors' sidecars keep: the ones that did
+    // not serve, not read again until they change, and what each folder
+    // is on.
+    let mut peeks = prefetch::Peeks::default();
     // The generation of the last develop delivered, open or not: an ask
     // for the refined masks' picture of another is let go.
     let mut developed: Option<u64> = None;
@@ -249,6 +253,9 @@ pub(super) fn run(
                         greycard_ai::Provider::WebGpu,
                         greycard_ai::Provider::Cpu,
                     ]);
+                }
+                if let Some(check) = q.remote_check.take() {
+                    peeks.set_remote(check);
                 }
                 if let Some(db) = q.lenses.take() {
                     lenses = Some(db);
@@ -365,6 +372,7 @@ pub(super) fn run(
                     shelf: shelf.as_ref(),
                     idle: edited.idle_for(),
                     frame_open: edited.any_open(),
+                    device_lost: q.gpu_lost.is_some(),
                 };
                 let due = prefetch::due(&mut q.neighbors, &mut depth_said, &now);
                 prefetch::settle_reservation(&due, &edited, wake);
@@ -398,6 +406,49 @@ pub(super) fn run(
                             .unwrap_or_default();
                         drop(q);
                         let generation = landed;
+                        // A neighbor whose edit the window does not hold:
+                        // its sidecar read here, in this slot, asking
+                        // before and after whether to give way.
+                        let asked = || {
+                            let q = lock.lock().expect("worker queue");
+                            prefetch::asked(&q, edited.any_open())
+                        };
+                        let ready =
+                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                prefetch::read_first(&n, &mut peeks, &asked)
+                            })) {
+                                Ok(prefetch::Peeked::Ready(ready)) => Ok(*ready),
+                                Ok(prefetch::Peeked::GaveWay) => Err(true),
+                                Ok(prefetch::Peeked::Skipped(_)) => Err(false),
+                                Err(payload) => {
+                                    let line = format!(
+                                        "the prefetch of {}: the worker panicked reading its \
+                                     sidecar: {}",
+                                        file_label(&n.path),
+                                        panic_message(payload.as_ref())
+                                    );
+                                    tracing::warn!("{line}");
+                                    prefetch::tap(&line);
+                                    Err(false)
+                                }
+                            };
+                        let ready = match ready {
+                            Ok(ready) => ready,
+                            Err(gave_way) => {
+                                edited.set_prefetching(false);
+                                wake();
+                                q = lock.lock().expect("worker queue");
+                                // Read again from the start once quiet,
+                                // as one abandoned between stages is.
+                                if gave_way
+                                    && let Some(waiting) = q.neighbors.as_mut()
+                                    && Some(waiting.generation) == generation
+                                {
+                                    waiting.gave_way(n, round);
+                                }
+                                continue;
+                            }
+                        };
                         let in_hand = opened_path.as_deref().zip(base.as_ref());
                         let shelf = shelf.as_mut().expect("a shelf is due to have one");
                         // What the list names first in line to stay,
@@ -405,11 +456,11 @@ pub(super) fn run(
                         shelf.bring_forward(&keep);
                         let ahead = |facts: &crate::stages::Facts| {
                             let q = lock.lock().expect("worker queue");
-                            prefetch::ahead(&q, edited.any_open(), &n, facts, lenses.as_deref())
+                            prefetch::ahead(&q, edited.any_open(), &ready, facts, lenses.as_deref())
                         };
                         let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             prefetch::prefetch(
-                                &n,
+                                &ready,
                                 in_hand,
                                 &keep,
                                 shelf,
@@ -440,7 +491,7 @@ pub(super) fn run(
                             // of the frame just left.
                             Ok(Fetched::Abandoned(_, facts)) => {
                                 let moved =
-                                    prefetch::moved_under(&q, &n, &facts, lenses.as_deref());
+                                    prefetch::moved_under(&q, &ready, &facts, lenses.as_deref());
                                 if moved {
                                     prefetch::note(format!(
                                         "the prefetch of {} let go: its edit changed",

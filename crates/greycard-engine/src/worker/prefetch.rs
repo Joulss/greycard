@@ -144,8 +144,12 @@ pub fn depth(room: u64, heading: Heading) -> Depth {
 /// its file, the edit its line holds, its quarter turns, and whether
 /// its learned blend is still to be seeded from its ISO; which side of
 /// the open frame it is on, and how many steps away (1 for the frame
-/// an arrow key reaches).
-#[derive(Clone, Debug)]
+/// an arrow key reaches). With `read_first`, the window does not hold
+/// its edit (its sidecar stands in from the index's row, which says it
+/// is edited): the edit, the turn, and the seed sent are placeholders,
+/// and the worker reads the sidecar for them in the prefetch's own idle
+/// slot ([`read_first`]).
+#[derive(Clone, Debug, PartialEq)]
 pub struct Neighbor {
     pub path: PathBuf,
     pub edit: Edit,
@@ -153,6 +157,15 @@ pub struct Neighbor {
     pub seed_blend: bool,
     pub side: Side,
     pub steps: u8,
+    pub read_first: Option<ReadFirst>,
+}
+
+/// What the worker needs to read a neighbor's edit from its sidecar:
+/// which line of it the strip's cell is, a version's id or none for the
+/// file's own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadFirst {
+    pub version: Option<Arc<str>>,
 }
 
 impl Neighbor {
@@ -295,6 +308,10 @@ pub(super) struct Idle<'a> {
     pub idle: Duration,
     /// A frame is open in the editor: not culling, the grid, or none.
     pub frame_open: bool,
+    /// The window's device was lost, and the worker has not yet taken
+    /// that up (it does at its next job): no prefetch begins, since every
+    /// one would give way to it at its first check, its decode thrown away.
+    pub device_lost: bool,
 }
 
 /// What the idle worker does about the neighbors waiting in `queued`,
@@ -320,6 +337,10 @@ pub(super) fn due(
     let Some(landed) = now.landed else {
         return Due::Nothing;
     };
+    // Kept for after the loss is taken up.
+    if now.device_lost {
+        return Due::Nothing;
+    }
     if neighbors.generation < landed {
         *queued = None;
         return Due::Nothing;
@@ -414,6 +435,258 @@ pub fn behind_prefetch(
     }
 }
 
+/// A neighbor as [`read_first`] leaves it.
+#[derive(Debug, PartialEq)]
+pub(super) enum Peeked {
+    /// Its edit, turn, and seed are its sidecar's, or were the window's.
+    Ready(Box<Neighbor>),
+    /// Something was asked of the worker, before or after the read.
+    GaveWay,
+    /// Not made, for this reason: its sidecar did not read, or has no
+    /// such line.
+    Skipped(String),
+}
+
+/// Neighbor `n` with the edit, the turn, and the seed an open of it
+/// would send, read from its sidecar when the window sent it to be read
+/// first ([`Neighbor::read_first`]); as it came otherwise. The reader is
+/// the window's own (`on_disk`'s), with no Lightroom develop taken and
+/// nothing written: no sidecar, no index, no XMP, so a sidecar from an
+/// older build is brought up to date in memory alone. The line is the
+/// cell's (its version, or the file's own), the turn the file's, and the
+/// seed still to come when that line was never developed, as the
+/// window's open asks once it has read the sidecar (`rows::wants_seed`).
+/// `asked` is whether anything has been asked of the worker since: asked
+/// before the read, and after it, before the decode that cannot stop.
+/// The window's own read at the real open stays the word on the edit: a
+/// sidecar changed after this read gives a base whose steps the open's
+/// do not match, which the shelf does not hand out. A sidecar that would
+/// not serve (not there, not readable, without the cell's version) is
+/// said once and kept in `peeks`, and skipped without a word or a read
+/// at every open after, until it changes. A frame whose folder is on a
+/// network mount or an automount not mounted yet, as the window's check
+/// says ([`Peeks::not_to_peek`]), is not touched at all: a read cannot
+/// be stopped, could hold the worker for as long as the share takes to
+/// answer, and would mount an automount. Said once a folder.
+pub(super) fn read_first(n: &Neighbor, peeks: &mut Peeks, asked: &dyn Fn() -> bool) -> Peeked {
+    let Some(first) = &n.read_first else {
+        return Peeked::Ready(Box::new(n.clone()));
+    };
+    // Not a raw: the prefetch says so, with nothing read.
+    if is_picture_path(&n.path) {
+        return Peeked::Ready(Box::new(n.clone()));
+    }
+    let name = file_label(&n.path);
+    let side = n.place();
+    let gave_way = |when: &str| {
+        note(format!(
+            "the prefetch of the {side} frame, {name}, abandoned {when} its sidecar's read: \
+             the worker was asked for something"
+        ));
+        Peeked::GaveWay
+    };
+    let skipped = |why: String| {
+        note(format!(
+            "the prefetch of the {side} frame, {name}, skipped: {why}"
+        ));
+        Peeked::Skipped(why)
+    };
+    if asked() {
+        return gave_way("before");
+    }
+    // Before anything of the frame's is touched on the disk.
+    match peeks.not_to_peek(&n.path) {
+        Some((why, true)) => return skipped(format!("its folder is on {why}")),
+        Some((why, false)) => return Peeked::Skipped(format!("its folder is on {why}")),
+        None => {}
+    }
+    let key = UnreadKey {
+        path: n.path.clone(),
+        version: first.version.clone(),
+        sidecar: sidecar_stat(&n.path),
+    };
+    if peeks.holds(&key) {
+        return Peeked::Skipped("its sidecar did not serve before, and has not changed".into());
+    }
+    let started = Instant::now();
+    touched();
+    let (sidecar, trouble) = greycard_edit_io::on_disk::peek_sidecar(&n.path);
+    let why = match trouble {
+        Some(greycard_edit_io::on_disk::Trouble::Missing) => {
+            Some("its sidecar is not there".to_string())
+        }
+        Some(greycard_edit_io::on_disk::Trouble::Unreadable(e)) => {
+            Some(format!("its sidecar does not read: {e}"))
+        }
+        None => None,
+    };
+    let line = sidecar.line(first.version.as_deref());
+    let why = why.or_else(|| {
+        line.is_none()
+            .then(|| "its sidecar has no such version".into())
+    });
+    if let Some(why) = why {
+        peeks.put(key);
+        return skipped(why);
+    }
+    let line = line.expect("a line, or a reason");
+    let ready = Neighbor {
+        edit: line.current.clone(),
+        turn: sidecar.turn,
+        seed_blend: greycard_edit_io::on_disk::line_never_developed(line),
+        read_first: None,
+        ..n.clone()
+    };
+    note(format!(
+        "the {side} frame, {name}: its sidecar read first, in {:.1} ms",
+        started.elapsed().as_secs_f64() * 1e3
+    ));
+    at_check(&n.path, "sidecar's read");
+    if asked() {
+        return gave_way("after");
+    }
+    Peeked::Ready(Box::new(ready))
+}
+
+/// A neighbor's sidecar as it stood when it did not serve a read: the
+/// frame, the cell's version, and the sidecar file found for it with its
+/// length and time (none when there was none).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct UnreadKey {
+    path: PathBuf,
+    version: Option<Arc<str>>,
+    sidecar: Option<(PathBuf, u64, Option<std::time::SystemTime>)>,
+}
+
+/// The sidecar `Sidecar::find` gives for `raw`, with its length and time.
+fn sidecar_stat(raw: &Path) -> Option<(PathBuf, u64, Option<std::time::SystemTime>)> {
+    touched();
+    let path = greycard_edit::Sidecar::find(raw)?;
+    let meta = path.metadata().ok();
+    Some((
+        path,
+        meta.as_ref().map_or(0, std::fs::Metadata::len),
+        meta.and_then(|m| m.modified().ok()),
+    ))
+}
+
+/// A neighbor's frame touched on the disk by [`read_first`] (its
+/// sidecar looked for, or read): counted in a test, which asks
+/// [`touches`].
+fn touched() {
+    #[cfg(test)]
+    TOUCHES.with(|t| t.set(t.get() + 1));
+}
+
+#[cfg(test)]
+thread_local! {
+    static TOUCHES: Cell<usize> = const { Cell::new(0) };
+}
+
+/// How many times [`read_first`] has touched a frame's files on this
+/// thread.
+#[cfg(test)]
+pub(super) fn touches() -> usize {
+    TOUCHES.with(Cell::get)
+}
+
+/// Why a folder is not to be read ahead (`a network mount (nfs4)`, `an
+/// automount not mounted yet`), or none for a local one: the window's
+/// `mounts::not_to_peek`, handed over. It asks the system's list of
+/// mounts, never the mount.
+pub type RemoteFs = fn(&Path) -> Option<String>;
+
+/// What the worker keeps between reads of the neighbors' sidecars
+/// ([`read_first`]), for the session: the latest [`UNREAD_KEPT`]
+/// sidecars that did not serve a read, the window's check of what a
+/// folder is on, and the folders said in the log not to be read.
+#[derive(Debug, Default)]
+pub(super) struct Peeks {
+    unread: VecDeque<UnreadKey>,
+    remote: Option<RemoteFs>,
+    said: std::collections::HashSet<PathBuf>,
+}
+
+/// How many sidecars [`Peeks`] keeps, the oldest let go first.
+const UNREAD_KEPT: usize = 64;
+
+impl Peeks {
+    fn holds(&self, key: &UnreadKey) -> bool {
+        self.unread.contains(key)
+    }
+
+    fn put(&mut self, key: UnreadKey) {
+        self.unread
+            .retain(|k| k.path != key.path || k.version != key.version);
+        if self.unread.len() >= UNREAD_KEPT {
+            self.unread.pop_front();
+        }
+        self.unread.push_back(key);
+    }
+
+    /// The window's check of what a folder is on, from now on; the
+    /// folders said are said again.
+    pub(super) fn set_remote(&mut self, check: RemoteFs) {
+        self.remote = Some(check);
+        self.said.clear();
+    }
+
+    /// Why the folder of `raw` is not to be read ahead, and whether it is
+    /// the first time that is said of the folder; none for a local
+    /// folder, or with no check handed over (a worker with no window).
+    /// Asked of the check every time, an answer kept for nothing: the
+    /// list of mounts is local and cheap to read, and a share an
+    /// automount mounts since, or one unmounted, is then seen at once.
+    fn not_to_peek(&mut self, raw: &Path) -> Option<(String, bool)> {
+        let check = self.remote?;
+        let folder = raw.parent().unwrap_or(Path::new(""));
+        let why = check(folder)?;
+        Some((why, self.said.insert(folder.to_path_buf())))
+    }
+}
+
+/// Whether the queue holds any job the worker would take up, or any
+/// change it must take up first, that a prefetch gives way to: the open
+/// of its own frame among them, since this is what the read of a
+/// neighbor's sidecar ([`read_first`]) asks, before the frame's edit is
+/// known to compare an open with. See [`others`] for what is not
+/// counted, and why.
+pub(super) fn asked(q: &Queue, frame_open: bool) -> bool {
+    others(q, frame_open) || q.develop.is_some() || !q.keeps.is_empty()
+}
+
+/// What the queue `q` holds besides a develop and a save that a prefetch
+/// gives way to (see [`ahead`]): every job the worker's loop breaks to,
+/// a device or a context handed over or lost, and the masks a new base
+/// asked for once their settling is due (which the loop would move onto
+/// `masks` were it not held here).
+///
+/// Not counted: the masks of frames not open (`masks_for`), which wait
+/// while a frame is open in the editor, and with none open the editor
+/// is left, which is counted; a Subject model to forget and models
+/// arrived, which change what a later mask job loads and are taken up
+/// at the loop's next pass with nothing waiting on them; edits changed
+/// on files, which [`moved_under`] counts for the neighbor's own file
+/// and which only let shelved bases go otherwise; and the neighbors, the
+/// landed open, and the folded generations, which are the prefetch's own
+/// bookkeeping.
+fn others(q: &Queue, frame_open: bool) -> bool {
+    !frame_open
+        || q.stopping
+        || q.lenses.is_some()
+        || q.gpu.is_some()
+        || q.context.is_some()
+        || q.gpu_lost.is_some()
+        || q.people
+        || q.landscape
+        || q.mask_picture.is_some()
+        || !q.masks.is_empty()
+        || super::masks::settling_left(&q.settling, Instant::now())
+            .is_some_and(|left| left.is_zero())
+        || !q.exports.is_empty()
+        || !q.people_on.is_empty()
+}
+
 /// What has been asked of the worker since a prefetch began.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Ahead {
@@ -440,17 +713,7 @@ pub(super) fn ahead(
     facts: &Facts,
     lenses: Option<&greycard_lens::Database>,
 ) -> Ahead {
-    let others = !frame_open
-        || q.stopping
-        || q.lenses.is_some()
-        || q.gpu.is_some()
-        || q.people
-        || q.landscape
-        || !q.masks.is_empty()
-        || !q.exports.is_empty()
-        || !q.people_on.is_empty()
-        || moved_under(q, n, facts, lenses);
-    if others {
+    if others(q, frame_open) || moved_under(q, n, facts, lenses) {
         return Ahead::Work;
     }
     match &q.develop {
@@ -897,6 +1160,7 @@ mod tests {
             seed_blend: false,
             side,
             steps: 1,
+            read_first: None,
         }
     }
 
@@ -915,7 +1179,105 @@ mod tests {
             shelf,
             idle,
             frame_open: true,
+            device_lost: false,
         }
+    }
+
+    /// While a lost device waits to be taken up no prefetch begins, and
+    /// the list waits with it.
+    #[test]
+    fn no_prefetch_begins_while_a_lost_device_waits() {
+        let open = base(40, 30);
+        let shelf = Shelf::new(Budget::Bytes(size(40, 30) * 5));
+        let mut queued = both(3);
+        let lost = Idle {
+            device_lost: true,
+            ..now(Some(3), Some(&open), false, Some(&shelf), QUIET * 2)
+        };
+        assert!(matches!(due(&mut queued, &mut None, &lost), Due::Nothing));
+        assert_eq!(queued.as_ref().map(|q| q.waiting.len()), Some(2), "kept");
+        assert!(matches!(
+            due(
+                &mut queued,
+                &mut None,
+                &now(Some(3), Some(&open), false, Some(&shelf), QUIET * 2)
+            ),
+            Due::Fetch(_)
+        ));
+    }
+
+    /// The sidecars that did not serve are kept to the latest 64, one a
+    /// line of a file, the oldest let go first.
+    #[test]
+    fn the_unread_sidecars_are_kept_to_the_latest_64() {
+        let key = |i: usize, version: Option<&str>| UnreadKey {
+            path: PathBuf::from(format!("/nowhere/{i}.CR3")),
+            version: version.map(Arc::from),
+            sidecar: None,
+        };
+        let mut peeks = Peeks::default();
+        for i in 0..=UNREAD_KEPT {
+            peeks.put(key(i, None));
+        }
+        assert_eq!(peeks.unread.len(), UNREAD_KEPT);
+        assert!(!peeks.holds(&key(0, None)), "the oldest let go");
+        assert!(peeks.holds(&key(1, None)));
+        assert!(peeks.holds(&key(UNREAD_KEPT, None)));
+        // The same line again replaces its own; another version is its own.
+        peeks.put(key(5, None));
+        peeks.put(key(5, Some("v")));
+        assert_eq!(peeks.unread.len(), UNREAD_KEPT);
+        assert!(peeks.holds(&key(5, Some("v"))));
+        assert!(peeks.holds(&key(5, None)));
+    }
+
+    /// The window's check is asked every time, its answer kept for
+    /// nothing: an automount that mounts its share in between is seen at
+    /// the next ask. Said once a folder, and again once the check is
+    /// handed over anew.
+    #[test]
+    fn a_folder_s_mount_is_asked_every_time_and_said_once() {
+        thread_local! {
+            static MOUNTED: Cell<bool> = const { Cell::new(false) };
+            static ASKED: Cell<usize> = const { Cell::new(0) };
+        }
+        fn check(folder: &Path) -> Option<String> {
+            ASKED.with(|a| a.set(a.get() + 1));
+            folder.starts_with("/mnt/archive").then(|| {
+                if MOUNTED.with(Cell::get) {
+                    "a network mount (nfs4)".to_string()
+                } else {
+                    "an automount not mounted yet".to_string()
+                }
+            })
+        }
+        let mut peeks = Peeks::default();
+        let at = |p: &str| Path::new(p).to_path_buf();
+        assert_eq!(
+            peeks.not_to_peek(&at("/mnt/archive/a/1.CR3")),
+            None,
+            "no check"
+        );
+        peeks.set_remote(check);
+        assert_eq!(
+            peeks.not_to_peek(&at("/mnt/archive/a/1.CR3")),
+            Some(("an automount not mounted yet".into(), true))
+        );
+        MOUNTED.with(|m| m.set(true));
+        assert_eq!(
+            peeks.not_to_peek(&at("/mnt/archive/a/2.CR3")),
+            Some(("a network mount (nfs4)".into(), false)),
+            "seen mounted at once, said already"
+        );
+        assert_eq!(peeks.not_to_peek(&at("/home/p/1.CR3")), None);
+        assert_eq!(peeks.not_to_peek(&at("/home/p/2.CR3")), None);
+        assert_eq!(ASKED.with(Cell::get), 4, "every time");
+        peeks.set_remote(check);
+        assert_eq!(
+            peeks.not_to_peek(&at("/mnt/archive/a/1.CR3")),
+            Some(("a network mount (nfs4)".into(), true)),
+            "said again"
+        );
     }
 
     fn both(generation: u64) -> Option<Neighbors> {

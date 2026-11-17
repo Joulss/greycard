@@ -194,6 +194,33 @@ impl Worker {
         }
     }
 
+    /// How to tell whether a folder may be read ahead (the window's
+    /// `mounts::not_to_peek`): a neighbor in a folder on a network mount
+    /// or an automount not yet mounted is not read (`prefetch::read_first`).
+    /// Asked at every read, nothing of its answers kept; handed over
+    /// again when the mounts may have changed, the folders the worker
+    /// has said it passed over are said again.
+    pub fn set_remote_check(&self, check: super::prefetch::RemoteFs) {
+        let mut q = self.queue.0.lock().expect("worker queue");
+        q.remote_check = Some(check);
+        #[cfg(any(test, feature = "testing"))]
+        {
+            q.remote_checks_by_test.0 += 1;
+            q.remote_checks_by_test.1 = Some(check);
+        }
+    }
+
+    /// How many checks of what a folder is on were handed over, and the
+    /// last: what the window's tests read of its wiring.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn remote_checks(&self) -> (usize, Option<super::prefetch::RemoteFs>) {
+        self.queue
+            .0
+            .lock()
+            .expect("worker queue")
+            .remote_checks_by_test
+    }
+
     /// The roots on a network mount: a frame under one has the reduced
     /// develop of its pictures alone.
     pub fn set_network_roots(&self, roots: Vec<PathBuf>) {

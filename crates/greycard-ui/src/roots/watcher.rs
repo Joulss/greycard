@@ -436,6 +436,9 @@ pub(crate) fn take_built(st: &mut State, built: Built) -> bool {
     st.views.library.watcher = watcher;
     // The reduced develop of a frame under one of these runs alone.
     if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
+        // The mounts looked at again: the prefetch's check handed over
+        // anew, so the folders it said it passed over are said again.
+        worker.set_remote_check(greycard_ui::mounts::not_to_peek);
         worker.set_network_roots(
             st.views
                 .library

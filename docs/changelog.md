@@ -172,6 +172,9 @@ design note behind it.
 
 ### Fixes
 
+- Stepping through frames that already have edits is quicker: the next ones
+  are developed ahead, as unedited ones were
+  ([§707](https://github.com/jessolmstead/greycard/blob/master/docs/notes/707-edited-neighbors-read-first-for-the-prefetch.md)).
 - A double-click on a mask's Temperature or Tint puts that slider back to
   the picture's value, and no longer switches the mask's white balance off.
 - Going back to a frame under a camera profile is quick again: its base
