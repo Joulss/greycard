@@ -25,6 +25,10 @@ the reasoning lives in `docs/notes.md`.
 - [ ] A camera profile with a NaN inside a hue and saturation map or
       a look table is unequal to itself and never matches its
       shelved base (§706)
+- [ ] Dragging the crop's bottom handle past the filmstrip's
+      hide and show arrow makes the arrow flash from side to side
+      as the pointer crosses it; the arrow should stay put while a
+      crop handle is held
 - [ ] A frame chosen in the Library grid or on the lightbox's sheet
       is not remembered for the next run: only a frame Cull's loupe
       drew or a develop landed is
