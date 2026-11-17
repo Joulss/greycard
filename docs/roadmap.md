@@ -1320,6 +1320,15 @@ clears or a tester asks for it.
       opposed in every one of 103 comparisons and is not ported
       (§686). It invents, so it is an option, off by
       default; the classical fill stays the default
+- [ ] A generative fill trained for clipped highlights: the frame
+      darkened two stops so the clip is a flat patch in an ordinary
+      picture, a fill model trained to paint it, pairs made by
+      clipping well-exposed raws; the object remover failed at this
+      because it is trained to remove. Judged by eye, blind, not by
+      error against the truth; an option like the generative remove
+- [ ] Highlight fills judged blind by eye beside the benchmark's
+      error: no fill can match what the sensor never recorded, and
+      the smoothness bar may reject fills that look right
 - [ ] Maybe: MCP
 - [ ] Maybe: Depth mapping for blur
 - [ ] Maybe: a Fill painted but not generated kept in the sidecar, as
