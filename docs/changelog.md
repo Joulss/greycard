@@ -172,6 +172,9 @@ design note behind it.
 
 ### Fixes
 
+- Going back to a frame under a camera profile is quick again: its base
+  was made anew at every return
+  ([§706](https://github.com/jessolmstead/greycard/blob/master/docs/notes/706-the-shelf-under-a-camera-profile.md)).
 - In the compare view the wheel zooms about what is under the pointer, in
   the frame it is over.
 - The frame open in Cull is remembered for the next run, as the one open in

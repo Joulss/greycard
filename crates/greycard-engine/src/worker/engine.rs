@@ -1113,8 +1113,7 @@ pub(super) fn run(
                             &mut base,
                             shelf.get_or_insert_with(Shelf::user),
                             (opened_file.take(), coming.as_ref().map(|k| (k, &opened))),
-                            &edit,
-                            turn,
+                            (&edit, turn, &|e: &Edit| stands_in(&ai, e)),
                             gpu.as_ref(),
                             lenses.as_deref(),
                         );
@@ -1807,11 +1806,19 @@ pub(super) fn drop_changed(
     }
 }
 
+/// Whether the engine's own path would stand in for the learned
+/// denoiser an edit asks for ([`stands_in`]).
+pub(super) type StandsIn<'a> = &'a dyn Fn(&Edit) -> bool;
+
 /// The open frame's base set aside for the frame `coming` to be
 /// opened under `edit` at `turn`: what the frame in hand kept put on
 /// the shelf as the frame `leaving`'s, its learned pair with it, and
 /// the coming frame's taken back from the shelf when it is there for
-/// the same file with a base the walk of `edit` at `turn` starts from.
+/// the same file with a base the walk of `edit` at `turn` starts from,
+/// the engine's own path standing in for the learned denoiser where
+/// `stands_in` says it would for an edit ([`stands_in`]): for the
+/// coming frame's, and for the leaving frame's, whose stand-in is
+/// shelved only while it would still stand in.
 /// Whatever the GPU held for the base in hand goes, as when the base
 /// was discarded; a base taken back is uploaded again by its develop.
 ///
@@ -1824,8 +1831,7 @@ pub(super) fn swap_base(
     base: &mut Option<FrameKept>,
     shelf: &mut Shelf,
     (leaving, coming): (Option<FileKey>, Option<(&FileKey, &Input)>),
-    edit: &Edit,
-    turn: u8,
+    (edit, turn, stands_in): (&Edit, u8, StandsIn<'_>),
     gpu: Option<&greycard_gpu::Context>,
     lenses: Option<&greycard_lens::Database>,
 ) {
@@ -1834,11 +1840,12 @@ pub(super) fn swap_base(
             gpu.release();
         }
         if let Some(file) = leaving {
-            shelf.put(file, b);
+            let standing = stands_in(&b.edit);
+            shelf.put(file, b, standing);
         }
     }
     if let Some((file, opened)) = coming
-        && let Some(mut b) = shelf.take(file, edit, turn, gpu.is_some(), lenses)
+        && let Some(mut b) = shelf.take(file, edit, turn, (gpu.is_some(), stands_in(edit)), lenses)
     {
         // The shelf matched the file's path, stat, and decode: the
         // frame opened is the one the base was made from, read again.
@@ -1858,6 +1865,19 @@ pub(super) fn swap_base(
             String::new()
         }
     );
+}
+
+/// Whether the learned denoiser `edit` asks for is not to be had as a
+/// walk of it starts, so the engine's own path stands in from the
+/// first step: its model is not in the store, or there is no runtime
+/// ([`Ai::denoiser_there`], what the walk asks first). A stand-in the
+/// walk falls to later, for the card's memory or a failed run, is not
+/// this: the next walk asks the card again.
+pub(super) fn stands_in(ai: &Ai, edit: &Edit) -> bool {
+    edit.noise
+        .tier()
+        .and_then(greycard_ai::denoiser)
+        .is_some_and(|model| ai.denoiser_there(model).is_err())
 }
 
 /// Whether a live Part is in `edit`'s masks.

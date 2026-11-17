@@ -199,15 +199,27 @@ impl FrameKept {
 
     /// Whether the base kept here serves a develop of `edit` at `turn`,
     /// with a device `lent` or not, as the window's walk would resume
-    /// from it.
+    /// from it. With `stands_in`, the learned denoiser the edit asks for
+    /// is not to be had as the walk starts (its model is not in the
+    /// store, or there is no runtime), so the walk's list is the one the
+    /// engine's own path stands in with, and only a base made by that
+    /// path serves; without, a base made by it never does, since the
+    /// walk would run the model.
     pub(super) fn serves(
         &self,
         edit: &Edit,
         turn: u8,
         lenses: Option<&greycard_lens::Database>,
         lent: bool,
+        stands_in: bool,
     ) -> bool {
-        let (steps, plan) = window_steps(edit, &self.facts_at(turn), lenses, lent);
+        let (mut steps, mut plan) = window_steps(edit, &self.facts_at(turn), lenses, lent);
+        if stands_in {
+            plan = crate::walk::replan(&steps, &plan);
+            steps = steps.without_learned();
+        } else if self.meta.stood_in.is_some() {
+            return false;
+        }
         self.kept.serves(&steps, &plan, Keep::Base)
     }
 }

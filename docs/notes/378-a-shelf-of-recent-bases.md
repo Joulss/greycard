@@ -54,7 +54,8 @@ dehaze's reduced copy), released as before and uploaded again on
 take-back at the same 0.07 to 0.10 s a fresh upload costs, and the
 masks' detail bands, rebuilt beside the develop and as large as the
 base. Never shelved: a base standing in for a missing or failed
-learned denoiser, since the model may be there by the next open, and
+learned denoiser, since the model may be there by the next open
+(shelved while it would still stand in since §706), and
 a picture's (TIFF or JPEG) base, which is its decode.
 
 Of the places that discarded the base, the lens database change

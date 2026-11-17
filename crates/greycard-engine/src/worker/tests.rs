@@ -2894,8 +2894,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
         &mut base,
         &mut shelf,
         (Some(key.clone()), None),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         None,
         None,
     );
@@ -2908,8 +2907,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
         &mut base,
         &mut shelf,
         (None, Some((&key, &Input::Raw(reread.clone())))),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         None,
         None,
     );
@@ -2940,14 +2938,207 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
         &mut base,
         &mut shelf,
         (Some(key.clone()), Some((&key, &Input::Raw(frame.clone())))),
-        &warmer,
-        0,
+        (&warmer, 0, &|_| false),
         None,
         None,
     );
     assert!(base.is_none());
     develop_turned(&frame, &warmer, 0, &mut base);
     assert!(!Arc::ptr_eq(&base.as_ref().unwrap().image, &made));
+}
+
+/// A camera profile in `dir` named `name`, its color matrix led by
+/// `red`: another `red` is another profile's tables.
+fn write_profile(dir: &std::path::Path, name: &str, red: f64) {
+    use greycard_core::dcp::{Dcp, DcpCalibration, EmbedPolicy, HueSatMap};
+    let dcp = Dcp {
+        name: Some(name.into()),
+        unique_camera_model: Some("Test Cam".into()),
+        copyright: Some("public domain".into()),
+        calibration_signature: None,
+        embed_policy: EmbedPolicy::AllowCopying,
+        primary: DcpCalibration {
+            illuminant: 17,
+            color_matrix: [red, -0.1, -0.1, -0.4, 1.3, 0.1, 0.0, -0.2, 0.9],
+            forward_matrix: None,
+            hue_sat_map: Some(HueSatMap::identity(6, 2, 1)),
+        },
+        secondary: None,
+        baseline_exposure_offset: None,
+        look: None,
+        tone_curve: None,
+    };
+    std::fs::write(dir.join(format!("{name}.dcp")), dcp.to_bytes()).unwrap();
+}
+
+/// The profile directory `dir` the lists of this test's thread read.
+fn profiles_in(dir: Option<&std::path::Path>) {
+    crate::stages::TEST_STORES.with(|s| {
+        *s.borrow_mut() = dir.map(|d| greycard_edit_io::Stores {
+            profiles: Some(d.to_path_buf()),
+            looks: None,
+        })
+    });
+}
+
+/// Two frames under an edit that names a camera profile, opened in
+/// turn and returned to: each return takes its base back from the
+/// shelf, though the window lists the profile directory on every open
+/// and the listing lets go of the profile read before it, so the
+/// develop reads the same file again into another pointer. The shelf
+/// holds one base a file, never the one it was given back beside a
+/// newer one. A profile rewritten with other tables is another base.
+#[test]
+fn a_base_under_a_camera_profile_is_taken_back_after_the_directory_is_listed() {
+    use super::engine::swap_base;
+    use super::shelf::{Budget, FileKey, Shelf};
+    let dir = crate::testing::scratch_dir("shelf-profile");
+    write_profile(&dir, "Test Cam Neutral", 0.8);
+    profiles_in(Some(&dir));
+    let mut edit = Edit::default();
+    edit.camera.profile = greycard_edit::camera::ProfileChoice::Named("Test Cam Neutral".into());
+    let a = Arc::new(aberrated_frame(120, 80));
+    let b = Arc::new(aberrated_frame(64, 48));
+    let (ka, kb) = (shelf_key("a.CR2", &a), shelf_key("b.CR2", &b));
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    let mut base = None;
+    develop_turned(&a, &edit, 0, &mut base);
+    let made_a = base.as_ref().expect("a base").image.clone();
+    // An open of `to` from `from`, as the worker's: the base in hand
+    // shelved and the coming one looked for, then the window's listing
+    // of the profile directory, then the develop. Whether the base was
+    // taken from the shelf, and the picture.
+    let open = |base: &mut Option<FrameKept>,
+                shelf: &mut Shelf,
+                from: &FileKey,
+                to: (&FileKey, &Arc<RawFrame>)| {
+        swap_base(
+            base,
+            shelf,
+            (Some(from.clone()), Some((to.0, &Input::Raw(to.1.clone())))),
+            (&edit, 0, &|_| false),
+            None,
+            None,
+        );
+        greycard_edit_io::profiles::forget();
+        let taken = base.as_ref().is_some_and(|b| b.from_shelf);
+        let picture = develop_turned(to.1, &edit, 0, base);
+        (taken, picture)
+    };
+    assert!(!open(&mut base, &mut shelf, &ka, (&kb, &b)).0, "B is new");
+    let made_b = base.as_ref().expect("a base").image.clone();
+    let (taken, back_a) = open(&mut base, &mut shelf, &kb, (&ka, &a));
+    assert!(taken, "A from the shelf");
+    assert!(Arc::ptr_eq(&base.as_ref().unwrap().image, &made_a));
+    assert!(
+        open(&mut base, &mut shelf, &ka, (&kb, &b)).0,
+        "B from the shelf"
+    );
+    assert!(Arc::ptr_eq(&base.as_ref().unwrap().image, &made_b));
+    assert_eq!(shelf.len(), 1, "A's base alone on the shelf");
+
+    // A's base made again from nothing, after another listing, and
+    // shelved beside the one already there: it replaces it.
+    let mut again = None;
+    greycard_edit_io::profiles::forget();
+    let fresh = develop_turned(&a, &edit, 0, &mut again);
+    assert!(!Arc::ptr_eq(&again.as_ref().unwrap().image, &made_a));
+    // The base taken back, and the picture developed from it, are the
+    // ones a fresh develop under the profile makes, to the bit; and the
+    // profile is in them, not the file's own.
+    assert!(again.as_ref().unwrap().image.data == made_a.data);
+    assert!(fresh.data == back_a.data);
+    let own = develop_turned(&a, &Edit::default(), 0, &mut None);
+    assert!(own.data != fresh.data, "the profile is applied");
+    assert!(shelf.put(ka.clone(), again.take().unwrap(), false));
+    assert_eq!(shelf.len(), 1, "one base for one file under one edit");
+
+    // The profile rewritten with other tables: A's base is not its.
+    write_profile(&dir, "Test Cam Neutral", 0.9);
+    greycard_edit_io::profiles::forget();
+    assert!(
+        !open(&mut base, &mut shelf, &kb, (&ka, &a)).0,
+        "another profile"
+    );
+    assert!(!Arc::ptr_eq(&base.as_ref().unwrap().image, &made_a));
+    profiles_in(None);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The open frame's base under a camera profile is kept across a
+/// listing of the profile directory, which lets go of the profile read
+/// before it: a slider move after the listing develops from the base in
+/// hand, not from a base made again.
+#[test]
+fn the_base_in_hand_under_a_camera_profile_outlives_a_listing() {
+    let dir = crate::testing::scratch_dir("hand-profile");
+    write_profile(&dir, "Test Cam Neutral", 0.8);
+    profiles_in(Some(&dir));
+    let mut edit = Edit::default();
+    edit.camera.profile = greycard_edit::camera::ProfileChoice::Named("Test Cam Neutral".into());
+    let frame = Arc::new(aberrated_frame(120, 80));
+    let mut base = None;
+    develop_turned(&frame, &edit, 0, &mut base);
+    let made = base.as_ref().expect("a base").image.clone();
+    greycard_edit_io::profiles::forget();
+    let mut moved = edit.clone();
+    moved.light.exposure += 0.5;
+    develop_turned(&frame, &moved, 0, &mut base);
+    assert!(
+        Arc::ptr_eq(&base.as_ref().unwrap().image, &made),
+        "kept, not made again"
+    );
+    profiles_in(None);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A frame whose edit asks for the learned denoiser, with the model not
+/// to be had: its base is the engine's own path standing in, shelved
+/// when the frame is left and taken back on the return, the same
+/// picture a fresh develop makes; the shelf holds one base of it.
+#[test]
+fn a_base_standing_in_for_the_learned_denoiser_is_taken_back() {
+    use super::engine::{stands_in, swap_base};
+    use super::shelf::{Budget, FileKey, Shelf};
+    let mut edit = Edit::default();
+    edit.noise.enabled = true;
+    edit.noise.learned = greycard_edit::Learned::Fast;
+    edit.noise.learned_strength = 0.5;
+    assert!(stands_in(&Ai::new(), &edit), "no model in a test's store");
+    let a = Arc::new(aberrated_frame(120, 80));
+    let b = Arc::new(aberrated_frame(64, 48));
+    let (ka, kb) = (shelf_key("a.CR2", &a), shelf_key("b.CR2", &b));
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    let mut base = None;
+    let first = develop_turned(&a, &edit, 0, &mut base);
+    let made = base.as_ref().expect("a base").image.clone();
+    assert!(base.as_ref().unwrap().meta.stood_in.is_some());
+    let open = |base: &mut Option<FrameKept>,
+                shelf: &mut Shelf,
+                from: &FileKey,
+                to: (&FileKey, &Arc<RawFrame>)| {
+        swap_base(
+            base,
+            shelf,
+            (Some(from.clone()), Some((to.0, &Input::Raw(to.1.clone())))),
+            (&edit, 0, &|e| stands_in(&Ai::new(), e)),
+            None,
+            None,
+        );
+        let taken = base.as_ref().is_some_and(|b| b.from_shelf);
+        let picture = develop_turned(to.1, &edit, 0, base);
+        (taken, picture)
+    };
+    assert!(!open(&mut base, &mut shelf, &ka, (&kb, &b)).0, "B is new");
+    let (taken, again) = open(&mut base, &mut shelf, &kb, (&ka, &a));
+    assert!(taken, "A from the shelf");
+    assert!(Arc::ptr_eq(&base.as_ref().unwrap().image, &made));
+    assert!(again.data == first.data);
+    assert!(
+        open(&mut base, &mut shelf, &ka, (&kb, &b)).0,
+        "B from the shelf"
+    );
+    assert_eq!(shelf.len(), 1, "A's base alone on the shelf");
 }
 
 /// On the GPU, a base shelved lets go of what it held on the device
@@ -2988,8 +3179,7 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
         &mut base,
         &mut shelf,
         (Some(key.clone()), None),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         gpu.as_ref(),
         None,
     );
@@ -2998,8 +3188,7 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
         &mut base,
         &mut shelf,
         (None, Some((&key, &Input::Raw(frame.clone())))),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         gpu.as_ref(),
         None,
     );
@@ -3102,8 +3291,7 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
         &mut base,
         &mut shelf,
         (None, Some((&key, &input))),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         None,
         None,
     );
@@ -6222,8 +6410,7 @@ fn a_frame_taken_back_from_the_shelf_still_says_the_card() {
         &mut base,
         &mut shelf,
         (Some(a.clone()), None),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         None,
         None,
     );
@@ -6233,8 +6420,7 @@ fn a_frame_taken_back_from_the_shelf_still_says_the_card() {
         &mut base,
         &mut shelf,
         (Some(b), Some((&a, &Input::Raw(frame.clone())))),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         None,
         None,
     );

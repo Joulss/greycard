@@ -22,6 +22,9 @@ the reasoning lives in `docs/notes.md`.
       widened parity sweep's 8,000 edits (seeds 2, 17, and 20), all
       under a profile tone curve flat at black and at white; a real
       card is within 1.1 on the same edits; cause not found (§702)
+- [ ] A camera profile with a NaN inside a hue and saturation map or
+      a look table is unequal to itself and never matches its
+      shelved base (§706)
 - [ ] A frame chosen in the Library grid or on the lightbox's sheet
       is not remembered for the next run: only a frame Cull's loupe
       drew or a develop landed is
@@ -367,6 +370,12 @@ On a fanless laptop the fit view follows a slider without a wait,
 the sharpen included, and the first Subject mask is there in ten
 seconds.
 
+- [ ] An edited neighbor is never developed ahead: the prefetch
+      skips a frame with a sidecar. Read the sidecar on the worker in
+      the prefetch's idle slot (discussion 168, §706, §379)
+- [ ] The window walks the profile folder and the looks on every
+      open, 0.7 s on a tester's 4,439 profiles; hold the listing and
+      check it off the window's thread (discussion 168, §706)
 - [ ] The SAM 3 encoder's session takes 46 s to build on WebGPU (the provider's shader compile, not cached across sessions); a tester with People masks pays it per picture the card is given back (issue 92, §611)
 - [ ] The GPU dual's last traffic (§606): the mosaic goes up twice
       for the AMaZE dual (183 MiB at 45 MP), and the automatic

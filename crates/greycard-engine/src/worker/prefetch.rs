@@ -561,7 +561,7 @@ pub(super) fn prefetch(
     };
     if let Some((path, b)) = in_hand
         && path == n.path
-        && b.serves(&n.edit, turn, lenses, gpu.is_some())
+        && b.serves(&n.edit, turn, lenses, gpu.is_some(), false)
     {
         return skipped("its base is the open frame's".into());
     }
@@ -706,7 +706,8 @@ pub(super) fn prefetch(
             file_label(&out)
         ));
     }
-    if !shelf.put(key, held) {
+    // A prefetch makes no learned frame's base, so none stands in.
+    if !shelf.put(key, held, false) {
         return skipped("its base is over the shelf's whole budget".into());
     }
     let gone = shelf.fit();
