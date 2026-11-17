@@ -244,30 +244,32 @@ the reasoning lives in `docs/notes.md`.
       and eased where the picture is out of focus (parallax). CR2
       ignores the index. Wants frames with blown highlights; RawDB
       has R7 dual files (discussion 59, 2026-11-14)
-- [ ] Whites' reach over display white: on a night frame with neon
-      signs at Exposure +1, the lettering and its glow sit 1 to 2
-      stops over white, and Highlights at -2 takes under half a stop
-      off them (§250's ease past the 99th percentile costs 0.4 of
-      that). Measured on the reporter's raw: the letters are clipped
-      on every channel and read only by their edge against a glow
-      measured in red alone; Highlights -2 with Whites -2 renders them
-      today, faintly; a range to -3 or no ease-off does nothing alone.
-      Decided: Highlights keeps its span and the top stays Whites'
-      (unlike Lightroom, where Highlights is the catch-all). So the
-      work is Whites' reach over white without flattening the 85th
-      to 95th percentiles (Whites at -3 took 0.77 stops off them),
-      and the guide saying to reach for Whites on a light source
-      (issue 132, 2026-11-14)
-- [ ] Highlights alone makes a hotspot stand out more: its ease past
-      the frame's 99th percentile (§250) gives a flash hotspot on skin
-      less of the slider than the skin round it (about 0.25 against
-      0.42 on a studio flash frame), so with Whites at 0 the lightness
-      between hotspot and skin grows from 10.6 to 18.1 L* as
-      Highlights goes to -2, and the display curve's shoulder letting
-      go adds to it. A slider named for highlights must never raise a
-      highlight's contrast: the ease reshaped or tied to the region's
-      reading so hotspot and surround take one gain, checked on the
-      Whites shoulder trial's grid of faces (issue 132, 2026-11-14)
+- [ ] Whites' reach over display white (issue 132): a soft-knee roll
+      over white under Whites down (design D, branch `whites-d`) is
+      reviewed and waits on a trial in the app. It takes lights off
+      white with no texture lost (804 cells: median 1.00, worst 0.85)
+      and is small by design: a light 1 to 2 stops over gets 8 levels.
+      Four wider designs were tried and dropped: each brightened under
+      a shift, flattened bright subjects, or darkened near-white
+      pixels as Exposure rose
+- [ ] Highlights cannot make clipped light visibly come back (issue
+      132, fifteen rounds, 2026-11-17). A region pull reaching over
+      white recovers large areas (a sun's disc, a sky) but the trade
+      is structural: a gain read wide keeps texture and halos (5 to 13
+      levels; darktable's tone equalizer pays it), a gain that follows
+      edges flattens what is inside (16 to 48 of 804 cells under
+      0.75). The display shoulder is not the lever either: no curve
+      adds more than 1 to 2 levels to recovered content, and headroom
+      over white costs the white itself. What is left is
+      reconstruction before the curve (the learned trial below), and
+      for a user today a luminance mask with Exposure down
+- [ ] A hotspot on skin under Highlights alone: decided 2026-11-17
+      that hotspots are Whites' to tame, not Highlights'. Measured on
+      108 faces: of the 3.4 L* the hotspot's lead grows at Highlights
+      -2, 2.6 is the display curve's shoulder and 0.09 the ease
+      (§250); with Whites down design D shrinks the lead on 18 to 37
+      faces and grows it on at most 2. The guide should say to reach
+      for Whites on a hotspot (issue 132)
 - [ ] A kept picture of an angled edit sits up to a quarter pixel off
       the full develop: the reduced develop rounds the frame's size at
       its own scale (`frame_of` in `edited_pictures::make`) where the
