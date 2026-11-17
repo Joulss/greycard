@@ -29,6 +29,13 @@ the reasoning lives in `docs/notes.md`.
       hide and show arrow makes the arrow flash from side to side
       as the pointer crosses it; the arrow should stay put while a
       crop handle is held
+- [ ] Whites down brightens a few pixels on real exports: on 746 of
+      750 frame and setting pairs some pixel comes out brighter, up
+      to 42 of 65,535 on Channels and 9,663 (about 200 pixels) on AgX
+      at -3.5 (found reviewing issue 132's Whites)
+- [ ] A NaN, an infinity, or a negative channel renders black on the
+      GPU and in color on the CPU, and on lavapipe the black reaches
+      the pixels beside it
 - [ ] A frame chosen in the Library grid or on the lightbox's sheet
       is not remembered for the next run: only a frame Cull's loupe
       drew or a develop landed is
