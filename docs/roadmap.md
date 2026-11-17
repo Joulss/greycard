@@ -802,16 +802,10 @@ brackets and the panorama to shoot for testing are in
       denoised per frame and merged again like a bracket (§573);
       changes every stack the command line writes, so a decision of
       its own
-- [ ] Progress inside a focus stack's merge: the status line sits on
-      "placing the frames" for the whole of it (§573)
 - [ ] A NoiseProfile on a focus stack's DNG, as the HDR merge writes
       one (§573)
-- [ ] A focus stack holds every frame at once, 40 bytes a pixel, so
-      16 GB refuses 21 frames of 24 megapixels where 30 to 100 is
-      ordinary: the frames read in passes, so the count stops
-      mattering (issue 134, 2026-11-12)
-- [ ] The focus stack's memory bound against available rather than
-      physical memory, once a reader exists (§573)
+- [ ] The focus stack's available-memory readers run on a Mac and on
+      Windows: compile-checked only (§709)
 - [ ] Focus breathing in a focus stack: each frame scaled to the
       reference before the merge, the scale fitted with the alignment
       (issue 134, 2026-11-13)

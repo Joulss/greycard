@@ -720,3 +720,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§706. The shelf under a camera profile](notes/706-the-shelf-under-a-camera-profile.md) (2026-11-16)
 - [§707. Edited neighbors read first for the prefetch](notes/707-edited-neighbors-read-first-for-the-prefetch.md) (2026-11-17)
 - [§708. The profile listing held between opens](notes/708-the-profile-listing-held-between-opens.md) (2026-11-17)
+- [§709. A focus stack read in passes](notes/709-a-focus-stack-read-in-passes.md) (2026-11-17)

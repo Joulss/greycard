@@ -141,9 +141,11 @@ impl CaFits {
 pub enum Step {
     /// The `index`th frame of `of` (from 1) is being read.
     Frame { index: usize, of: usize },
-    /// A panorama's frames are being placed on its canvas.
+    /// A panorama's frames are being placed on its canvas, or a focus
+    /// stack's onto its reference.
     Placing,
-    /// A panorama's `index`th frame of `of` is being blended in.
+    /// A panorama's or a focus stack's `index`th frame of `of` is being
+    /// blended in.
     Blending { index: usize, of: usize },
     /// The file is being written.
     Writing,

@@ -155,9 +155,8 @@ enum Command {
     /// the sources. Prints what each frame contributed and what was
     /// left out.
     ///
-    /// Every frame is held in memory at once: about 0.6 s and a
-    /// gigabyte a frame at 24 megapixels, and ten 45-megapixel frames
-    /// peak at 9.3 GB
+    /// Frames are read one at a time, so memory does not grow with their
+    /// number
     Stack {
         /// The frames, in focus order. RAW files of one camera and one
         /// size

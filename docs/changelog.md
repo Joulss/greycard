@@ -172,6 +172,9 @@ design note behind it.
 
 ### Fixes
 
+- A focus stack's memory no longer grows with its frames: a hundred
+  24-megapixel frames merge in about 2.4 GB (issue 134)
+  ([§709](https://github.com/jessolmstead/greycard/blob/master/docs/notes/709-a-focus-stack-read-in-passes.md)).
 - Opening a frame no longer walks the whole camera-profile folder, which
   held the window for most of a second with thousands of profiles
   ([§708](https://github.com/jessolmstead/greycard/blob/master/docs/notes/708-the-profile-listing-held-between-opens.md)).

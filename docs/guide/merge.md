@@ -88,10 +88,10 @@ into one frame that is sharp everywhere.
 
 - Select the frames, two or more, of one camera and one size, in focus
   order, and choose **Merge to Focus stack** on the frame menu. The
-  status line says each frame as it is read. Every frame is held in
-  memory at once, about a gigabyte a frame at 24 megapixels, and a
-  stack the computer's memory will not hold is refused: stack fewer
-  frames at a time.
+  status line says each frame as it is read. Frames are read one at a
+  time, so a long stack needs no more memory than a short one. If too
+  little memory is free, the merge is refused: close other programs and
+  try again.
 - The frames are put onto the middle one, scale included, since a lens
   breathes as it focuses. A frame that cannot be lined up is left out,
   and the log says which and why.

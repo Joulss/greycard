@@ -8,8 +8,9 @@
 //! writes a DNG, write it with [`write_dng`]. Neither has a stack of its
 //! own.
 //!
-//! Every frame is held at once, as the core's merge wants them: about a
-//! gigabyte a frame at 24 megapixels.
+//! No frame is held: each is read when the core's merge asks for it,
+//! once to place it and once to blend it, so a stack's memory is one
+//! frame's working set whatever the count ([`wants`]).
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -51,8 +52,8 @@ pub struct Options {
     pub out: Option<PathBuf>,
     /// What to do when that file is there already.
     pub on_exists: OnExists,
-    /// The machine's memory in bytes, in place of asking the system:
-    /// for a test of the refusal.
+    /// The machine's available memory in bytes, in place of asking the
+    /// system: for a test of the refusal.
     pub memory: Option<u64>,
 }
 
@@ -71,29 +72,41 @@ impl Default for Options {
     }
 }
 
-/// About what a stack holds a frame's pixel while it merges: the
-/// demosaiced frame (12 bytes), and the core's pyramids, sharpness
-/// maps, and output over it.
-pub const BYTES_A_PIXEL: u64 = 40;
+/// What a stack holds a pixel of the frame at its peak, whatever the
+/// number of frames: the core's accumulators and one frame's warp,
+/// pyramids, and maps (87 bytes, counted by the allocator), and the
+/// frame being decoded and developed beside them. The process's peak
+/// resident set was 99 bytes a pixel at 24 megapixels, from 5 frames to
+/// 100, and 87 at 45; this is that and a tenth.
+pub const BYTES_A_PIXEL: u64 = 110;
 
-/// Whether `frames` frames of `pixels` pixels fit in `memory` bytes
-/// at [`BYTES_A_PIXEL`]: refused when they do not. Every frame is held
-/// at once, and a stack past the machine's memory would take the
-/// process down with it. A machine that will not say its memory is
-/// not asked.
+/// What a stack keeps of each frame across the merge: its tags (the
+/// reference's are the file's) and its line of the report. No pixels.
+pub const BYTES_A_FRAME: u64 = 1 << 20;
+
+/// What a stack of `frames` frames of `pixels` pixels wants at its
+/// peak: [`BYTES_A_PIXEL`] of one frame, and [`BYTES_A_FRAME`] a frame.
+pub fn wants(frames: usize, pixels: usize) -> u64 {
+    (pixels as u64)
+        .saturating_mul(BYTES_A_PIXEL)
+        .saturating_add((frames as u64).saturating_mul(BYTES_A_FRAME))
+}
+
+/// Whether a stack of `frames` frames of `pixels` pixels ([`wants`])
+/// fits in `memory` bytes: refused when it does not, since a stack past
+/// the machine's memory would take the process down with it. The
+/// caller asks the memory available now, not the machine's whole. A
+/// machine that will not say its memory is not asked.
 pub fn room(frames: usize, pixels: usize, memory: Option<u64>) -> Result<()> {
     let Some(memory) = memory else {
         return Ok(());
     };
-    let wants = (frames as u64)
-        .saturating_mul(pixels as u64)
-        .saturating_mul(BYTES_A_PIXEL);
+    let wants = wants(frames, pixels);
     if wants > memory {
         let gb = |b: u64| b as f64 / 1e9;
         bail!(
-            "a stack of {frames} frames of {:.0} megapixels wants about {:.1} GB of memory, \
-             and this machine has {:.1} GB: stack fewer frames at a time",
-            pixels as f64 / 1e6,
+            "this stack needs about {:.1} GB of memory and {:.1} GB is free: close other \
+             programs and try again",
             gb(wants),
             gb(memory)
         );
@@ -147,43 +160,65 @@ pub struct Stacked {
 }
 
 /// `files`, in focus order, each developed by [`develop_settings`] and
-/// merged under `options`. Each frame read is said to `progress`, and
-/// the merge as placing. A developed picture is refused: it is past the
-/// white balance and the matrix. So is a stack the machine's memory
-/// will not hold ([`room`]), read off the first frame's size before
-/// any other frame is decoded.
+/// merged under `options`. The frames are read as the core's merge asks
+/// for them ([`stack::stack_camera_from`]), not held: each is decoded
+/// and developed once to be placed and again to be blended, and
+/// nothing of it is kept between but its tags. Each first read is said
+/// to `progress` as a frame, then the placing, then each blend. A
+/// developed picture is refused: it is past the white balance and the
+/// matrix. So is a stack the machine's available memory will not hold
+/// ([`room`]), read off the first frame's size before any other frame
+/// is decoded.
 pub fn frames(files: &[PathBuf], options: &Options, progress: &dyn Progress) -> Result<Stacked> {
     if files.len() < 2 {
         bail!("a stack wants at least two frames; got {}", files.len());
     }
+    if let Some(file) = files
+        .iter()
+        .find(|f| greycard_core::picture::is_picture_path(f))
+    {
+        bail!(
+            "{} is not a RAW file: a stack is merged in camera space, before white \
+             balance and the matrix, and a developed picture is past both",
+            file.display()
+        );
+    }
     let settings = develop_settings();
-    let developing = Instant::now();
+    let started = Instant::now();
     let of = files.len();
-    let mut images = Vec::with_capacity(of);
-    let mut heads = Vec::with_capacity(of);
-    for (k, file) in files.iter().enumerate() {
-        if greycard_core::picture::is_picture_path(file) {
-            bail!(
-                "{} is not a RAW file: a stack is merged in camera space, before white \
-                 balance and the matrix, and a developed picture is past both",
-                file.display()
-            );
-        }
-        progress.step(Step::Frame { index: k + 1, of });
+    // Each frame's tags, from its first read: the reference's are the
+    // file's, and the reference is the merge's to find.
+    let mut heads: Vec<Option<(RawFrame, RawMetadata, WhiteBalance)>> =
+        (0..of).map(|_| None).collect();
+    let mut developing = 0.0f64;
+    let mut checked = false;
+    let read = |k: usize| -> Result<CameraImage> {
+        let t = Instant::now();
+        let file = &files[k];
         let (mut frame, metadata) = greycard_core::decode::decode_path_with_metadata(file)
             .with_context(|| format!("decoding {}", file.display()))?;
-        if k == 0 {
-            let memory = options.memory.or_else(greycard_ai::ram::physical);
+        if !checked {
+            let memory = options.memory.or_else(greycard_ai::ram::available);
             room(of, frame.width * frame.height, memory)?;
+            checked = true;
         }
         let demosaiced = demosaic(&frame, &settings)
             .with_context(|| format!("developing {}", file.display()))?;
-        images.push(demosaiced.image);
-        // The tags are read from the frame; its samples are let go.
-        frame.samples = Samples::U16(Vec::new());
-        heads.push((frame, metadata, demosaiced.white_balance));
-    }
-    let developing = developing.elapsed().as_secs_f64();
+        if heads[k].is_none() {
+            // The tags are read from the frame; its samples are let go.
+            frame.samples = Samples::U16(Vec::new());
+            heads[k] = Some((frame, metadata, demosaiced.white_balance));
+        }
+        developing += t.elapsed().as_secs_f64();
+        Ok(demosaiced.image)
+    };
+    let said = |s: stack::Step| {
+        progress.step(match s {
+            stack::Step::Reading { index, of } => Step::Frame { index, of },
+            stack::Step::Placing => Step::Placing,
+            stack::Step::Blending { index, of } => Step::Blending { index, of },
+        })
+    };
 
     let core = stack::Options {
         reference: options.reference,
@@ -191,12 +226,11 @@ pub fn frames(files: &[PathBuf], options: &Options, progress: &dyn Progress) -> 
         max_residual: options.max_residual,
         ..Default::default()
     };
-    progress.step(Step::Placing);
-    let merging = Instant::now();
-    let (merged, report) = stack::stack_camera(&images, &core)?;
-    let merging = merging.elapsed().as_secs_f64();
-    drop(images);
-    let (frame, metadata, balance) = heads.swap_remove(report.reference);
+    let (merged, report) = stack::stack_camera_from(of, read, said, &core)?;
+    let merging = started.elapsed().as_secs_f64() - developing;
+    let (frame, metadata, balance) = heads
+        .swap_remove(report.reference)
+        .expect("every frame is read in the first pass");
     Ok(Stacked {
         merged,
         frame,
@@ -398,6 +432,84 @@ mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
+    /// Three frames, each read once to be placed and again to be
+    /// blended, said as frames, the placing, and the blends; the merge
+    /// is what the core makes of the three held at once, bit for bit.
+    #[test]
+    fn a_stack_reads_its_frames_twice_and_says_so() {
+        let dir = scratch("passes");
+        let (w, h) = (192, 128);
+        let files: Vec<PathBuf> = (0..3)
+            .map(|k| {
+                let p = dir.join(format!("IMG_{k}.dng"));
+                write_raw(
+                    &p,
+                    mosaic(w, h, 0.25, Noise::ASSUMED, 50 + k as u64),
+                    w,
+                    h,
+                    (1, 100),
+                    "Stack",
+                );
+                p
+            })
+            .collect();
+        let heard = std::cell::RefCell::new(Vec::new());
+        let stacked = frames(&files, &Options::default(), &|s: Step| {
+            heard.borrow_mut().push(s)
+        })
+        .expect("a stack");
+        let used = stacked.report.used();
+        let mut want: Vec<Step> = (1..=3).map(|index| Step::Frame { index, of: 3 }).collect();
+        want.push(Step::Placing);
+        want.extend((1..=used).map(|index| Step::Blending { index, of: used }));
+        assert_eq!(*heard.borrow(), want);
+
+        let images: Vec<CameraImage> = files
+            .iter()
+            .map(|f| {
+                let (frame, _) = greycard_core::decode::decode_path_with_metadata(f).unwrap();
+                demosaic(&frame, &develop_settings()).unwrap().image
+            })
+            .collect();
+        let (held, report) = stack::stack_camera(&images, &stack::Options::default()).unwrap();
+        assert_eq!(report, stacked.report);
+        assert!(
+            held.data.iter().map(|v| v.to_bits()).eq(stacked
+                .merged
+                .data
+                .iter()
+                .map(|v| v.to_bits())),
+            "read twice is not held once"
+        );
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A stack cut short between its passes (here a frame gone before
+    /// it is read again) fails, and leaves neither a file nor its
+    /// hidden folder: nothing is spilled, so nothing is left.
+    #[test]
+    fn a_stack_cut_short_between_its_passes_leaves_nothing() {
+        let dir = scratch("cut");
+        let files = two_frames(&dir);
+        let gone = dir.join("gone.dng");
+        let e = stack(&files, &Options::default(), &|s: Step| {
+            if s == Step::Placing {
+                std::fs::rename(&files[1], &gone).unwrap();
+            }
+        })
+        .err()
+        .expect("cut short");
+        assert!(format!("{e:#}").contains("IMG_1.dng"), "{e:#}");
+        let mut left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["IMG_0.dng", "gone.dng"]);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     /// A name there already is numbered, and a frame named as the
     /// output is refused before anything is read.
     #[test]
@@ -434,9 +546,22 @@ mod tests {
     /// frame is read, and nothing is written.
     #[test]
     fn a_stack_past_the_memory_is_refused() {
-        assert!(room(15, 24_000_000, Some(8_000_000_000)).is_err());
-        assert!(room(15, 24_000_000, Some(16_000_000_000)).is_ok());
+        // The frames read in passes: the count is a megabyte a frame of
+        // tags, and the size is what decides. A hundred frames of 24
+        // and of 60 megapixels fit in 16 GB; one frame's working set
+        // past what is free does not.
+        assert_eq!(wants(21, 24_000_000), 2_640_000_000 + 21 * (1 << 20));
+        assert_eq!(wants(100, 24_000_000) - wants(2, 24_000_000), 98 << 20);
+        assert!(room(100, 24_000_000, Some(16_000_000_000)).is_ok());
+        assert!(room(100, 60_000_000, Some(16_000_000_000)).is_ok());
+        assert!(room(2, 24_000_000, Some(2_000_000_000)).is_err());
         assert!(room(50, 45_000_000, None).is_ok());
+        let e = room(21, 24_000_000, Some(1_000_000_000)).unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "this stack needs about 2.7 GB of memory and 1.0 GB is free: close other \
+             programs and try again"
+        );
         let dir = scratch("memory");
         let files = two_frames(&dir);
         let heard = std::cell::RefCell::new(Vec::new());
@@ -450,7 +575,7 @@ mod tests {
         )
         .err()
         .expect("refused");
-        assert!(e.to_string().contains("stack fewer frames"), "{e}");
+        assert!(e.to_string().contains("close other programs"), "{e}");
         assert_eq!(*heard.borrow(), [Step::Frame { index: 1, of: 2 }]);
         assert!(!dir.join("IMG_0 stack.dng").exists());
         greycard_core::testing::remove_dir_retry(&dir);
