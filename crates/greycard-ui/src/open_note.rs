@@ -18,9 +18,13 @@
 //! The note is written only as a frame's picture is new: the launch's
 //! restored file, once the window's renderer is set up (a death
 //! before is the GPU marker's, and no picture is up yet), and each
-//! frame whose develop lands as the file open after another (when
-//! `last_file` changes). A develop of the same frame again (a slider) writes
-//! nothing. A lock beside the note is held for the session, so a
+//! frame whose develop lands as the file open after another (as
+//! `last_file` changes to it). A develop of the same frame again (a
+//! slider) writes nothing. `last_file` changes without a note in one
+//! place: a frame Cull's loupe has drawn (`startup::keep_last_file`),
+//! written only once its camera picture is up and drawn, so what the
+//! note guards is past for it; a launch that restores it notes it as
+//! any restored file. A lock beside the note is held for the session, so a
 //! second greycard beside a live one finds the note live, and neither
 //! honors it nor writes one. A note for another file than the one to
 //! be restored is let go; a launch that restores none (a file named on

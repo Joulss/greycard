@@ -2927,6 +2927,7 @@ fn follow_paths(st: &mut State, was: &Path, to: &Path) {
                 cull_at_start: _,
                 developed_at_start: _,
                 scripted: _,
+                owned: _,
                 facets_wanted: _,
                 awaiting_index: _,
                 select_at_start: _,
@@ -3042,6 +3043,13 @@ fn follow_paths(st: &mut State, was: &Path, to: &Path) {
                 lightbox: _,
                 lightbox_fetch: _,
                 compare_tiles: _,
+                // By path, and never by cell: a path the list no longer
+                // holds is not the current frame's, so `keep_last_file`
+                // lets the owe go, and a moved or deleted one fails to
+                // resolve and is skipped; the next draw owes the frame
+                // then open.
+                drawn: _,
+                drawn_owed: _,
             },
         views:
             Views {

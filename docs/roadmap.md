@@ -22,10 +22,9 @@ the reasoning lives in `docs/notes.md`.
       widened parity sweep's 8,000 edits (seeds 2, 17, and 20), all
       under a profile tone curve flat at black and at white; a real
       card is within 1.1 on the same edits; cause not found (§702)
-- [ ] The frame open in Cull is not remembered for the next run:
-      `remember_last_file` runs only where a develop lands
-      (panel/deliver.rs), and Cull shows the camera's JPEG without
-      one, so the editor comes back to the last frame developed
+- [ ] A frame chosen in the Library grid or on the lightbox's sheet
+      is not remembered for the next run: only a frame Cull's loupe
+      drew or a develop landed is
 - [ ] The capture sharpen's early stop sits on a knife edge: the
       device and the CPU can stop a 32x32 block an iteration apart,
       and the block moves by up to 3% (§668). A margin past an

@@ -2084,6 +2084,8 @@ fn draw_cull(st: &mut State, app: &App, state: &Rc<Shared>) {
     // note guards (`open_note::shown`).
     if shown_now {
         crate::open_note::shown();
+        // And the frame to come back to, once it settles.
+        crate::panel::startup::loupe_drew(st);
     }
 }
 
@@ -3443,6 +3445,454 @@ pub(crate) mod tests {
         deliver_preview(&app, picture);
         frame(&state);
         assert!(!note.exists(), "the loupe drew it");
+    }
+
+    /// A window in Cull over real files in a scratch folder, its
+    /// settings a scratch file and the timer that keeps the panel's
+    /// choices running, as a run starts it.
+    struct Kept {
+        app: App,
+        state: Rc<Shared>,
+        worker: Rc<Worker>,
+        files: Vec<PathBuf>,
+        dir: PathBuf,
+        choices: crate::panel::startup::Choices,
+        _timer: slint::Timer,
+    }
+
+    impl Drop for Kept {
+        fn drop(&mut self) {
+            if let Ok(mut st) = self.state.try_borrow_mut() {
+                st.develop.renderer = None;
+            }
+            crate::settings::use_file(None);
+            crate::testing::remove_dir_retry(&self.dir);
+        }
+    }
+
+    impl Kept {
+        /// None without a GPU for the loupe to draw on.
+        fn new(name: &str, count: usize) -> Option<Kept> {
+            let gpu = greycard_viewport::testing::device("the last file in Cull")?;
+            Some(Kept::with(name, count, Some(gpu)))
+        }
+
+        /// With no renderer: the loupe draws nothing, and a test says
+        /// where it would have drawn (`startup::loupe_drew`).
+        fn bare(name: &str, count: usize) -> Kept {
+            Kept::with(name, count, None)
+        }
+
+        fn with(name: &str, count: usize, gpu: Option<(gpu::Device, gpu::Queue)>) -> Kept {
+            let dir = crate::testing::scratch_dir(name);
+            let files: Vec<PathBuf> = (0..count)
+                .map(|i| {
+                    let f = dir.join(format!("IMG_{i:04}.CR3"));
+                    std::fs::write(&f, b"not a raw").unwrap();
+                    f
+                })
+                .collect();
+            crate::settings::use_file(Some(dir.join("settings.json")));
+            let app = window(count);
+            app.window()
+                .set_size(slint::LogicalSize::new(1200.0, 800.0));
+            let (state, worker) = state_for(&app, files.clone());
+            let choices = crate::panel::startup::Choices::new(&app, &state.borrow(), false, false);
+            let timer = crate::panel::startup::keep_choices(&app, &state, &choices);
+            {
+                let mut st = state.borrow_mut();
+                st.develop.renderer = gpu
+                    .as_ref()
+                    .map(|(device, queue)| crate::render::Renderer::new(device, queue));
+                st.current = Some(0);
+                enter_cull(&mut st, &app, 0);
+            }
+            Kept {
+                app,
+                state,
+                worker,
+                files,
+                dir,
+                choices,
+                _timer: timer,
+            }
+        }
+
+        /// The arrow onto `cell` in Cull, and the loupe's draw of it as
+        /// `draw_cull` reports one, with no GPU to draw on.
+        fn step_bare(&self, cell: usize) {
+            let mut st = self.state.borrow_mut();
+            cull_select(&mut st, &self.app, cell);
+            crate::panel::startup::loupe_drew(&mut st);
+        }
+
+        /// The arrow onto `cell`, its camera picture in, and the
+        /// window's frame drawn by the loupe.
+        fn step(&self, cell: usize) {
+            cull_select(&mut self.state.borrow_mut(), &self.app, cell);
+            let picture = camera_picture(&self.state.borrow(), cell, (8, 6));
+            deliver_preview(&self.app, picture);
+            let mut st = self.state.borrow_mut();
+            if crate::panel::startup::land_pending(&mut st, &self.app).loupe {
+                cull_frame(&mut st, &self.app, &self.state);
+            }
+        }
+
+        /// The open frame's develop landing, as the worker sends one.
+        fn land(&self) {
+            let generation = self.state.borrow().develop.generation;
+            crate::panel::deliver::deliver(
+                &self.app,
+                crate::worker::Outcome::Developed {
+                    generation,
+                    turn: 0,
+                    kind: crate::finish::Source::SCENE,
+                    image: crate::worker::Developed::Halves(Arc::new(crate::worker::Halves {
+                        width: 60,
+                        height: 40,
+                        pixels: vec![Default::default(); 60 * 40 * 4],
+                    })),
+                    guide: Arc::new(crate::finish::Guide::NONE),
+                    planes: None,
+                    white: crate::worker::WhiteBase::IDENTITY,
+                    seconds: 0.1,
+                    sharpen: None,
+                    sources: Vec::new(),
+                    learned: crate::worker::LearnedReport::Off,
+                    fills: crate::worker::FillReport::default(),
+                },
+            );
+        }
+
+        /// The window's frame drawn again, the loupe on the same frame.
+        fn redraw(&self) {
+            let mut st = self.state.borrow_mut();
+            if crate::panel::startup::land_pending(&mut st, &self.app).loupe {
+                cull_frame(&mut st, &self.app, &self.state);
+            }
+        }
+
+        /// One tick of the choices' timer.
+        fn tick(&self) {
+            i_slint_backend_testing::mock_elapsed_time(crate::panel::startup::CHOICES_EVERY);
+        }
+
+        fn last_file(&self) -> String {
+            crate::settings::Settings::load().shared.last_file
+        }
+
+        /// The file's `last_file` set by hand, to see whether anything
+        /// writes over it.
+        fn plant(&self, text: &str) {
+            crate::settings::Settings::change(|s| s.shared.last_file = text.into());
+        }
+
+        fn canonical(&self, cell: usize) -> String {
+            std::fs::canonicalize(&self.files[cell])
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
+
+    /// Cull lands no develop: the frame it rests on is the next run's
+    /// all the same. The arrow held across many frames writes nothing
+    /// as it passes; the frame it stops on is written at the next tick
+    /// of the choices' timer, once, and not again while it stays; and
+    /// the close keeps a frame drawn since the last tick. Skipped
+    /// without a GPU.
+    #[test]
+    fn a_frame_stepped_to_in_cull_is_kept_for_the_next_run_once_it_settles() {
+        let Some(kept) = Kept::new("cull-last-file", 4) else {
+            return;
+        };
+        kept.plant("planted");
+        // Forty frames down the arrow, no tick between: no write.
+        for step in 1..=40 {
+            kept.step(step % 4);
+        }
+        assert_eq!(kept.last_file(), "planted", "not written as it passed");
+        kept.tick();
+        assert_eq!(kept.last_file(), kept.canonical(0), "the frame it rests on");
+        // Resting there, the loupe drawing it again between the ticks
+        // (a redraw owes nothing): no write at the ticks after.
+        kept.plant("planted");
+        kept.redraw();
+        kept.tick();
+        kept.redraw();
+        kept.tick();
+        assert_eq!(kept.last_file(), "planted", "not written again");
+        // A frame drawn and the window closed before the next tick: the
+        // close keeps it (`keep_last_file`, from the loop's exit).
+        kept.step(2);
+        crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+        assert_eq!(kept.last_file(), kept.canonical(2), "kept at the close");
+    }
+
+    /// A screenshot, a snapshot or a batch run steps through Cull and
+    /// writes the user's settings at neither the tick nor the close; a
+    /// run by hand does. Skipped without a GPU.
+    #[test]
+    fn a_capture_or_batch_run_in_cull_keeps_no_last_file() {
+        let Some(kept) = Kept::new("cull-last-file-batch", 4) else {
+            return;
+        };
+        kept.plant("planted");
+        let owned: [fn(&mut State, bool); 3] = [
+            |st, on| st.window.batch = on,
+            |st, on| st.launch.screenshot = on.then(|| PathBuf::from("a.png")),
+            |st, on| st.launch.snapshot = on.then(|| PathBuf::from("a.png")),
+        ];
+        for (i, set) in owned.iter().enumerate() {
+            // Set after the draw: a capture's draw takes its path and
+            // writes it, and the run ends there.
+            kept.step(1 + i);
+            set(&mut kept.state.borrow_mut(), true);
+            kept.tick();
+            crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+            assert_eq!(kept.last_file(), "planted", "run {i}");
+            set(&mut kept.state.borrow_mut(), false);
+        }
+        kept.step(0);
+        kept.tick();
+        assert_eq!(kept.last_file(), kept.canonical(0), "a run by hand");
+    }
+
+    /// A develop still writes its frame as it lands, at once, and a
+    /// frame Cull drew before it and had not written yet does not
+    /// write over it at the next tick; back in Cull, drawing that
+    /// frame again owes it again. Skipped without a GPU.
+    #[test]
+    fn a_develop_landing_writes_at_once_and_wins_over_an_older_cull_frame() {
+        let Some(kept) = Kept::new("cull-last-file-develop", 4) else {
+            return;
+        };
+        kept.step(1);
+        // The arrow onto frame 2 and D, its develop landing before the
+        // timer ticks.
+        {
+            let mut st = kept.state.borrow_mut();
+            cull_select(&mut st, &kept.app, 2);
+            to_develop(&mut st, &kept.app, &kept.worker);
+        }
+        kept.land();
+        assert_eq!(kept.last_file(), kept.canonical(2), "as the develop lands");
+        kept.tick();
+        assert_eq!(kept.last_file(), kept.canonical(2), "not the older frame");
+        to_cull(&mut kept.state.borrow_mut(), &kept.app, &kept.worker);
+        kept.step(1);
+        kept.tick();
+        assert_eq!(kept.last_file(), kept.canonical(1), "drawn again");
+    }
+
+    /// In Develop, the camera's picture standing in for a raw's develop
+    /// is drawn by the same loupe: that is not Cull's frame, and the
+    /// last file waits for the develop to land, as it always has, the
+    /// open note with it. Skipped without a GPU.
+    #[test]
+    fn a_stand_in_drawn_in_develop_keeps_no_last_file_until_its_develop_lands() {
+        let Some(kept) = Kept::new("develop-stand-in-last-file", 4) else {
+            return;
+        };
+        to_develop(&mut kept.state.borrow_mut(), &kept.app, &kept.worker);
+        kept.plant("planted");
+        kept.app.invoke_select(2);
+        let picture = camera_picture(&kept.state.borrow(), 2, (8, 6));
+        deliver_preview(&kept.app, picture);
+        {
+            let mut st = kept.state.borrow_mut();
+            assert_eq!(standing_in(&st), Some(2), "the camera's picture stands in");
+            assert!(crate::panel::startup::land_pending(&mut st, &kept.app).loupe);
+            cull_frame(&mut st, &kept.app, &kept.state);
+        }
+        kept.tick();
+        crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+        assert_eq!(kept.last_file(), "planted", "not before the develop");
+        kept.land();
+        assert_eq!(kept.last_file(), kept.canonical(2), "as the develop lands");
+    }
+
+    /// The rules of the last file with no GPU: Cull's loupe drawing a
+    /// frame owes it and the tick writes it; Develop's stand-in owes
+    /// nothing; a develop landing writes at once.
+    #[test]
+    fn the_last_file_is_cull_s_drawn_frame_or_develop_s_landed_one() {
+        let kept = Kept::bare("last-file-bare", 4);
+        kept.plant("planted");
+        kept.step_bare(1);
+        assert_eq!(kept.last_file(), "planted", "not at the draw");
+        kept.tick();
+        assert_eq!(kept.last_file(), kept.canonical(1), "at the tick");
+        // Drawn again as it rests: owed no more, written no more.
+        kept.plant("planted");
+        crate::panel::startup::loupe_drew(&mut kept.state.borrow_mut());
+        kept.tick();
+        assert_eq!(kept.last_file(), "planted", "not written again");
+        // Develop on another frame, its stand-in drawn.
+        {
+            let mut st = kept.state.borrow_mut();
+            to_develop(&mut st, &kept.app, &kept.worker);
+            st.current = Some(2);
+            crate::panel::startup::loupe_drew(&mut st);
+        }
+        kept.tick();
+        assert_eq!(kept.last_file(), "planted", "no stand-in kept");
+        crate::panel::startup::remember_last_file(&mut kept.state.borrow_mut());
+        assert_eq!(kept.last_file(), kept.canonical(2), "the develop's");
+    }
+
+    /// A frame Cull drew and has not written yet is written only while
+    /// it is still the open frame: not after Develop moves to another
+    /// frame before the tick; Cull drawing it again owes it again.
+    #[test]
+    fn a_frame_left_before_the_tick_is_not_written() {
+        let kept = Kept::bare("last-file-left", 4);
+        kept.plant("planted");
+        // Develop on another frame.
+        kept.step_bare(1);
+        {
+            let mut st = kept.state.borrow_mut();
+            to_develop(&mut st, &kept.app, &kept.worker);
+            st.current = Some(3);
+        }
+        kept.tick();
+        assert_eq!(kept.last_file(), "planted", "Develop moved on");
+        // Back in Cull on the frame: owed again.
+        to_cull(&mut kept.state.borrow_mut(), &kept.app, &kept.worker);
+        kept.step_bare(1);
+        kept.tick();
+        assert_eq!(kept.last_file(), kept.canonical(1), "owed again");
+    }
+
+    /// Another folder opened in the Library within the second of a
+    /// frame Cull drew: the old folder's frame is not written.
+    #[test]
+    fn a_frame_left_for_another_folder_before_the_tick_is_not_written() {
+        let kept = Kept::bare("last-file-folder", 4);
+        kept.plant("planted");
+        kept.step_bare(2);
+        let other = kept.dir.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        let files: Vec<PathBuf> = (0..2)
+            .map(|i| {
+                let f = other.join(format!("DSC_{i:04}.CR3"));
+                std::fs::write(&f, b"not a raw").unwrap();
+                f
+            })
+            .collect();
+        let held: Vec<crate::rows::Held> = files
+            .iter()
+            .map(|f| crate::rows::from_disk(f, None, Default::default()))
+            .collect();
+        kept.app.set_grid_open(true);
+        crate::panel::browser::open_loaded(
+            &kept.state,
+            &kept.app,
+            &kept.worker,
+            files,
+            held,
+            true,
+            0,
+        );
+        kept.tick();
+        crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+        assert_eq!(kept.last_file(), "planted", "the old folder's frame");
+    }
+
+    /// Develop's landings forget the frame Cull last drew: Cull drawing
+    /// it again, after Develop wrote another, owes it again.
+    #[test]
+    fn cull_drawing_its_old_frame_after_develop_moved_writes_it_again() {
+        let kept = Kept::bare("last-file-back", 4);
+        kept.step_bare(0);
+        kept.tick();
+        assert_eq!(kept.last_file(), kept.canonical(0), "Cull's");
+        to_develop(&mut kept.state.borrow_mut(), &kept.app, &kept.worker);
+        for frame in [0, 1] {
+            let mut st = kept.state.borrow_mut();
+            st.current = Some(frame);
+            crate::panel::startup::remember_last_file(&mut st);
+        }
+        assert_eq!(kept.last_file(), kept.canonical(1), "Develop's");
+        {
+            let mut st = kept.state.borrow_mut();
+            st.current = Some(0);
+            to_cull(&mut st, &kept.app, &kept.worker);
+            crate::panel::startup::loupe_drew(&mut st);
+        }
+        kept.tick();
+        assert_eq!(kept.last_file(), kept.canonical(0), "Cull's again");
+    }
+
+    /// The writes after the loop returns (`after_loop`, for a loop
+    /// whose exit hook did not run) keep the frame Cull rests on.
+    #[test]
+    fn the_writes_after_the_loop_keep_cull_s_frame() {
+        let kept = Kept::bare("last-file-after-loop", 4);
+        kept.plant("planted");
+        kept.step_bare(2);
+        crate::panel::startup::after_loop(&kept.app, &kept.state, &kept.choices);
+        assert_eq!(kept.last_file(), kept.canonical(2));
+    }
+
+    /// A run the command line owns (a script of keys, a timing run,
+    /// `--cull-develop`: `Launch::owned`) keeps no frame Cull draws, at
+    /// the tick or the close; Develop's landing keeps its own rule.
+    #[test]
+    fn a_run_the_command_line_owns_keeps_no_cull_frame() {
+        let kept = Kept::bare("last-file-owned", 4);
+        kept.plant("planted");
+        kept.state.borrow_mut().launch.owned = true;
+        kept.step_bare(1);
+        kept.tick();
+        crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+        assert_eq!(kept.last_file(), "planted");
+        crate::panel::startup::remember_last_file(&mut kept.state.borrow_mut());
+        assert_eq!(kept.last_file(), kept.canonical(1), "Develop's as it was");
+    }
+
+    /// The loop's exit runs the hook the run installs (`at_exit`),
+    /// which writes the frame Cull rests on; the write after the loop
+    /// returns (for a lost device's way out) finds the owe spent and
+    /// writes nothing again, and writes it itself when the hook did not
+    /// run.
+    #[test]
+    fn the_loops_exit_keeps_cull_s_frame_once() {
+        let kept = Kept::bare("last-file-exit", 4);
+        crate::panel::startup::at_exit(&kept.app, &kept.state, &kept.choices);
+        kept.plant("planted");
+        kept.step_bare(2);
+        crate::panel::startup::exiting();
+        assert_eq!(kept.last_file(), kept.canonical(2), "at the exit");
+        kept.plant("planted");
+        crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+        assert_eq!(kept.last_file(), "planted", "once");
+        // The hook never ran (a panic on a lost device): the write
+        // after the loop keeps it.
+        kept.step_bare(3);
+        crate::panel::startup::keep_last_file(&mut kept.state.borrow_mut());
+        assert_eq!(kept.last_file(), kept.canonical(3), "after the loop");
+    }
+
+    /// The lightbox's loupe over Cull is Cull: its frame is kept as
+    /// Cull's is.
+    #[test]
+    fn the_lightbox_loupe_over_cull_keeps_its_frame() {
+        let kept = Kept::bare("last-file-lightbox", 4);
+        kept.plant("planted");
+        press(&kept.app, "l");
+        assert!(kept.app.get_lightbox());
+        press(&kept.app, Key::Return);
+        assert!(kept.app.get_lightbox_loupe() && !kept.app.get_grid_open());
+        press(&kept.app, Key::RightArrow);
+        {
+            let mut st = kept.state.borrow_mut();
+            assert!(st.culling.cull.is_some(), "the loupe is Cull's");
+            crate::panel::startup::loupe_drew(&mut st);
+        }
+        kept.tick();
+        let open = kept.state.borrow().current.unwrap();
+        assert_eq!(kept.last_file(), kept.canonical(open));
     }
 
     /// A frame's local preview and its file land in either order, on

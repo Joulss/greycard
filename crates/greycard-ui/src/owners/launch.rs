@@ -61,6 +61,11 @@ pub(crate) struct Launch {
     /// capture or a timing run. The Loupe's remembered mode is neither
     /// taken nor kept.
     pub(crate) scripted: bool,
+    /// The command line owns the run, as the open note counts it
+    /// (`open_note::scripted`: a capture, a timing run, a script of
+    /// keys, a press, a menu, or a turn), or `--cull-develop`: no frame
+    /// Cull draws is kept as the last file (`startup::keep_last_file`).
+    pub(crate) owned: bool,
     /// `--filter`'s facet terms, chosen when the pass is done.
     pub(crate) facets_wanted: Vec<filter::Wanted>,
     /// A capture waits for those to be chosen.

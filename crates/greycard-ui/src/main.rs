@@ -782,6 +782,7 @@ impl State {
                 cull_at_start: None,
                 developed_at_start: false,
                 scripted: false,
+                owned: false,
                 facets_wanted: Vec::new(),
                 awaiting_index: false,
                 last_folder: None,
@@ -897,6 +898,8 @@ impl State {
                 lightbox: None,
                 lightbox_fetch: None,
                 compare_tiles: Rc::new(VecModel::default()),
+                drawn: None,
+                drawn_owed: false,
             },
             views: owners::Views {
                 companions: HashMap::new(),

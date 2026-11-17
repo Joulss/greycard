@@ -754,6 +754,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.window.settings_file = settings_file;
         st.window.deletes_allowed = deletes_allowed;
         st.launch.scripted = scripted;
+        st.launch.owned = crate::open_note::scripted(&cli) || cli.cull_develop;
         st.sheets.lenses_declined = lenses_declined;
         st.sheets.models.asked = models_asked;
         st.work.export_presets = export_presets;
@@ -1858,27 +1859,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // the process inside the loop, so nothing after `app.run()` runs.
     let choices = (cli.screenshot.is_none() && cli.snapshot.is_none()).then(|| {
         let choices = Choices::new(&app, &state.borrow(), set_aside, cli.hide_panels);
-        let (app_weak, held, at_exit) = (app.as_weak(), state.clone(), choices.clone());
-        AT_EXIT.with(|hook| {
-            *hook.borrow_mut() = Some(Box::new(move || {
-                let (Some(app), Ok(mut st)) = (app_weak.upgrade(), held.try_borrow_mut()) else {
-                    return;
-                };
-                // An edit still resting on its save timer would be lost
-                // with the process: written now, as the timer would.
-                if st.develop.save_timer.running() {
-                    st.develop.save_timer.stop();
-                    let edit = read_edit(&app, &st.develop.edit, st.develop.target);
-                    save_edit(&mut st, edit);
-                }
-                at_exit.write(&app, &st, true);
-                // The collections' and stacks' copies asked for, a
-                // moment's wait: one held up goes at the next launch.
-                if let Some(c) = &st.views.collections.carrier {
-                    c.wait(crate::carried::QUIT_WAIT);
-                }
-            }));
-        });
+        at_exit(&app, &state, &choices);
         (keep_choices(&app, &state, &choices), choices)
     });
     // An event loop that ends in an error (the compositor gone: a
@@ -1949,7 +1930,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // a snapshot, which should leave the user's alone. Written as they
     // change too (`keep_choices`); this write is for the last second.
     if let Some((_, choices)) = &choices {
-        choices.write(&app, &state.borrow(), true);
+        after_loop(&app, &state, choices);
     }
 
     // The open file's edit, as left.
@@ -2405,6 +2386,44 @@ thread_local! {
     static AT_EXIT: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
 }
 
+/// The choices' last write, and a resting edit's and Cull's frame's,
+/// as winit's loop exits (`exiting`).
+pub(crate) fn at_exit(app: &App, state: &Rc<Shared>, choices: &Choices) {
+    let (app_weak, held, at_exit) = (app.as_weak(), state.clone(), choices.clone());
+    AT_EXIT.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            let (Some(app), Ok(mut st)) = (app_weak.upgrade(), held.try_borrow_mut()) else {
+                return;
+            };
+            // An edit still resting on its save timer would be lost
+            // with the process: written now, as the timer would.
+            if st.develop.save_timer.running() {
+                st.develop.save_timer.stop();
+                let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+                save_edit(&mut st, edit);
+            }
+            at_exit.write(&app, &st, true);
+            // The frame Cull rests on, should the timer not have
+            // kept it yet.
+            keep_last_file(&mut st);
+            // The collections' and stacks' copies asked for, a
+            // moment's wait: one held up goes at the next launch.
+            if let Some(c) = &st.views.collections.carrier {
+                c.wait(crate::carried::QUIT_WAIT);
+            }
+        }));
+    });
+}
+
+/// The writes after the loop returns: the choices once more, and
+/// Cull's frame, for a loop whose exit hook did not run (a panic on a
+/// lost device, `gpu_lost::survive`): the start again opens on the
+/// frame last open. Spent by the hook if it ran.
+pub(crate) fn after_loop(app: &App, state: &Rc<Shared>, choices: &Choices) {
+    choices.write(app, &state.borrow(), true);
+    keep_last_file(&mut state.borrow_mut());
+}
+
 /// The loop is exiting: the choices are written while the window is
 /// still here to read them.
 pub(crate) fn exiting() {
@@ -2629,10 +2648,11 @@ pub(crate) fn keep_choices(app: &App, state: &Rc<Shared>, choices: &Choices) -> 
     let (app_weak, state, choices) = (app.as_weak(), state.clone(), choices.clone());
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::Repeated, CHOICES_EVERY, move || {
-        let (Some(app), Ok(st)) = (app_weak.upgrade(), state.try_borrow()) else {
+        let (Some(app), Ok(mut st)) = (app_weak.upgrade(), state.try_borrow_mut()) else {
             return;
         };
         choices.write(&app, &st, false);
+        keep_last_file(&mut st);
     });
     timer
 }
@@ -2666,7 +2686,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
             export_presets: Vec::new(),
             export_preset: chosen_preset(app).unwrap_or_default(),
             // Kept apart, all of them: the last file is written as soon
-            // as a file develops, the sidecars' two as the Settings sheet
+            // as a file develops (or Cull's loupe has drawn it and it
+            // settles), the sidecars' two as the Settings sheet
             // changes them. The caller fills them in from disk.
             xmp_sidecars: false,
             sidecars_in_folder: false,
@@ -2838,11 +2859,8 @@ pub(crate) fn first_run_line() -> String {
 /// The absolute path of the file now open, kept for the next run to
 /// jump back to; skipped for a screenshot, a snapshot or a one-shot
 /// export, which should leave the user's settings alone.
-pub(crate) fn remember_last_file(st: &State) {
-    // `batch` as well: a snapshot's path is taken at the capture, and
-    // a develop that lands after it (a `--menu` over another frame)
-    // must not write the user's settings either.
-    if st.window.batch || st.launch.screenshot.is_some() || st.launch.snapshot.is_some() {
+pub(crate) fn remember_last_file(st: &mut State) {
+    if leaves_settings_alone(st) {
         return;
     }
     let Some(path) = st.current.and_then(|i| st.path_at(i)) else {
@@ -2851,11 +2869,84 @@ pub(crate) fn remember_last_file(st: &State) {
     let Ok(path) = std::fs::canonicalize(path) else {
         return;
     };
+    // The develop's file is the last one now: a frame the loupe drew
+    // before it is owed no more, and the loupe drawing it again owes
+    // it again.
+    st.culling.drawn = None;
+    st.culling.drawn_owed = false;
     // Every develop lands here; the file only writes when the file
     // open has changed.
     // Noted before its picture goes up, should putting it up be what
     // ends the process (`open_note`); not for a develop of it again.
     crate::open_note::opening(&path);
+    let path = path.to_string_lossy().into_owned();
+    settings::Settings::change(|s| s.shared.last_file = path);
+}
+
+/// A run that leaves the user's settings alone: a screenshot, a
+/// snapshot or a one-shot export. `batch` as well: a snapshot's path
+/// is taken at the capture, and a develop that lands after it (a
+/// `--menu` over another frame) must not write the user's settings
+/// either.
+fn leaves_settings_alone(st: &State) -> bool {
+    st.window.batch || st.launch.screenshot.is_some() || st.launch.snapshot.is_some()
+}
+
+/// A loupe drew the open frame's picture. In Cull (its own view, or
+/// the Loupe under the lightbox in Cull) that is the frame to keep as
+/// the last file, Cull landing no develop: owed, and written once it
+/// settles (`keep_last_file`). Not in Develop, where the camera's
+/// picture stands in for a develop not landed yet: the last file moves
+/// there as the develop lands (`remember_last_file`), noted as it does.
+/// Not noted as opening (`open_note`) in Cull either: its picture is up
+/// and drawn already, and the next launch that restores it notes it as
+/// it opens.
+pub(crate) fn loupe_drew(st: &mut State) {
+    if st.culling.cull.is_none() {
+        return;
+    }
+    let Some(path) = st.current.and_then(|i| st.path_at(i)) else {
+        return;
+    };
+    if st.culling.drawn.as_ref() != Some(path) {
+        st.culling.drawn = Some(path.clone());
+        st.culling.drawn_owed = true;
+    }
+}
+
+/// The frame Cull last drew, written as the last file if it is owed:
+/// from the timer that keeps the panel's choices (so a run of arrow
+/// keys writes once a tick at most, and the frame it rests on is in the
+/// file a second after at most), at the loop's exit, and after the loop
+/// returns (a lost device's way out, which may skip the exit's hook):
+/// the owe is spent by the first, so the file is written once. Only
+/// while it is still the open frame: one left since (another folder,
+/// Develop on another frame) is no longer what the user sees, and the
+/// owe goes; Cull drawing it again owes it again.
+pub(crate) fn keep_last_file(st: &mut State) {
+    if !std::mem::take(&mut st.culling.drawn_owed) {
+        return;
+    }
+    let open = st.current.and_then(|i| st.path_at(i));
+    if open.is_none() || open != st.culling.drawn.as_ref() {
+        st.culling.drawn = None;
+        return;
+    }
+    // A run the command line owns writes no Cull frame (`Launch::owned`);
+    // Develop's own path keeps its narrower guard.
+    if leaves_settings_alone(st) || st.launch.owned {
+        return;
+    }
+    // Gone since it was drawn (moved, deleted): the file keeps the
+    // last it had, and a launch falls back from a file gone.
+    let Some(path) = st
+        .culling
+        .drawn
+        .as_ref()
+        .and_then(|p| std::fs::canonicalize(p).ok())
+    else {
+        return;
+    };
     let path = path.to_string_lossy().into_owned();
     settings::Settings::change(|s| s.shared.last_file = path);
 }

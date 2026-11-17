@@ -929,7 +929,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 generation,
                 full: None,
             });
-            remember_last_file(&st);
+            remember_last_file(&mut st);
             app.set_busy(false);
             app.window().request_redraw();
             // `--turn` outside culling: the key, once there is a
