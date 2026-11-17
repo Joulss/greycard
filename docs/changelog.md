@@ -172,6 +172,8 @@ design note behind it.
 
 ### Fixes
 
+- A double-click on a mask's Temperature or Tint puts that slider back to
+  the picture's value, and no longer switches the mask's white balance off.
 - Going back to a frame under a camera profile is quick again: its base
   was made anew at every return
   ([§706](https://github.com/jessolmstead/greycard/blob/master/docs/notes/706-the-shelf-under-a-camera-profile.md)).
