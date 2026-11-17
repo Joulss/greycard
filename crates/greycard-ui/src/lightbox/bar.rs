@@ -76,17 +76,20 @@ fn into_lightbox(app: &App) {
     assert!(app.get_lightbox());
 }
 
-/// The visible elements a screen reader knows as `label` in `role`,
-/// found without moving the pointer.
-fn found(app: &App, label: &str, role: AccessibleRole) -> Vec<ElementHandle> {
-    ElementHandle::find_by_accessible_label(app, label)
-        .filter(|e| e.accessible_role() == Some(role))
+/// The lightbox bar's close button, by its id (its words are the
+/// catalog's), found without moving the pointer.
+fn close(app: &App) -> Vec<ElementHandle> {
+    ElementHandle::find_by_element_id(app, "GridSheet::bar-close")
+        .filter(|e| e.accessible_role() == Some(AccessibleRole::Button))
         .collect()
 }
 
-/// The one visible tile size slider.
+/// The one visible tile size slider, the header's or the bar's, by its
+/// type: its label is the catalog's.
 fn slider(app: &App) -> ElementHandle {
-    let mut all = found(app, "Tile size", AccessibleRole::Slider);
+    let mut all: Vec<_> = ElementHandle::find_by_element_type_name(app, "SizeSlider")
+        .filter(|e| e.accessible_role() == Some(AccessibleRole::Slider))
+        .collect();
     assert_eq!(all.len(), 1, "one tile size slider on screen");
     all.remove(0)
 }
@@ -123,10 +126,7 @@ fn the_bar_comes_with_the_pointer_and_goes_at_rest() {
     wait(800);
     assert!(!app.get_lightbox_bar_up(), "down at rest");
     wait(500);
-    assert!(
-        found(&app, "Close lightbox", AccessibleRole::Button).is_empty(),
-        "faded out, gone"
-    );
+    assert!(close(&app).is_empty(), "faded out, gone");
     // Keys move nothing on screen: the bar stays down.
     key(&app, Key::RightArrow);
     key(&app, "-");
@@ -135,10 +135,7 @@ fn the_bar_comes_with_the_pointer_and_goes_at_rest() {
     // The pointer moves: up, and the rest starts again.
     move_to(&app, 720.0, 520.0);
     assert!(app.get_lightbox_bar_up());
-    assert_eq!(
-        found(&app, "Close lightbox", AccessibleRole::Button).len(),
-        1
-    );
+    assert_eq!(close(&app).len(), 1);
     wait(1500);
     move_to(&app, 730.0, 520.0);
     wait(1500);
@@ -297,9 +294,9 @@ fn the_bar_comes_up_back_from_the_loupe_and_rests() {
 fn the_close_leaves_for_the_grid() {
     let (app, _state) = session(24);
     into_lightbox(&app);
-    let close = found(&app, "Close lightbox", AccessibleRole::Button);
-    assert_eq!(close.len(), 1);
-    let (x, y) = center(&close[0]);
+    let button = close(&app);
+    assert_eq!(button.len(), 1);
+    let (x, y) = center(&button[0]);
     move_to(&app, x, y);
     i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(800));
     slint::platform::update_timers_and_animations();
@@ -309,7 +306,7 @@ fn the_close_leaves_for_the_grid() {
     assert!(!app.get_lightbox() && app.get_grid_open(), "the click");
     assert!(!app.get_left_hidden(), "the panes back as L puts them");
     into_lightbox(&app);
-    found(&app, "Close lightbox", AccessibleRole::Button)[0].invoke_accessible_default_action();
+    close(&app)[0].invoke_accessible_default_action();
     slint::platform::update_timers_and_animations();
     assert!(!app.get_lightbox() && app.get_grid_open(), "the action");
 }
