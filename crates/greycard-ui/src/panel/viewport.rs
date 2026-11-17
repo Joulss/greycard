@@ -2528,8 +2528,16 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             );
             let old = effective_zoom(&st, vw, vh);
             let new = (old * factor).clamp(0.02, 16.0);
-            // The image pixel under the cursor stays under the cursor.
-            let (px, py) = (x * scale - vw as f32 / 2.0, y * scale - vh as f32 / 2.0);
+            // The image pixel under the cursor stays under the cursor,
+            // in the compare view the one in the tile it is over: as
+            // many tiles as the frame drew.
+            let tiles = st
+                .culling
+                .cull
+                .as_ref()
+                .filter(|c| c.compare > 1)
+                .map_or(1, |c| c.rows(&st.views.shown).len());
+            let (px, py) = zoom::offset_in_tile(vw, vh, tiles, (x * scale, y * scale));
             st.develop.center.0 += px / old - px / new;
             st.develop.center.1 += py / old - py / new;
             st.develop.zoom = new;

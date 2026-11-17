@@ -36,6 +36,26 @@ pub fn tile_rects(width: u32, height: u32, n: usize) -> Vec<(u32, u32, u32, u32)
         .collect()
 }
 
+/// A point's offset from the center of the picture's place it is over:
+/// the view's center with one picture, the center of the tile under
+/// the point in a compare view of `n` tiles. Every tile shows its
+/// frame at the one zoom and center, so a zoom about the point holds
+/// what is under it only when measured from its own tile. Between the
+/// tiles, or over an empty cell, there is nothing to hold: no offset,
+/// and each tile zooms about its middle.
+pub fn offset_in_tile(width: u32, height: u32, n: usize, at: (f32, f32)) -> (f32, f32) {
+    if n <= 1 {
+        return (at.0 - width as f32 / 2.0, at.1 - height as f32 / 2.0);
+    }
+    tile_rects(width, height, n)
+        .into_iter()
+        .map(|(x, y, w, h)| (x as f32, y as f32, w as f32, h as f32))
+        .find(|&(x, y, w, h)| at.0 >= x && at.0 < x + w && at.1 >= y && at.1 < y + h)
+        .map_or((0.0, 0.0), |(x, y, w, h)| {
+            (at.0 - (x + w / 2.0), at.1 - (y + h / 2.0))
+        })
+}
+
 /// The part of a `vw` by `vh` view one picture has: all of it, or
 /// its tile of a compare view of `compare` frames. The tiles are all
 /// one size, so the first one's is every one's.
@@ -179,6 +199,34 @@ mod tests {
         assert!(!in_view((1000, 800), 1.0, (-600.0, 150.0), (400, 300)));
         assert!(!in_view((1000, 800), 1.0, (200.0, 800.0), (400, 300)));
         assert!(!in_view((1000, 800), 1.0, (0.0, 0.0), (0, 0)));
+    }
+
+    /// The wheel's zoom holds the pixel under the pointer: measured
+    /// from the view's middle with one picture, from the middle of the
+    /// tile under the pointer in a compare view, and from nowhere in
+    /// the gap between tiles or over an empty cell.
+    #[test]
+    fn a_point_is_measured_from_the_middle_of_its_own_tile() {
+        assert_eq!(
+            offset_in_tile(1000, 600, 1, (700.0, 100.0)),
+            (200.0, -200.0)
+        );
+        // Two side by side: tiles of 498 at 0 and 502.
+        assert_eq!(offset_in_tile(1000, 600, 2, (249.0, 300.0)), (0.0, 0.0));
+        assert_eq!(offset_in_tile(1000, 600, 2, (751.0, 300.0)), (0.0, 0.0));
+        assert_eq!(
+            offset_in_tile(1000, 600, 2, (851.0, 100.0)),
+            (100.0, -200.0)
+        );
+        assert_eq!(
+            offset_in_tile(1000, 600, 2, (500.0, 300.0)),
+            (0.0, 0.0),
+            "the gap"
+        );
+        // Four in a square: the lower right tile's middle is (751, 451).
+        assert_eq!(offset_in_tile(1000, 600, 4, (761.0, 441.0)), (10.0, -10.0));
+        // Three tiles of a set of four: the fourth cell is empty.
+        assert_eq!(offset_in_tile(1000, 600, 3, (761.0, 441.0)), (0.0, 0.0));
     }
 
     #[test]

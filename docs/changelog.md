@@ -172,6 +172,8 @@ design note behind it.
 
 ### Fixes
 
+- In the compare view the wheel zooms about what is under the pointer, in
+  the frame it is over.
 - An old-process Lightroom preset no longer imports its default Contrast as
   +25, and names the older sliders it cannot carry
   ([§705](https://github.com/jessolmstead/greycard/blob/master/docs/notes/705-lightrooms-lrtemplate-presets.md)).
