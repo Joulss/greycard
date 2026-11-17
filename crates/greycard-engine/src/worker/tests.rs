@@ -3104,7 +3104,28 @@ fn a_base_standing_in_for_the_learned_denoiser_is_taken_back() {
     edit.noise.enabled = true;
     edit.noise.learned = greycard_edit::Learned::Fast;
     edit.noise.learned_strength = 0.5;
-    assert!(stands_in(&Ai::new(), &edit), "no model in a test's store");
+    // A store of its own with nothing in it: the machine's may hold
+    // the model.
+    let ai = || Ai::for_test(greycard_ai::Store::at("no-store"), Vec::new());
+    let develop_turned =
+        |frame: &Arc<RawFrame>, edit: &Edit, turn: u8, base: &mut Option<FrameKept>| {
+            let deliver: Deliver = Arc::new(|_| {});
+            let (outcome, image) = develop_job(
+                &Input::Raw(frame.clone()),
+                edit,
+                turn,
+                1,
+                base,
+                &mut ai(),
+                None,
+                None,
+                &mut None,
+                &deliver,
+            );
+            assert!(matches!(outcome, Outcome::Developed { .. }));
+            image.expect("a picture on the CPU")
+        };
+    assert!(stands_in(&ai(), &edit), "no model in the test's store");
     let a = Arc::new(aberrated_frame(120, 80));
     let b = Arc::new(aberrated_frame(64, 48));
     let (ka, kb) = (shelf_key("a.CR2", &a), shelf_key("b.CR2", &b));
@@ -3121,7 +3142,7 @@ fn a_base_standing_in_for_the_learned_denoiser_is_taken_back() {
             base,
             shelf,
             (Some(from.clone()), Some((to.0, &Input::Raw(to.1.clone())))),
-            (&edit, 0, &|e| stands_in(&Ai::new(), e)),
+            (&edit, 0, &|e| stands_in(&ai(), e)),
             None,
             None,
         );
