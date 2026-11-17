@@ -1306,6 +1306,8 @@ clears or a tester asks for it.
       its smallest reach, which smooths a speckled range mask at once
       (discussion 59, 2026-11-12); waits on a measurement
 - [ ] Camera tethering
+- [ ] Red-eye correction (issue 175): click an eye, or the eyes found
+      by the Parts mask, and the red pupil goes dark and neutral
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
 - [ ] Learned highlight reconstruction, a trial for 0.13.0: the
