@@ -746,6 +746,10 @@ the user.
       passes scoring too
 - [ ] Closed eyes said from the face parts the Parts mask already
       finds (§252), as a term and a mark on the tile, never a reject
+- [ ] Pick the best of a burst by pairs: two frames of a stack or a
+      selection side by side, the better kept and the next brought in
+      against it, until one is left; the winner flagged or rated, the
+      rest untouched unless asked
 - [ ] Focus peaking in the lightbox: its tiles are Slint images, not
       the viewport's draw, so Shift+J does not reach them (§542)
 - [ ] Search by phrase: an image embedding from a CLIP-style model
