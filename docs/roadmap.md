@@ -1286,6 +1286,10 @@ clears or a tester asks for it.
       with a RAM check, and the file in the registry (issue 153)
 - [ ] A crop copied to other frames, and the crop's numbers shown so
       one can be typed (discussion 59, 2026-11-12)
+- [ ] A question to answer: what a middle click's sync should do
+      with masks. Today it takes the last sync's or paste's checks:
+      all, none, or the clicked frame's masks of the same names as
+      the ones last checked
 - [ ] A reset on each section's header, on Develop, Crop, and a
       mask's sections (discussion 59, 2026-11-12); double-click
       resets one slider and Reset all the tab today
