@@ -8528,6 +8528,10 @@ fn the_worker_begins_no_prefetch_while_a_lost_device_waits() {
             .expect("the open lands"),
         1
     );
+    // The open's develop is delivered before the worker is back at its
+    // wait; a loss told in between is taken up at once, and the
+    // prefetch then begins as it should. So let it settle first.
+    std::thread::sleep(QUIET * 4);
     (worker.gpu_lost_teller())(false);
     worker.neighbors(
         1,
