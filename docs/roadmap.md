@@ -819,6 +819,11 @@ brackets and the panorama to shoot for testing are in
       (found on the first real hand-stepped stack, 2026-11-08)
 - [ ] A bracket finder: a burst whose EXIF exposures step marked as a
       bracket, so the merge can be asked of a whole card (§523)
+- [ ] A vignette that darkens what is on screen: today's is an
+      exposure falloff in the scene, so a corner far over white stays
+      bright where other editors' darken it evenly; a choice of the
+      two, or tonal control on the Vignette (shadows only), and a
+      lift of the middle to go with it (discussion 170)
 - [ ] A center for the vignette: two sliders or a drag on the picture
       to move the shape off the frame's middle, as darktable has and
       Lightroom has not; the center kept as fractions of the frame so
