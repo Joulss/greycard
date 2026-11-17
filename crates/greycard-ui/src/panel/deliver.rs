@@ -533,7 +533,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.develop.frame = frame.zip(profile);
             crate::panel::color::learn_monochrome(&mut st, app);
             // The camera the file names, and what the profile
-            // directory holds for it: read on open, not on develop.
+            // directory holds for it: taken on open, not on develop.
             st.develop.camera = st
                 .develop
                 .frame
@@ -546,16 +546,18 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .as_ref()
                 .map(|(f, _)| f.other_names.clone())
                 .unwrap_or_default();
-            st.develop.profiles = greycard_edit_io::profiles::list();
+            // The listing held, never a walk of the directory here.
+            crate::panel::assets::profiles_opened(&mut st);
             st.develop.profile_tone_for = None;
             st.develop.looks = greycard_edit_io::looks::list();
-            // Read on each open, so a look or a profile changed by hand
-            // since is caught here too.
+            // Looked at on each open, so a look or a profile an edit
+            // names, changed by hand since, is caught here too.
             crate::edited::looks_moved(&mut st);
             // Another file, so the embedded profile behind the
             // white balance is another one too.
             st.develop.white_profile = None;
-            show_profiles(&st, &st.develop.edit.camera.profile, app);
+            show_profiles(&st, &st.develop.edit.camera, app);
+            crate::panel::assets::profiles_shown(&mut st, app);
             // After the directory is read, not before: `show_edit`
             // ran earlier in this arm, when there was nothing to list.
             show_looks(&st, &st.develop.edit.look_lut, app);
@@ -4527,6 +4529,110 @@ mod tests {
             taken: None,
             blend: None,
         }
+    }
+
+    /// An open never walks the camera profile directory: every open
+    /// looks at it for a change off the window's thread, naming the
+    /// files of the profiles on show and the chosen one, and the CAMERA
+    /// PROFILE section opening walks it. The camera filter runs once
+    /// for an open however often the panel is shown after it, and the
+    /// log says a camera's hidden count once while the list stands.
+    #[test]
+    fn an_open_walks_no_profile_directory_and_filters_once() {
+        use crate::panel::assets::{PROFILE_FILTERS, PROFILE_LOOKED, PROFILE_LOOKS, set_profiles};
+        use greycard_edit_io::profiles::walks_here;
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        let open = |i: i32, model: &str| {
+            app.invoke_select(i);
+            let generation = state.borrow().develop.generation;
+            deliver(&app, opened_raw(generation, model, 2, (5000.0, 0.0)));
+            deliver(&app, developed(generation, (60, 40)));
+        };
+        let shown_again = || {
+            let st = state.borrow();
+            crate::panel::edit::show_edit(&st, &st.develop.edit, &app, st.develop.target);
+        };
+        // The first open may walk, when nothing is held yet.
+        open(0, "Zero");
+        let (walks, looks) = (walks_here(), PROFILE_LOOKS.get());
+        open(1, "Zero");
+        open(0, "Zero");
+        open(2, "Two");
+        assert_eq!(PROFILE_LOOKS.get(), looks + 3, "a look at each open");
+        assert!(!PROFILE_LOOKED.with(|l| l.borrow().0), "not by force");
+        assert_eq!(walks_here(), walks, "nothing changed, nothing walked");
+        app.invoke_camera_profiles_wanted();
+        assert_eq!(PROFILE_LOOKS.get(), looks + 4, "the section opened");
+        assert!(PROFILE_LOOKED.with(|l| l.borrow().0), "by force");
+        assert_eq!(walks_here(), walks + 1, "the section walks");
+
+        // Other cameras' profiles, for the filter to hide, and one for
+        // the camera Two.
+        let entry = |name: &str, camera: &str| greycard_edit::camera::Entry {
+            name: name.into(),
+            path: std::path::PathBuf::from(format!("{name}.dcp")),
+            title: None,
+            unique_camera_model: Some(camera.into()),
+            copyright: None,
+            same_as: None,
+            tone_curve: false,
+        };
+        let entries = vec![
+            entry("A", "Other Camera"),
+            entry("B", "Other Camera"),
+            entry("Mine", "Test Two"),
+        ];
+        set_profiles(&mut state.borrow_mut(), entries.clone());
+        let (filters, logged) = PROFILE_FILTERS.get();
+        let since = || {
+            let (f, l) = PROFILE_FILTERS.get();
+            (f - filters, l - logged)
+        };
+        shown_again();
+        shown_again();
+        assert_eq!(since(), (1, 1), "Two, filtered and said once");
+        open(0, "Zero");
+        shown_again();
+        assert_eq!(since(), (2, 2), "Zero, once");
+        open(2, "Two");
+        shown_again();
+        assert_eq!(since(), (3, 2), "Two again: filtered, not said again");
+        // The open named the file of the profile on show for Two.
+        assert_eq!(
+            PROFILE_LOOKED.with(|l| l.borrow().1.clone()),
+            [std::path::PathBuf::from("Mine.dcp")]
+        );
+        set_profiles(&mut state.borrow_mut(), entries);
+        shown_again();
+        assert_eq!(since(), (4, 3), "a new list: said again");
+        assert_eq!(walks_here(), walks + 1);
+    }
+
+    /// The panel with no frame open says no hidden count in the log:
+    /// there is no camera to say it for.
+    #[test]
+    fn no_hidden_count_is_said_with_no_frame_open() {
+        use crate::panel::assets::{PROFILE_FILTERS, set_profiles};
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        let other = greycard_edit::camera::Entry {
+            name: "A".into(),
+            path: Default::default(),
+            title: None,
+            unique_camera_model: Some("Other Camera".into()),
+            copyright: None,
+            same_as: None,
+            tone_curve: false,
+        };
+        set_profiles(&mut state.borrow_mut(), vec![other]);
+        let (_, logged) = PROFILE_FILTERS.get();
+        {
+            let st = state.borrow();
+            assert!(st.develop.camera.1.is_empty());
+            crate::panel::assets::show_profiles(&st, &st.develop.edit.camera, &app);
+        }
+        assert_eq!(PROFILE_FILTERS.get().1, logged);
     }
 
     /// A develop of `generation` as the worker delivers one: a picture

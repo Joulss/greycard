@@ -172,6 +172,9 @@ design note behind it.
 
 ### Fixes
 
+- Opening a frame no longer walks the whole camera-profile folder, which
+  held the window for most of a second with thousands of profiles
+  ([§708](https://github.com/jessolmstead/greycard/blob/master/docs/notes/708-the-profile-listing-held-between-opens.md)).
 - Stepping through frames that already have edits is quicker: the next ones
   are developed ahead, as unedited ones were
   ([§707](https://github.com/jessolmstead/greycard/blob/master/docs/notes/707-edited-neighbors-read-first-for-the-prefetch.md)).

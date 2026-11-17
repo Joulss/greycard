@@ -1076,7 +1076,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_display_curve(edit.display_curve.name().into());
     // The list and its warning follow the choice, so an undo or a
     // preset that brings another camera's profile says so at once.
-    show_profiles(st, &edit.camera.profile, app);
+    show_profiles(st, &edit.camera, app);
     app.set_camera_tone_curve(edit.camera.tone_curve);
     // The list, its note and the strength follow the choice, so an
     // undo or a preset that brings a look says so at once.

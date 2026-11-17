@@ -333,7 +333,7 @@ pub(crate) struct Synced {
 /// passes `None`.
 ///
 /// `profiles` is the profile directory as
-/// `greycard_edit_io::profiles::list` reads it:
+/// `panel::assets::profiles_for_sync` gives it:
 /// with Camera carried and a named profile on `preset`, each target
 /// is read for its body and a target the profile was not made for
 /// takes every other section and keeps its own profile.
@@ -704,7 +704,7 @@ fn sync_now(
     choice: &Choice,
     modes: SyncShift,
 ) {
-    let profiles = greycard_edit_io::profiles::list();
+    let profiles = crate::panel::assets::profiles_for_sync(app);
     let start = std::time::Instant::now();
     let mut st = state.borrow_mut();
     let on_screen = st.current.filter(|&c| {
@@ -1175,7 +1175,7 @@ fn source_edit(st: &mut State, app: &App, from: usize) -> Option<Edit> {
 /// directory are in hand: `panel::assets::on_preset_applied`'s own
 /// logic, pulled out here — as `sync_selection` already is — so a
 /// test can hand it fake bodies instead of going through
-/// `greycard_edit_io::profiles::list` and a real file's metadata, which
+/// `panel::assets::profiles_for_sync` and a real file's metadata, which
 /// the Slint callback itself has no way to fake.
 ///
 /// The current frame takes the preset the way it always has (through
@@ -1220,7 +1220,7 @@ pub(crate) fn preset_pressed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>,
         crate::rows::Request::Preset,
         Box::new(move |state, app, worker, at| {
             let frames: Vec<usize> = at.into_iter().flatten().collect();
-            let profiles = greycard_edit_io::profiles::list();
+            let profiles = crate::panel::assets::profiles_for_sync(app);
             apply_preset_to(
                 &mut state.borrow_mut(),
                 app,
@@ -2070,7 +2070,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 crate::rows::Request::Paste,
                 Box::new(move |state, app, worker, at| {
                     let chosen: Vec<usize> = at.into_iter().flatten().collect();
-                    let profiles = greycard_edit_io::profiles::list();
+                    let profiles = crate::panel::assets::profiles_for_sync(app);
                     paste_mask_onto(
                         &mut state.borrow_mut(),
                         app,
@@ -2207,7 +2207,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     crate::rows::Request::Paste,
                     Box::new(move |state, app, worker, at| {
                         let chosen: Vec<usize> = at.into_iter().flatten().collect();
-                        let profiles = greycard_edit_io::profiles::list();
+                        let profiles = crate::panel::assets::profiles_for_sync(app);
                         let start = std::time::Instant::now();
                         let synced = paste_onto(
                             &mut state.borrow_mut(),
@@ -2354,7 +2354,7 @@ mod tests {
         let (state, worker) = state_for(&app, folder(3));
         {
             let mut st = state.borrow_mut();
-            st.develop.profiles = profiles.clone();
+            crate::panel::assets::hand_profiles(&mut st, profiles.clone());
             st.sidecars[0].record(on(true));
             st.sidecars[2].record(on(false));
         }

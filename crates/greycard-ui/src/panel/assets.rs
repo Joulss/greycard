@@ -941,16 +941,18 @@ fn profile_row(name: &str, label: String, indented: bool) -> ProfileRow {
     }
 }
 
-/// Whether the profile the edit names is a DCP in the list that
-/// carries a tone curve.
-fn chosen_has_curve(st: &State) -> bool {
+/// Whether the profile the edit names is known to have no tone
+/// curve: the file's own, or a DCP in the list that carries none. One
+/// not in the list (the list still being read, or the file not there)
+/// is not known to, and its switch is left as the edit has it.
+fn chosen_lacks_curve(st: &State) -> bool {
     let greycard_edit::camera::ProfileChoice::Named(name) = &st.develop.edit.camera.profile else {
-        return false;
+        return true;
     };
     st.develop
         .profiles
         .iter()
-        .any(|e| &e.name == name && e.tone_curve)
+        .any(|e| &e.name == name && !e.tone_curve)
 }
 
 /// What the CAMERA PROFILE section lists for the open file: the
@@ -961,8 +963,9 @@ fn chosen_has_curve(st: &State) -> bool {
 /// grouped by camera (`greycard_edit::camera::grouped`). The switch is
 /// a view of the list: the edit and its picture are the same either
 /// way, and a profile the edit names is listed either way.
-pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileChoice, app: &App) {
+pub(crate) fn show_profiles(st: &State, edit: &greycard_edit::camera::Camera, app: &App) {
     use greycard_edit::camera;
+    let chosen = &edit.profile;
     let body = body_of(st);
     let embedded = chosen.is_embedded();
     let chosen_name = chosen.name().to_string();
@@ -1004,37 +1007,12 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
                 }),
         );
     } else {
-        let mut shown = Vec::new();
-        // One row a profile: a file that is the same profile as another
-        // is left out, and the one the edit names stands for its pair.
-        for e in camera::listed(&st.develop.profiles, chosen) {
-            if e.fits(body) || e.name == chosen {
-                shown.push(e);
-            } else {
-                hidden += 1;
-                // The name each side goes by, so a profile hidden by a
-                // spelling the maker and the decoder disagree on can be
-                // told from one made for another camera.
-                tracing::debug!(
-                    "camera profile {}: made for {:?}, not listed for {:?}",
-                    e.name,
-                    e.unique_camera_model.as_deref().unwrap_or("no camera"),
-                    body.names()
-                );
-            }
-        }
-        // The count, once a listing, so a profile a spelling hides (an
-        // alias the body does not know) can be looked for in a default
-        // log; each one's names are at debug.
-        if hidden > 0 {
-            tracing::info!(
-                "camera profiles: {hidden} not listed for {:?}, made for other cameras",
-                body.names()
-            );
-        }
+        let (shown, n) = filtered(st, body, chosen);
+        hidden = n;
         // Two different profiles can go by one name on the same rows:
         // two files made for one body, or for the body under each of
         // its names. The file name beside each tells them apart.
+        let shown: Vec<&camera::Entry> = shown.iter().collect();
         let labels = camera::told_apart(&shown);
         rows.extend(
             shown
@@ -1044,28 +1022,36 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
         );
     }
     // A profile the edit names and the directory does not have is
-    // still shown, and chosen, so the panel says what the edit says.
+    // still shown, and chosen, so the panel says what the edit says;
+    // while the first listing is still being read, by its name alone,
+    // since it is not known to be missing.
+    let pending = profiles_pending(st);
     if !embedded && !st.develop.profiles.iter().any(|e| e.name == chosen) {
-        rows.push(profile_row(
-            chosen,
-            tr!("{name} (missing)", name = chosen),
-            false,
-        ));
+        rows.push(match pending {
+            true => profile_row(chosen, chosen.to_string(), false),
+            false => profile_row(chosen, tr!("{name} (missing)", name = chosen), false),
+        });
     }
     app.set_camera_profile_rows(ModelRc::new(VecModel::from(rows)));
     app.set_camera_profiles_any(!st.develop.profiles.is_empty());
     app.set_camera_profile(chosen.into());
-    // The tone curve's switch, for a profile that carries one.
+    // The tone curve's switch, for a profile that carries one. For one
+    // not in the list it is shown while the list is still being read,
+    // and as the edit has it for a file not there, so a step of the
+    // edit does not take the switch off (`read_edit` reads it only
+    // where shown).
     app.set_camera_profile_has_curve(
         !embedded
-            && st
-                .develop
-                .profiles
-                .iter()
-                .any(|e| e.name == chosen && e.tone_curve),
+            && match st.develop.profiles.iter().find(|e| e.name == chosen) {
+                Some(e) => e.tone_curve,
+                // Not read yet: shown, so it does not hide once off.
+                None if pending => true,
+                None => edit.tone_curve,
+            },
     );
     app.set_camera_profile_note(
         match (st.develop.profiles.len(), hidden) {
+            (0, _) if pending => String::new(),
             (0, _) => match greycard_edit_io::profiles::store_dir() {
                 Some(dir) => tr!(
                     "No profiles yet: put DCP files in {folder}.",
@@ -1081,9 +1067,383 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
         .into(),
     );
     app.set_camera_profile_warning(
-        greycard_edit::camera::warning(&st.develop.profiles, body_of(st), chosen_name.as_str())
-            .into(),
+        match pending {
+            true => String::new(),
+            false => greycard_edit::camera::warning(
+                &st.develop.profiles,
+                body_of(st),
+                chosen_name.as_str(),
+            ),
+        }
+        .into(),
     );
+}
+
+/// What the CAMERA PROFILE list keeps between showings: which listing
+/// of the directory it holds, and the camera filter's last answer.
+#[derive(Default)]
+pub(crate) struct ProfilesKept {
+    /// The generation of the listing taken last
+    /// (`greycard_edit_io::profiles::Listing`), 0 for none.
+    from: u64,
+    /// The start's read of the directory is under way, or over and its
+    /// listing not yet shown: nothing is known missing yet.
+    pub(crate) awaiting: bool,
+    /// The filter's answer for the list as it stands, kept until the
+    /// list, the camera, or the choice changes.
+    filtered: std::cell::RefCell<Option<Filtered>>,
+    /// The cameras whose hidden count the log has said for the list
+    /// as it stands.
+    logged: std::cell::RefCell<std::collections::HashSet<Vec<String>>>,
+}
+
+/// The camera filter's answer for one camera and choice.
+struct Filtered {
+    names: Vec<String>,
+    chosen: String,
+    shown: Vec<greycard_edit::camera::Entry>,
+    hidden: usize,
+}
+
+/// The start's listing is still to be shown: nothing is known missing
+/// yet.
+fn profiles_pending(st: &State) -> bool {
+    st.develop.profiles_kept.awaiting
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The times the camera filter ran, and the times the log said a
+    /// hidden count, on this thread.
+    pub(crate) static PROFILE_FILTERS: std::cell::Cell<(usize, usize)> =
+        const { std::cell::Cell::new((0, 0)) };
+    /// The times the directory was looked at for a change.
+    pub(crate) static PROFILE_LOOKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The files the last look named, and whether it walked by force.
+    pub(crate) static PROFILE_LOOKED: std::cell::RefCell<(bool, Vec<PathBuf>)> =
+        const { std::cell::RefCell::new((false, Vec::new())) };
+}
+
+/// The panel's list replaced: what the filter and the log kept for
+/// the last one goes with it.
+pub(crate) fn set_profiles(st: &mut State, entries: Vec<greycard_edit::camera::Entry>) {
+    st.develop.profiles = entries;
+    st.develop.profile_tone_for = None;
+    let kept = &mut st.develop.profiles_kept;
+    *kept.filtered.get_mut() = None;
+    kept.logged.get_mut().clear();
+}
+
+/// A test's own list, in place of the directory's: taken as the
+/// listing held now, so a look that finds nothing new leaves it.
+#[cfg(test)]
+pub(crate) fn hand_profiles(st: &mut State, entries: Vec<greycard_edit::camera::Entry>) {
+    let held = greycard_edit_io::profiles::refresh(false, &[]);
+    st.develop.profiles_kept.from = held.map_or(0, |l| l.generation);
+    set_profiles(st, entries);
+}
+
+/// The profiles shown for the open camera, and how many the filter
+/// hid: one row a profile (a file that is the same profile as another
+/// is left out, and the one the edit names stands for its pair), those
+/// made for this camera and the one the edit names. Worked out once
+/// for each list, camera, and choice: the panel is shown again on
+/// every step of an edit, and a list of thousands is not filtered
+/// again for each.
+fn filtered(
+    st: &State,
+    body: greycard_edit::camera::Body,
+    chosen: &str,
+) -> (Vec<greycard_edit::camera::Entry>, usize) {
+    let kept = &st.develop.profiles_kept;
+    let names = body.names();
+    if let Some(f) = kept.filtered.borrow().as_ref()
+        && f.names == names
+        && f.chosen == chosen
+    {
+        return (f.shown.clone(), f.hidden);
+    }
+    #[cfg(test)]
+    PROFILE_FILTERS.with(|n| n.set((n.get().0 + 1, n.get().1)));
+    let mut shown = Vec::new();
+    let mut hidden = 0;
+    for e in greycard_edit::camera::listed(&st.develop.profiles, chosen) {
+        if e.fits(body) || e.name == chosen {
+            shown.push(e.clone());
+        } else {
+            hidden += 1;
+            // The name each side goes by, so a profile hidden by a
+            // spelling the maker and the decoder disagree on can be
+            // told from one made for another camera.
+            tracing::debug!(
+                "camera profile {}: made for {:?}, not listed for {:?}",
+                e.name,
+                e.unique_camera_model.as_deref().unwrap_or("no camera"),
+                names
+            );
+        }
+    }
+    // The count, once for each camera and list, so a profile a
+    // spelling hides (an alias the body does not know) can be looked
+    // for in a default log; each one's names are at debug. With no
+    // frame open there is no camera to say it for.
+    if hidden > 0 && !body.model.is_empty() && kept.logged.borrow_mut().insert(names.clone()) {
+        #[cfg(test)]
+        PROFILE_FILTERS.with(|n| n.set((n.get().0, n.get().1 + 1)));
+        tracing::info!(
+            "camera profiles: {hidden} not listed for {names:?}, made for other cameras"
+        );
+    }
+    *kept.filtered.borrow_mut() = Some(Filtered {
+        names,
+        chosen: chosen.to_string(),
+        shown: shown.clone(),
+        hidden,
+    });
+    (shown, hidden)
+}
+
+/// Take the directory's listing when it is newer than the one the
+/// panel holds; true when it was. Never walks the directory.
+fn take_listing(st: &mut State) -> bool {
+    let Some(listing) = greycard_edit_io::profiles::held() else {
+        return false;
+    };
+    if listing.generation == st.develop.profiles_kept.from {
+        return false;
+    }
+    st.develop.profiles_kept.from = listing.generation;
+    // A listing taken is shown by whoever took it, so the start's is
+    // no longer awaited.
+    st.develop.profiles_kept.awaiting = false;
+    set_profiles(st, listing.entries.to_vec());
+    true
+}
+
+/// A listing came in off the window's thread: shown, if it is newer.
+fn listing_came(st: &mut State, app: &App) {
+    if take_listing(st) {
+        show_profiles(st, &st.develop.edit.camera, app);
+        // A profile put there by hand is the edits' that name it.
+        crate::edited::looks_moved(st);
+    }
+}
+
+/// What the next look at the directory is to do: walk it whatever it
+/// finds, or not; and the listed files to look at besides its folders.
+#[derive(Default, Debug, PartialEq)]
+struct Wanted {
+    force: bool,
+    files: Vec<PathBuf>,
+}
+
+/// The looks asked off the window's thread. One runs at a time: a look
+/// asked while one runs is merged into the next, so a share that hangs
+/// holds one thread, not one an open.
+#[derive(Default)]
+struct LookQueue {
+    running: bool,
+    wanted: Option<Wanted>,
+}
+
+impl LookQueue {
+    /// A look asked: merged into the one waiting, `force` if either is
+    /// and the files of both. True when no look runs, for the caller to
+    /// start the thread that runs it.
+    fn ask(&mut self, force: bool, files: Vec<PathBuf>) -> bool {
+        let wanted = self.wanted.get_or_insert_with(Wanted::default);
+        wanted.force |= force;
+        wanted.files.extend(files);
+        wanted.files.sort();
+        wanted.files.dedup();
+        !std::mem::replace(&mut self.running, true)
+    }
+
+    /// The running thread's next look, or `None` for it to end: the
+    /// slot is freed in the same step, so a look asked just after starts
+    /// a thread of its own rather than waiting on one that is going.
+    fn next(&mut self) -> Option<Wanted> {
+        let next = self.wanted.take();
+        if next.is_none() {
+            self.running = false;
+        }
+        next
+    }
+}
+
+static LOOKING: std::sync::Mutex<LookQueue> = std::sync::Mutex::new(LookQueue {
+    running: false,
+    wanted: None,
+});
+
+/// Run the looks `queue` holds, one `pass` each, until none is left. A
+/// pass that panics frees the slot on the way out, so the next look
+/// asked starts a thread again.
+fn run_looks(queue: &std::sync::Mutex<LookQueue>, mut pass: impl FnMut(Wanted)) {
+    struct Panicked<'a>(&'a std::sync::Mutex<LookQueue>);
+    impl Drop for Panicked<'_> {
+        fn drop(&mut self) {
+            if std::thread::panicking() {
+                self.0.lock().unwrap_or_else(|e| e.into_inner()).running = false;
+            }
+        }
+    }
+    let _freed = Panicked(queue);
+    loop {
+        // Its own statement: the queue is let go before the pass, which
+        // can take a while on a slow share, so a look asked meanwhile
+        // (from the window's thread) never waits on it. A guard in a
+        // `while let` would be held through the loop's body.
+        let next = queue.lock().unwrap_or_else(|e| e.into_inner()).next();
+        let Some(wanted) = next else {
+            return;
+        };
+        pass(wanted);
+    }
+}
+
+/// Look at the directory for a change (`greycard_edit_io::profiles::
+/// refresh`): its folders' clocks and `files`' lengths and clocks,
+/// walking it again when one moved or `force` is set. Off the window's
+/// thread ([`LookQueue`]), each answer coming back through the event
+/// loop to be shown if it is newer, so the window waits on no disk. A
+/// test looks at once, and takes the answer itself.
+fn look(app: &App, force: bool, files: Vec<PathBuf>) {
+    if cfg!(test) {
+        #[cfg(test)]
+        {
+            PROFILE_LOOKS.with(|n| n.set(n.get() + 1));
+            PROFILE_LOOKED.with(|l| *l.borrow_mut() = (force, files.clone()));
+        }
+        greycard_edit_io::profiles::refresh(force, &files);
+        return;
+    }
+    if !LOOKING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .ask(force, files)
+    {
+        return;
+    }
+    let weak = app.as_weak();
+    let spawned = std::thread::Builder::new()
+        .name("profiles".into())
+        .spawn(move || {
+            run_looks(&LOOKING, |wanted| {
+                greycard_edit_io::profiles::refresh(wanted.force, &wanted.files);
+                let _ = weak.upgrade_in_event_loop(|app| {
+                    if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                        listing_came(&mut state.borrow_mut(), &app);
+                    }
+                });
+            });
+        });
+    if let Err(e) = spawned {
+        LOOKING.lock().unwrap_or_else(|e| e.into_inner()).running = false;
+        tracing::warn!("camera profiles not looked at: {e}");
+    }
+}
+
+/// [`look`], with the profiles on show named, and its answer taken
+/// at once in a test.
+fn look_at_profiles(st: &mut State, app: &App, force: bool) {
+    look(app, force, shown_files(st));
+    if cfg!(test) {
+        listing_came(st, app);
+    }
+}
+
+/// The files of the profiles on show for the open camera, and of the
+/// one the edit names: a profile rewritten in place moves no folder's
+/// clock, and these are the ones whose header the panel shows.
+fn shown_files(st: &State) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = st
+        .develop
+        .profiles_kept
+        .filtered
+        .borrow()
+        .as_ref()
+        .map(|f| f.shown.iter().map(|e| e.path.clone()).collect())
+        .unwrap_or_default();
+    let chosen = st.develop.edit.camera.profile.name();
+    files.extend(
+        st.develop
+            .profiles
+            .iter()
+            .filter(|e| e.name == chosen)
+            .map(|e| e.path.clone()),
+    );
+    files
+}
+
+/// The start's read of the directory, on a thread nothing waits for:
+/// what it lists is shown when it is done. True when the thread runs,
+/// for the window to await its listing ([`ProfilesKept::awaiting`]).
+pub(crate) fn warm_profiles(app: &App) -> bool {
+    /// The read is over, however it ended, a panic included: the window
+    /// is told, and shows the listing, or stops waiting for one.
+    struct Over(slint::Weak<App>);
+    impl Drop for Over {
+        fn drop(&mut self) {
+            let _ = self.0.upgrade_in_event_loop(|app| {
+                if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                    read_over(&mut state.borrow_mut(), &app);
+                }
+            });
+        }
+    }
+    let over = Over(app.as_weak());
+    let spawned = std::thread::Builder::new()
+        .name("profiles".into())
+        .spawn(move || {
+            let _over = over;
+            greycard_edit_io::profiles::warm();
+        });
+    if let Err(e) = spawned {
+        tracing::warn!("camera profiles not read ahead: {e}");
+        return false;
+    }
+    true
+}
+
+/// The start's read is over: its listing shown if it is newer, and the
+/// list shown again either way, a profile not there now said missing.
+fn read_over(st: &mut State, app: &App) {
+    st.develop.profiles_kept.awaiting = false;
+    let came = take_listing(st);
+    show_profiles(st, &st.develop.edit.camera, app);
+    if came {
+        crate::edited::looks_moved(st);
+    }
+}
+
+/// A frame opened: the listing held is taken if it is newer, never
+/// walked for. [`profiles_shown`] follows once the list is shown.
+pub(crate) fn profiles_opened(st: &mut State) {
+    take_listing(st);
+}
+
+/// The list shown for an opened frame: the directory looked at for a
+/// change off the window's thread, the profiles on show by their
+/// files, so a profile added or rewritten since is shown when the look
+/// comes back.
+pub(crate) fn profiles_shown(st: &mut State, app: &App) {
+    look_at_profiles(st, app, false);
+}
+
+/// The profile directory for a sync, a paste, or a preset, which fit
+/// a named profile to each frame's body: the listing held, the
+/// directory looked at for a change off the window's thread as on an
+/// open. Before the start's read is done there is none held, and this
+/// waits for it.
+pub(crate) fn profiles_for_sync(app: &App) -> Vec<greycard_edit::camera::Entry> {
+    match greycard_edit_io::profiles::held() {
+        Some(listing) => {
+            look(app, false, Vec::new());
+            listing.entries.to_vec()
+        }
+        None => greycard_edit_io::profiles::list(),
+    }
 }
 
 /// The display curve the panel shows, which is the picture's: the
@@ -1399,21 +1759,17 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             crate::panel::models::pump(&mut st, &app);
         });
     }
-    // The CAMERA PROFILE section opened: read the directory again, so
-    // a profile put there while the editor is running is listed
-    // without reopening the file.
+    // The CAMERA PROFILE section opened: the directory walked again on
+    // a thread, each header whose file changed read again, so a profile
+    // put there or rewritten while the editor runs is listed as it is
+    // now. Every open looks too (`profiles_shown`), more cheaply.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_camera_profiles_wanted(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let mut st = state.borrow_mut();
-            st.develop.profiles = greycard_edit_io::profiles::list();
-            st.develop.profile_tone_for = None;
-            show_profiles(&st, &st.develop.edit.camera.profile, &app);
-            // A profile put there by hand is the edits' that name it.
-            crate::edited::looks_moved(&mut st);
+            look_at_profiles(&mut state.borrow_mut(), &app, true);
         });
     }
     // A camera profile chosen in the panel: the edit says so, the
@@ -1430,7 +1786,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             // (or one not in the list): kept, it would be written and
             // change the develop key without changing a pixel, and come
             // back unasked with the next profile that has one.
-            if !chosen_has_curve(&st) {
+            if chosen_lacks_curve(&st) {
                 st.develop.edit.camera.tone_curve = false;
             }
             // Another camera's profile is the user's to choose, and is
@@ -1447,9 +1803,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     st.develop.camera.1
                 );
             }
-            show_profiles(&st, &st.develop.edit.camera.profile, &app);
+            show_profiles(&st, &st.develop.edit.camera, &app);
             app.set_camera_tone_curve(st.develop.edit.camera.tone_curve);
             develop_soon(&mut st, state.clone(), worker.clone(), app.as_weak());
+            // The profile picked by its file, so a header rewritten in
+            // place since is read again and its switch follows.
+            look_at_profiles(&mut st, &app, false);
         });
     }
     // A camera's group of the profile list folded or opened: kept for
@@ -1484,7 +1843,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             st.develop.profile_groups_open.insert(key, folded);
-            show_profiles(&st, &st.develop.edit.camera.profile, &app);
+            show_profiles(&st, &st.develop.edit.camera, &app);
         });
     }
     // Every camera's profiles shown, or only this camera's: the list
@@ -1499,7 +1858,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let st = state.borrow();
             let on = app.get_camera_profiles_all();
             crate::panel::prefs::keep(&st, |s| s.profiles_all_cameras = on);
-            show_profiles(&st, &st.develop.edit.camera.profile, &app);
+            show_profiles(&st, &st.develop.edit.camera, &app);
         });
     }
     // The LOOK section opened: read the directory again, as the
@@ -1617,9 +1976,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // The presets: one laid over the edit as a step, one saved from
     // the edit, one brought in from a file, one removed. What a click
     // does is `sync::apply_preset`, so a test can drive the same
-    // logic with fake bodies; this closure just resolves the preset
-    // and the profile directory `greycard_edit_io::profiles::list`
-    // reads for real.
+    // logic with fake bodies; this closure just resolves the preset,
+    // and `sync::preset_pressed` the profile directory's listing
+    // (`profiles_for_sync`).
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_preset_applied(move |i| {
@@ -3220,9 +3579,12 @@ mod tests {
             let mut st = state.borrow_mut();
             st.develop.camera = ("Canon".into(), "EOS 850D".into());
             st.develop.other_names = vec!["EOS Rebel T8i".into()];
-            st.develop.profiles = profiles;
+            hand_profiles(&mut st, profiles);
         }
-        let choice = greycard_edit::camera::ProfileChoice::from_name(chosen);
+        let choice = greycard_edit::camera::Camera {
+            profile: greycard_edit::camera::ProfileChoice::from_name(chosen),
+            ..Default::default()
+        };
         show_profiles(&state.borrow(), &choice, &app);
         let rows: Vec<ProfileRow> = app.get_camera_profile_rows().iter().collect();
         let names = rows.iter().map(|r| r.name.to_string()).collect();
@@ -3303,15 +3665,208 @@ mod tests {
             let mut st = state.borrow_mut();
             st.develop.camera = ("Canon".into(), "EOS 850D".into());
             st.develop.other_names = vec!["EOS Rebel T8i".into()];
-            st.develop.profiles = three_cameras();
+            hand_profiles(&mut st, three_cameras());
         }
-        show_profiles(
-            &state.borrow(),
-            &state.borrow().develop.edit.camera.profile,
-            &app,
-        );
+        show_profiles(&state.borrow(), &state.borrow().develop.edit.camera, &app);
         crate::testing::settle(&app);
         (app, state, worker)
+    }
+
+    /// An edit's tone curve switch is kept while its profile is not in
+    /// the list (the list still being read, or the file not there): a
+    /// step of the edit then reads it on. Only a listed profile known
+    /// to have no curve takes it off.
+    #[test]
+    fn an_unlisted_profile_keeps_the_edits_tone_curve() {
+        let (app, state, _worker) = profile_window();
+        let with = "Camera/Canon EOS 850D/Camera Standard";
+        let edit = {
+            let mut st = state.borrow_mut();
+            st.develop.edit.camera = greycard_edit::camera::Camera {
+                profile: greycard_edit::camera::ProfileChoice::from_name(with),
+                tone_curve: true,
+                ..Default::default()
+            };
+            set_profiles(&mut st, Vec::new());
+            st.develop.edit.clone()
+        };
+        let step = || {
+            let st = state.borrow();
+            crate::panel::edit::show_edit(&st, &st.develop.edit, &app, None);
+            read_edit(&app, &st.develop.edit, None).camera.tone_curve
+        };
+        assert!(step(), "not listed: kept");
+        // Picked again from the panel, unlisted: kept.
+        app.invoke_camera_profile_picked();
+        assert!(state.borrow().develop.edit.camera.tone_curve);
+        // Listed with a curve: kept; listed without one: off.
+        let mut listed = three_cameras();
+        for e in listed.iter_mut() {
+            e.tone_curve = e.name == with;
+        }
+        set_profiles(&mut state.borrow_mut(), listed.clone());
+        state.borrow_mut().develop.edit = edit;
+        assert!(step(), "a listed curve");
+        for e in listed.iter_mut() {
+            e.tone_curve = false;
+        }
+        set_profiles(&mut state.borrow_mut(), listed);
+        assert!(!step(), "listed with no curve");
+    }
+
+    /// The looks off the window's thread: one runs at a time, those
+    /// asked meanwhile merged into the next; the slot is free the moment
+    /// the running one finds nothing left, and after a pass that panics.
+    #[test]
+    fn looks_merge_and_run_one_at_a_time() {
+        let p = |s: &str| PathBuf::from(s);
+        let mut q = LookQueue::default();
+        assert!(q.ask(false, vec![p("b")]), "none runs: start one");
+        assert!(!q.ask(true, vec![p("a"), p("b")]), "one runs: merged");
+        assert!(!q.ask(false, vec![p("c")]));
+        assert_eq!(
+            q.next(),
+            Some(Wanted {
+                force: true,
+                files: vec![p("a"), p("b"), p("c")],
+            })
+        );
+        assert!(!q.ask(false, Vec::new()), "asked while the pass runs");
+        assert_eq!(q.next(), Some(Wanted::default()));
+        assert_eq!(q.next(), None, "nothing left: the thread ends");
+        // Asked as the thread ends: starts a thread of its own, not
+        // left waiting for one that is going.
+        assert!(q.ask(false, Vec::new()));
+
+        let queue = std::sync::Mutex::new(LookQueue::default());
+        assert!(queue.lock().unwrap().ask(false, Vec::new()));
+        let mut passes = 0;
+        run_looks(&queue, |_| {
+            passes += 1;
+            // Free during a pass: a look asked from the window then
+            // must not wait on the pass (`try_lock`, so a queue held
+            // through it fails here rather than hangs).
+            let mut free = queue.try_lock().expect("the queue is free during a pass");
+            if passes == 1 {
+                free.ask(true, Vec::new());
+            }
+        });
+        assert_eq!(passes, 2, "the look asked during a pass is run");
+        assert!(!queue.lock().unwrap().running);
+        assert!(queue.lock().unwrap().ask(false, Vec::new()));
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_looks(&queue, |_| panic!("a pass that fails"))
+        }));
+        assert!(panicked.is_err());
+        assert!(
+            queue.lock().unwrap().ask(false, Vec::new()),
+            "the slot is free after a panic"
+        );
+    }
+
+    /// With every camera shown, a look still names the chosen
+    /// profile's file.
+    #[test]
+    fn a_look_names_the_chosen_profile_with_every_camera_shown() {
+        let (app, state, _worker) = profile_window();
+        click_all_cameras(&app);
+        let chosen = "Camera/Canon EOS R5/Adobe Standard";
+        {
+            let mut st = state.borrow_mut();
+            let listed: Vec<_> = three_cameras()
+                .into_iter()
+                .map(|mut e| {
+                    e.path = PathBuf::from(format!("{}.dcp", e.name));
+                    e
+                })
+                .collect();
+            hand_profiles(&mut st, listed);
+            st.develop.edit.camera.profile =
+                greycard_edit::camera::ProfileChoice::from_name(chosen);
+            show_profiles(&st, &st.develop.edit.camera, &app);
+            profiles_shown(&mut st, &app);
+        }
+        let named = PROFILE_LOOKED.with(|l| l.borrow().1.clone());
+        assert!(
+            named.contains(&PathBuf::from(format!("{chosen}.dcp"))),
+            "{named:?}"
+        );
+    }
+
+    /// While the start's listing is awaited a profile the edit names is
+    /// not said missing and keeps its switch shown, though turned off;
+    /// once the read is over it is said missing.
+    #[test]
+    fn nothing_is_missing_while_the_start_s_listing_is_awaited() {
+        let (app, state, _worker) = profile_window();
+        let name = "Not Listed";
+        let shown = |st: &State| {
+            show_profiles(st, &st.develop.edit.camera, &app);
+            let rows: Vec<String> = app
+                .get_camera_profile_rows()
+                .iter()
+                .map(|r| r.label.to_string())
+                .collect();
+            (rows, app.get_camera_profile_has_curve())
+        };
+        {
+            let mut st = state.borrow_mut();
+            st.develop.edit.camera = greycard_edit::camera::Camera {
+                profile: greycard_edit::camera::ProfileChoice::from_name(name),
+                tone_curve: false,
+                ..Default::default()
+            };
+            st.develop.profiles_kept.awaiting = true;
+            let (rows, curve) = shown(&st);
+            assert!(rows.iter().any(|r| r == name), "{rows:?}");
+            assert!(!rows.iter().any(|r| r.contains("missing")), "{rows:?}");
+            assert!(curve, "the switch stays shown");
+            read_over(&mut st, &app);
+            assert!(!st.develop.profiles_kept.awaiting);
+        }
+        let rows: Vec<String> = app
+            .get_camera_profile_rows()
+            .iter()
+            .map(|r| r.label.to_string())
+            .collect();
+        assert!(rows.iter().any(|r| r.contains("missing")), "{rows:?}");
+        assert!(!app.get_camera_profile_has_curve());
+    }
+
+    /// A listing newer than the panel's comes in and is shown.
+    #[test]
+    fn a_newer_listing_is_shown_when_it_comes() {
+        let (app, state, _worker) = profile_window();
+        assert!(app.get_camera_profile_rows().row_count() > 1);
+        {
+            let mut st = state.borrow_mut();
+            // The tests' directory holds none; the panel's list is its
+            // own until a listing it has not taken comes.
+            st.develop.profiles_kept.from = 0;
+            listing_came(&mut st, &app);
+            assert!(st.develop.profiles.is_empty());
+        }
+        let names: Vec<String> = app
+            .get_camera_profile_rows()
+            .iter()
+            .map(|r| r.name.to_string())
+            .collect();
+        assert_eq!(names, [greycard_edit::camera::EMBEDDED]);
+    }
+
+    /// A sync, a paste, or a preset takes the listing held and looks at
+    /// the directory for a change, as an open does.
+    #[test]
+    fn a_sync_s_profiles_are_looked_at_as_an_open_s() {
+        let app = crate::testing::window(1);
+        // The tests' own directory, never the user's.
+        let store = greycard_edit_io::profiles::store_dir().unwrap();
+        let own = format!("profiles-{}", std::process::id());
+        assert!(store.ends_with(own), "{store:?}");
+        greycard_edit_io::profiles::refresh(false, &[]);
+        let looks = PROFILE_LOOKS.get();
+        profiles_for_sync(&app);
+        assert_eq!(PROFILE_LOOKS.get(), looks + 1);
     }
 
     /// The Profile tone curve switch shows for a chosen profile that
@@ -3618,7 +4173,7 @@ mod tests {
             })
             .collect();
         many.extend(three_cameras());
-        state.borrow_mut().develop.profiles = many;
+        hand_profiles(&mut state.borrow_mut(), many);
         app.set_camera_profiles_all(true);
         let t = std::time::Instant::now();
         app.invoke_camera_profiles_all_changed();

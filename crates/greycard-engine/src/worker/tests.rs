@@ -2983,9 +2983,10 @@ fn profiles_in(dir: Option<&std::path::Path>) {
 
 /// Two frames under an edit that names a camera profile, opened in
 /// turn and returned to: each return takes its base back from the
-/// shelf, though the window lists the profile directory on every open
-/// and the listing lets go of the profile read before it, so the
-/// develop reads the same file again into another pointer. The shelf
+/// shelf, though the profile cache let go of the profile between
+/// (`profiles::forget` here, standing for a cache past its count or a
+/// file rewritten), so the develop reads the same file again into
+/// another pointer. The shelf
 /// holds one base a file, never the one it was given back beside a
 /// newer one. A profile rewritten with other tables is another base.
 #[test]
@@ -3005,8 +3006,8 @@ fn a_base_under_a_camera_profile_is_taken_back_after_the_directory_is_listed() {
     develop_turned(&a, &edit, 0, &mut base);
     let made_a = base.as_ref().expect("a base").image.clone();
     // An open of `to` from `from`, as the worker's: the base in hand
-    // shelved and the coming one looked for, then the window's listing
-    // of the profile directory, then the develop. Whether the base was
+    // shelved and the coming one looked for, then the profile cache
+    // let go of, then the develop. Whether the base was
     // taken from the shelf, and the picture.
     let open = |base: &mut Option<FrameKept>,
                 shelf: &mut Shelf,

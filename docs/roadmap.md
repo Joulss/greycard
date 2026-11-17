@@ -384,9 +384,8 @@ seconds.
 - [ ] The prefetch's mount check on a Mac (§707): `getfsstat` is
       untested there; open a folder on a share and one on a local
       disk and read the log's prefetch lines
-- [ ] The window walks the profile folder and the looks on every
-      open, 0.7 s on a tester's 4,439 profiles; hold the listing and
-      check it off the window's thread (discussion 168, §706)
+- [ ] The window still walks the look folder on every open
+      (`looks::list()`); hold it as the profile listing is held (§708)
 - [ ] The SAM 3 encoder's session takes 46 s to build on WebGPU (the provider's shader compile, not cached across sessions); a tester with People masks pays it per picture the card is given back (issue 92, §611)
 - [ ] The GPU dual's last traffic (§606): the mosaic goes up twice
       for the AMaZE dual (183 MiB at 45 MP), and the automatic

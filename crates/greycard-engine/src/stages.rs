@@ -446,12 +446,13 @@ impl PartialEq for PrepareOptions {
 }
 
 /// Whether two camera profiles are one: the same pointer, or the same
-/// tables. The profile cache lets go of what it read whenever the
-/// window lists the directory, which it does on every open, so the
-/// same file read again is another pointer; a key by pointer alone
-/// would make every base made before the listing another's, and a
-/// frame returned to would never take its base back. The tables are
-/// compared only when the pointers differ, which is after a listing;
+/// tables. The profile cache can let go of a profile between two
+/// develops (its file rewritten, the cache past its count, or
+/// `profiles::forget`), so the same tables read again are another
+/// pointer; a key by pointer alone would make every base made before
+/// another's, and a frame returned to would never take its base back.
+/// The tables are compared only when the pointers differ, which is
+/// after the cache let go;
 /// a 90 by 30 by 30 map is about a megabyte, a profile with two maps
 /// and a look table about three, and the compare took 3 to 3.5 ms in
 /// a debug build, against a base of a second and more.

@@ -1057,6 +1057,7 @@ impl State {
                 lens_options: Vec::new(),
                 lens_frame: None,
                 profiles: Vec::new(),
+                profiles_kept: Default::default(),
                 camera: (String::new(), String::new()),
                 other_names: Vec::new(),
                 looks: Vec::new(),

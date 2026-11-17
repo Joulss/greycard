@@ -404,17 +404,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             });
         });
     }
-    // The camera profiles' headers read ahead, on a thread nothing
-    // waits for: the list is read again on every open, on the window's
-    // thread, and a tree of thousands read cold for the first open
-    // would hold the window for a moment the user sees.
-    if !cfg!(test)
-        && let Err(e) = std::thread::Builder::new()
-            .name("profiles".into())
-            .spawn(greycard_edit_io::profiles::warm)
-    {
-        tracing::warn!("camera profiles not read ahead: {e}");
-    }
+    // The camera profile directory read, on a thread nothing waits
+    // for: a tree of thousands read cold would hold the window for a
+    // moment the user sees. What it lists is held, and an open shows
+    // that without walking the directory again.
+    let warming = !cfg!(test) && crate::panel::assets::warm_profiles(&app);
     // The Settings sheet's scale row: the setting, and the one this
     // window started at, which a change is told it waits for.
     {
@@ -1007,6 +1001,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_person_boxes(ModelRc::from(state.borrow().develop.person_boxes.clone()));
     app.set_patch_handles(ModelRc::from(state.borrow().develop.patch_handles.clone()));
     app.set_guide_kept(ModelRc::from(state.borrow().develop.guide_kept.clone()));
+    // The start's profile listing is awaited: no profile is said
+    // missing before it is shown.
+    state.borrow_mut().develop.profiles_kept.awaiting = warming;
     install_callbacks(&app, state.clone(), worker.clone());
     // What this machine runs, for the models' list and their offer,
     // asked on a thread now rather than when either is wanted.
