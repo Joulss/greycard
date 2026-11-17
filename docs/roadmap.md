@@ -1068,6 +1068,9 @@ clears or a tester asks for it.
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits
+- [ ] A key that adds the selected frames to the export queue with
+      the sheet's choices as they stand, as Ctrl+E exports them; the
+      key is not chosen yet
 - [ ] The export queue's rest (§213): a queued set reordered or sent
       elsewhere, and the queued frames marked in the strip and the
       grid; the Folder row, the list, removal, Export the queue, and
