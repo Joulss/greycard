@@ -910,7 +910,14 @@ fn cct_of(code: u16) -> f64 {
     CalibrationIlluminant::from_exif_code(code).map_or(0.0, |i| i.cct())
 }
 
+/// A DCP's matrix, when every entry is a number and it inverts. A
+/// float matrix may carry a NaN or an infinity, which the inverse's
+/// determinant test lets through, and which would develop a picture of
+/// NaNs from a profile unequal even to itself.
 fn mat3(flat: &[f64; 9]) -> Option<Mat3> {
+    if !flat.iter().all(|v| v.is_finite()) {
+        return None;
+    }
     let m = Mat3::new(std::array::from_fn(|r| {
         std::array::from_fn(|c| flat[r * 3 + c])
     }));
@@ -1284,6 +1291,36 @@ pub(crate) mod tests {
             *e = [i as f32, 1.0 + i as f32 * 0.1, 1.0 + i as f32 * 0.01];
         }
         map
+    }
+
+    /// A matrix with a NaN or an infinity in it is no matrix: the
+    /// calibration it leads is dropped as one that does not invert, a
+    /// forward matrix alone, and with none left the profile is refused.
+    #[test]
+    fn a_matrix_that_is_not_all_numbers_is_dropped() {
+        for bad in [f64::NAN, f64::INFINITY] {
+            let mut dcp = test_dcp(None, None);
+            dcp.primary.color_matrix[4] = bad;
+            let profile = dcp.profile().expect("the secondary stays");
+            assert!(profile == dcp.profile().unwrap(), "equal to itself");
+
+            let mut dcp = test_dcp(None, None);
+            dcp.primary.forward_matrix = Some({
+                let mut m = rec2020_matrix();
+                m[0] = bad;
+                m
+            });
+            assert_eq!(
+                dcp.profile().unwrap(),
+                test_dcp(None, None).profile().unwrap(),
+                "the forward matrix dropped alone"
+            );
+
+            let mut dcp = test_dcp(None, None);
+            dcp.primary.color_matrix[0] = bad;
+            dcp.secondary.as_mut().unwrap().color_matrix[8] = bad;
+            assert!(dcp.profile().is_err());
+        }
     }
 
     #[test]

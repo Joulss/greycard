@@ -141,15 +141,17 @@
 //! fraction of a second of fixed cost for the accumulators. Not a
 //! viewport concern, and no case yet for a GPU version.
 //!
-//! **Memory.** Ten 45-megapixel frames peak at 9.3 GB, of which 5.4 GB
-//! is the frames themselves, which belong to the caller. The merge's
-//! own share is the three accumulator pyramids — the weighted bands,
-//! the weights and the unweighted bands the flat-region fallback needs
-//! — and one frame's pyramid at a time. Nothing else is held across
-//! frames: the luminance planes are taken and dropped as they are
-//! used, two at a time in the chain and one at a time everywhere else,
-//! and the Laplacian pyramid takes the warped frame rather than
-//! copying it.
+//! **Memory.** The merge's own share is the three accumulator pyramids
+//! — the weighted bands, the weights and the unweighted bands the
+//! flat-region fallback needs — and one frame's pyramid at a time.
+//! Nothing else is held across frames: the luminance planes are taken
+//! and dropped as they are used, three at a time in the chain and one
+//! at a time everywhere else, and the Laplacian pyramid takes the
+//! warped frame rather than copying it. [`stack`] and [`stack_camera`]
+//! are handed every frame and so hold them all, 12 bytes a pixel a
+//! frame; [`stack_camera_from`] reads them, once to score and place
+//! them and once to blend them, and holds none, so a stack of a
+//! hundred frames needs what a stack of two does.
 
 use rayon::prelude::*;
 
@@ -157,6 +159,9 @@ use crate::error::{Error, Result};
 use crate::image::{CameraImage, WorkingImage};
 use crate::register::{self, Edge, Fit, Kernel, Transform};
 use crate::sharpness;
+
+#[cfg(test)]
+mod in_memory;
 
 /// Which frame the others are put onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -410,6 +415,46 @@ pub fn stack_camera(
     Ok((CameraImage::from_data(width, height, data)?, report))
 }
 
+/// Where a merge read from its frames ([`stack_camera_from`]) is, for
+/// a caller to say. Said before the frame it names is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// The `index`th frame read of `of` (from 1), in the first pass:
+    /// scored, and placed against its neighbor unless the reference is
+    /// [`Reference::Sharpest`], which wants every score first.
+    Reading { index: usize, of: usize },
+    /// The frames read are being placed onto the reference: at once
+    /// for most references, a second pass for the sharpest.
+    Placing,
+    /// The `index`th frame of the `of` the merge uses is being read
+    /// again and blended in.
+    Blending { index: usize, of: usize },
+}
+
+/// [`stack_camera`] with the frames read as the merge wants them rather
+/// than held: `count` frames, frame `k` given by `read(k)` as often as
+/// the merge asks for it, the same samples each time. What it holds
+/// does not grow with the count: one frame's working set and the
+/// accumulators, and of each frame no pixel, only its score, its fit,
+/// and its transform.
+///
+/// Each frame is read twice: once to score it and place it, once to
+/// blend it, in its own order, so that the sums come out as
+/// [`stack_camera`]'s do, bit for bit. With [`Reference::Sharpest`] it
+/// is read three times, since the reference is not known until every
+/// frame is scored. `step` is told each read before it is made.
+pub fn stack_camera_from<E: From<Error>>(
+    count: usize,
+    mut read: impl FnMut(usize) -> std::result::Result<CameraImage, E>,
+    mut step: impl FnMut(Step),
+    options: &Options,
+) -> std::result::Result<(CameraImage, StackReport), E> {
+    let mut read = |k: usize| read(k).map(|f| (f.width, f.height, f.data));
+    let (width, height, data, report) =
+        merge_from(count, CAMERA_LUMA, options, &mut read, &mut step)?;
+    Ok((CameraImage::from_data(width, height, data)?, report))
+}
+
 /// The working space's luminance weights, as
 /// [`crate::register::luminance`] has them.
 const WORKING_LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];
@@ -449,6 +494,8 @@ fn one_size(sizes: impl Iterator<Item = (usize, usize)>) -> Result<(usize, usize
 
 const CHANNELS: usize = 3;
 
+/// A merge of frames held by the caller: [`merge_from`] reading each
+/// from the slice, a copy at a time.
 fn merge(
     frames: &[&[f32]],
     width: usize,
@@ -465,45 +512,154 @@ fn merge(
             )));
         }
     }
+    let mut read = |k: usize| Ok::<_, Error>((width, height, frames[k].to_vec()));
+    let (_, _, data, report) = merge_from(frames.len(), luma, options, &mut read, &mut |_| {})?;
+    Ok((data, report))
+}
 
-    // The score every frame gets whatever else happens: it is what
-    // picks the reference, and what a caller is shown. One frame's
-    // luminance at a time — a plane is a third of a frame, and ten
-    // planes of a 45-megapixel stack is nearly two gigabytes held for
-    // no reason, since nothing downstream wants more than two of them
-    // at once.
-    let sharpness: Vec<f32> = frames
-        .iter()
-        .map(|frame| {
-            let lum = luminance_of(frame, luma);
-            let log = register::log_plane(&lum, options.register.floor_stops);
-            let energy = sharpness::laplacian_energy(&log, width, height);
-            (energy.iter().map(|&e| e as f64).sum::<f64>() / energy.len() as f64).sqrt() as f32
-        })
-        .collect();
+/// A frame as read: its width, its height, and its interleaved RGB.
+type Read = (usize, usize, Vec<f32>);
 
-    let reference = match options.reference {
-        Reference::Middle => frames.len() / 2,
-        Reference::Sharpest => sharpness
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.total_cmp(b.1))
-            .map(|(i, _)| i)
-            .unwrap_or(0),
-        Reference::Index(i) => {
-            if i >= frames.len() {
+/// The frames as the merge reads them, each checked against the first
+/// read for its size.
+struct Frames<'a, E> {
+    read: &'a mut dyn FnMut(usize) -> std::result::Result<Read, E>,
+    /// The first frame read, and its size.
+    first: Option<(usize, usize, usize)>,
+}
+
+impl<E: From<Error>> Frames<'_, E> {
+    fn get(&mut self, index: usize) -> std::result::Result<(usize, usize, Vec<f32>), E> {
+        let (w, h, data) = (self.read)(index)?;
+        match self.first {
+            None => {
+                if w < 3 || h < 3 {
+                    return Err(Error::Unsupported(format!("{w}x{h} is too small to stack")).into());
+                }
+                self.first = Some((index, w, h));
+            }
+            Some((_, fw, fh)) if (fw, fh) == (w, h) => {}
+            Some((first, fw, fh)) => {
                 return Err(Error::Unsupported(format!(
-                    "frame {i} asked for as the reference of a stack of {}",
-                    frames.len()
-                )));
+                    "a stack wants frames of one size: frame {first} is {fw}x{fh} and frame \
+                     {index} is {w}x{h}"
+                ))
+                .into());
+            }
+        }
+        if data.len() != w * h * CHANNELS {
+            return Err(Error::Unsupported(format!(
+                "frame {index} has {} samples, not the {} a {w}x{h} RGB frame has",
+                data.len(),
+                w * h * CHANNELS
+            ))
+            .into());
+        }
+        Ok((w, h, data))
+    }
+}
+
+/// The RMS Laplacian of a luminance plane's log: the score every frame
+/// gets whatever else happens. It is what picks the reference, and
+/// what a caller is shown.
+fn score(lum: &[f32], width: usize, height: usize, options: &Options) -> f32 {
+    let log = register::log_plane(lum, options.register.floor_stops);
+    let energy = sharpness::laplacian_energy(&log, width, height);
+    (energy.iter().map(|&e| e as f64).sum::<f64>() / energy.len() as f64).sqrt() as f32
+}
+
+/// The merge, its frames read rather than held.
+///
+/// The first pass reads every frame in the chain's order — the
+/// reference, then outward from it one way and then the other — scoring
+/// each and fitting it against the last frame that held, so no more
+/// than three luminance planes are live: the reference's, kept for the
+/// second direction, the anchor's, and the frame's being fitted. The
+/// second pass reads the frames the merge uses in their own order and
+/// blends each into the accumulators as it comes, which is the order
+/// the sums were always taken in. Nothing of a frame survives its read
+/// but its score and its link.
+fn merge_from<E: From<Error>>(
+    count: usize,
+    luma: [f32; 3],
+    options: &Options,
+    read: &mut dyn FnMut(usize) -> std::result::Result<Read, E>,
+    step: &mut dyn FnMut(Step),
+) -> std::result::Result<Merged, E> {
+    if count == 0 {
+        return Err(Error::Unsupported("a stack of no frames".into()).into());
+    }
+    let mut frames = Frames { read, first: None };
+    let n = count;
+    let mut sharpness = vec![0.0f32; n];
+    let mut reads = 0usize;
+
+    let sharpest = options.reference == Reference::Sharpest;
+    let reference = match options.reference {
+        Reference::Middle => n / 2,
+        Reference::Index(i) => {
+            if i >= n {
+                return Err(Error::Unsupported(format!(
+                    "frame {i} asked for as the reference of a stack of {n}"
+                ))
+                .into());
             }
             i
         }
+        Reference::Sharpest => {
+            // A pass of its own: the chain starts from the reference,
+            // and the reference is the best score.
+            for (i, s) in sharpness.iter_mut().enumerate() {
+                reads += 1;
+                step(Step::Reading {
+                    index: reads,
+                    of: n,
+                });
+                let (w, h, frame) = frames.get(i)?;
+                let lum = luminance_of(&frame, luma);
+                drop(frame);
+                *s = score(&lum, w, h, options);
+            }
+            sharpness
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .map(|(i, _)| i)
+                .unwrap_or(0)
+        }
     };
+    if sharpest {
+        step(Step::Placing);
+    }
 
-    let chain = fit_all(frames, width, height, luma, reference, options);
+    // Each frame's luminance as the chain reaches it, scored on the way
+    // unless the scoring pass has been.
+    let mut lum_of = |i: usize| -> std::result::Result<Read, E> {
+        if !sharpest {
+            reads += 1;
+            step(Step::Reading {
+                index: reads,
+                of: n,
+            });
+        }
+        let (w, h, frame) = frames.get(i)?;
+        let lum = luminance_of(&frame, luma);
+        drop(frame);
+        if !sharpest {
+            sharpness[i] = score(&lum, w, h, options);
+        }
+        Ok((w, h, lum))
+    };
+    let (width, height, reference_lum) = lum_of(reference)?;
+    let chain = fit_chain(n, width, height, reference, &reference_lum, options, |i| {
+        lum_of(i).map(|(_, _, lum)| lum)
+    })?;
+    drop(reference_lum);
+    if !sharpest {
+        step(Step::Placing);
+    }
 
-    let reports: Vec<FrameReport> = (0..frames.len())
+    let reports: Vec<FrameReport> = (0..n)
         .map(|index| FrameReport {
             index,
             reference: index == reference,
@@ -515,65 +671,115 @@ fn merge(
         })
         .collect();
 
-    let sizes = pyramid_sizes(width, height, options);
-    let levels = sizes.len();
+    let mut blend = Blend::new(width, height, options);
+    let used = reports.iter().filter(|r| r.used()).count();
+    for (k, report) in reports.iter().filter(|r| r.used()).enumerate() {
+        step(Step::Blending {
+            index: k + 1,
+            of: used,
+        });
+        let (_, _, frame) = frames.get(report.index)?;
+        blend.add(frame, report.transform, luma, options);
+    }
+    let levels = blend.sizes.len();
+    let (out, coverage) = blend.finish();
 
-    // Unnormalized weights, renormalized level by level against the
-    // weight that actually landed there. Each frame's full-resolution
-    // weight map is carried down its own Gaussian pyramid and used as
-    // it comes, and the sum of the weights is accumulated beside the
-    // sum of the weighted bands; the division happens once, at the
-    // end.
-    //
-    // This is *not* Mertens's order, which normalizes the maps against
-    // each other at full resolution and then builds the pyramids, so
-    // that every level's weights already sum to one. The two are not
-    // the same thing: the effective weight here is `G(w_i) / sum_j
-    // G(w_j)` where Mertens's is `G(w_i / sum_j w_j)`, and a blur of a
-    // ratio is not the ratio of blurs. Measured on the synthetic
-    // stack, the effective per-frame weights part company by up to
-    // 0.18 at levels 1 to 3.
-    //
-    // It is kept because what the seam argument needs is true of both
-    // and the differences do not matter. At level 0 they are
-    // identical, the pyramid being the identity there, so the detail
-    // is selected exactly as Mertens selects it. At every level the
-    // result is a convex combination of the frames' own bands —
-    // nonnegative weights over their own sum — so nothing can
-    // overshoot and the brightness is a weighted mean of the frames'
-    // and not a scaling of it. Both carry the weight map down a
-    // pyramid, which is the whole of why a seam is soft. And once
-    // `selectivity` is on, the per-level weights are not the pyramid
-    // of any full-resolution map at all, so normalizing first is not
-    // even defined for them.
-    //
-    // What it buys is one pass over the frames and one accumulator,
-    // instead of every frame's weight map held at once to normalize
-    // them against each other.
-    let mut bands: Vec<Vec<f32>> = sizes
-        .iter()
-        .map(|&(w, h)| vec![0.0; w * h * CHANNELS])
-        .collect();
-    let mut weights: Vec<Vec<f32>> = sizes.iter().map(|&(w, h)| vec![0.0; w * h]).collect();
-    // The same bands with no weights on them, for the pixels where
-    // every frame's weight is zero. That happens: the weight floor is
-    // a fraction of the frame's own mean sharpness, and a region that
-    // is flat in every frame has no sharpness for the floor to be a
-    // fraction of. Without this, such a region divides zero by nothing
-    // and comes out black.
-    let mut plain: Vec<Vec<f32>> = sizes
-        .iter()
-        .map(|&(w, h)| vec![0.0; w * h * CHANNELS])
-        .collect();
-    let mut merged_frames = 0usize;
-    let mut coverage = vec![0u16; width * height];
-    let ones = vec![1.0f32; width * height];
+    Ok((
+        width,
+        height,
+        out,
+        StackReport {
+            width,
+            height,
+            reference,
+            frames: reports,
+            levels,
+            coverage,
+        },
+    ))
+}
 
-    for (index, frame) in frames.iter().enumerate() {
-        if reports[index].dropped.is_some() {
-            continue;
+/// What [`merge_from`] gives: the size, the merged samples, and the
+/// report.
+type Merged = (usize, usize, Vec<f32>, StackReport);
+
+/// The blend's accumulators, one frame added at a time.
+///
+/// Unnormalized weights, renormalized level by level against the
+/// weight that actually landed there. Each frame's full-resolution
+/// weight map is carried down its own Gaussian pyramid and used as it
+/// comes, and the sum of the weights is accumulated beside the sum of
+/// the weighted bands; the division happens once, at the end.
+///
+/// This is *not* Mertens's order, which normalizes the maps against
+/// each other at full resolution and then builds the pyramids, so that
+/// every level's weights already sum to one. The two are not the same
+/// thing: the effective weight here is `G(w_i) / sum_j G(w_j)` where
+/// Mertens's is `G(w_i / sum_j w_j)`, and a blur of a ratio is not the
+/// ratio of blurs. Measured on the synthetic stack, the effective
+/// per-frame weights part company by up to 0.18 at levels 1 to 3.
+///
+/// It is kept because what the seam argument needs is true of both and
+/// the differences do not matter. At level 0 they are identical, the
+/// pyramid being the identity there, so the detail is selected exactly
+/// as Mertens selects it. At every level the result is a convex
+/// combination of the frames' own bands — nonnegative weights over
+/// their own sum — so nothing can overshoot and the brightness is a
+/// weighted mean of the frames' and not a scaling of it. Both carry the
+/// weight map down a pyramid, which is the whole of why a seam is soft.
+/// And once `selectivity` is on, the per-level weights are not the
+/// pyramid of any full-resolution map at all, so normalizing first is
+/// not even defined for them.
+///
+/// What it buys is one pass over the frames and one accumulator,
+/// instead of every frame's weight map held at once to normalize them
+/// against each other — which is also what lets the frames be read one
+/// at a time.
+struct Blend {
+    width: usize,
+    height: usize,
+    sizes: Vec<(usize, usize)>,
+    bands: Vec<Vec<f32>>,
+    weights: Vec<Vec<f32>>,
+    /// The same bands with no weights on them, for the pixels where
+    /// every frame's weight is zero. That happens: the weight floor is
+    /// a fraction of the frame's own mean sharpness, and a region that
+    /// is flat in every frame has no sharpness for the floor to be a
+    /// fraction of. Without this, such a region divides zero by nothing
+    /// and comes out black.
+    plain: Vec<Vec<f32>>,
+    merged: usize,
+    coverage: Vec<u16>,
+    ones: Vec<f32>,
+}
+
+impl Blend {
+    fn new(width: usize, height: usize, options: &Options) -> Self {
+        let sizes = pyramid_sizes(width, height, options);
+        Self {
+            width,
+            height,
+            bands: sizes
+                .iter()
+                .map(|&(w, h)| vec![0.0; w * h * CHANNELS])
+                .collect(),
+            weights: sizes.iter().map(|&(w, h)| vec![0.0; w * h]).collect(),
+            plain: sizes
+                .iter()
+                .map(|&(w, h)| vec![0.0; w * h * CHANNELS])
+                .collect(),
+            sizes,
+            merged: 0,
+            coverage: vec![0u16; width * height],
+            ones: vec![1.0f32; width * height],
         }
-        let transform = reports[index].transform;
+    }
+
+    /// One frame, taken, in the reference's geometry by `transform`.
+    fn add(&mut self, frame: Vec<f32>, transform: Transform, luma: [f32; 3], options: &Options) {
+        let (width, height) = (self.width, self.height);
+        let sizes = &self.sizes;
+        let levels = sizes.len();
         let identity = transform == Transform::IDENTITY;
 
         // The frame in the reference's geometry, and where it reached.
@@ -581,18 +787,17 @@ fn merge(
         // so that what hangs over the side is a continuation and not a
         // black cliff the pyramid would spread down every level; the
         // mask is what actually keeps it out of the merge.
-        // Owned, because the Laplacian pyramid takes it as its base
-        // rather than copying it: at 45 megapixels that copy is half a
-        // gigabyte live beside the pyramid it is being copied into.
-        // The reference is the one frame that has to be copied, since
-        // the caller's own frame is not the merge's to consume.
-        // Lanczos-3, which keeps the detail a stack is for; its ring
-        // at a hard edge is held to the frame's own range.
+        // Taken, and the Laplacian pyramid takes the warped frame as
+        // its base rather than copying it: at 45 megapixels a copy is
+        // half a gigabyte live beside the pyramid it is being copied
+        // into. A frame that moved is let go once it is warped.
+        // Lanczos-3, which keeps the detail a stack is for; its ring at
+        // a hard edge is held to the frame's own range.
         let warped: Vec<f32> = if identity {
-            frame.to_vec()
+            frame
         } else {
             let mut warped = register::warp_samples(
-                frame,
+                &frame,
                 width,
                 height,
                 CHANNELS,
@@ -600,14 +805,15 @@ fn merge(
                 Edge::Clamp,
                 Kernel::Lanczos3,
             );
-            register::clamp_samples(&mut warped, register::sample_range(frame));
+            register::clamp_samples(&mut warped, register::sample_range(&frame));
+            drop(frame);
             warped
         };
         let mask = if identity {
             vec![1.0f32; width * height]
         } else {
             register::warp_plane(
-                &ones,
+                &self.ones,
                 width,
                 height,
                 width,
@@ -622,7 +828,7 @@ fn merge(
         // the weight, so anything above zero is in the merge. The
         // bilinear ramp means the outermost row or column of a warped
         // frame counts as covered on a fraction of a sample.
-        for (c, m) in coverage.iter_mut().zip(&mask) {
+        for (c, m) in self.coverage.iter_mut().zip(&mask) {
             if *m > 0.0 {
                 *c += 1;
             }
@@ -652,9 +858,9 @@ fn merge(
         drop(map);
         drop(mask);
 
-        let laplacian = laplacian_pyramid(warped, &sizes, CHANNELS);
+        let laplacian = laplacian_pyramid(warped, sizes, CHANNELS);
         // (`warped` is gone: it is the pyramid's base now.)
-        let gaussian = gaussian_pyramid(weight, &sizes);
+        let gaussian = gaussian_pyramid(weight, sizes);
 
         for k in 0..levels {
             let (lw, lh) = sizes[k];
@@ -684,7 +890,7 @@ fn merge(
                     })
                     .collect()
             };
-            bands[k]
+            self.bands[k]
                 .par_chunks_mut(CHANNELS)
                 .zip(laplacian[k].par_chunks(CHANNELS))
                 .zip(level_weight.par_iter())
@@ -693,68 +899,74 @@ fn merge(
                         *a += w * b;
                     }
                 });
-            weights[k]
+            self.weights[k]
                 .par_iter_mut()
                 .zip(level_weight.par_iter())
                 .for_each(|(s, &w)| *s += w);
-            plain[k]
+            self.plain[k]
                 .par_iter_mut()
                 .zip(laplacian[k].par_iter())
                 .for_each(|(a, b)| *a += b);
         }
-        merged_frames += 1;
+        self.merged += 1;
     }
 
-    // Normalize each band by the weight that went into it, then
-    // collapse from the top. Where no weight went into it at all —
-    // every frame flat there — the plain mean of the frames' own bands
-    // stands in, which is what a merge with nothing to choose between
-    // should give and what dividing by nothing would not.
-    let share = 1.0 / merged_frames.max(1) as f32;
-    for k in 0..levels {
-        bands[k]
-            .par_chunks_mut(CHANNELS)
-            .zip(weights[k].par_iter())
-            .zip(plain[k].par_chunks(CHANNELS))
-            .for_each(|((px, &w), flat)| {
-                // Below the smallest normal float the ratio is not a
-                // ratio any more: the numerator has underflowed with
-                // the denominator.
-                if w > f32::MIN_POSITIVE {
-                    let inv = 1.0 / w;
-                    for v in px.iter_mut() {
-                        *v *= inv;
-                    }
-                } else {
-                    for (v, f) in px.iter_mut().zip(flat) {
-                        *v = f * share;
-                    }
-                }
-            });
-    }
-    drop(plain);
-    let mut out = bands.pop().expect("a pyramid has a top");
-    for k in (0..levels - 1).rev() {
-        let (w, h) = sizes[k];
-        let (cw, ch) = sizes[k + 1];
-        let up = expand(&out, cw, ch, w, h, CHANNELS);
-        out = bands.pop().expect("one band a level");
-        out.par_iter_mut()
-            .zip(up.par_iter())
-            .for_each(|(o, u)| *o += u);
-    }
-
-    Ok((
-        out,
-        StackReport {
-            width,
-            height,
-            reference,
-            frames: reports,
-            levels,
+    /// The merged samples and the coverage count.
+    ///
+    /// Each band normalized by the weight that went into it, then
+    /// collapsed from the top. Where no weight went into it at all —
+    /// every frame flat there — the plain mean of the frames' own bands
+    /// stands in, which is what a merge with nothing to choose between
+    /// should give and what dividing by nothing would not.
+    fn finish(self) -> (Vec<f32>, Vec<u16>) {
+        let Self {
+            sizes,
+            mut bands,
+            weights,
+            plain,
+            merged,
             coverage,
-        },
-    ))
+            ones,
+            ..
+        } = self;
+        drop(ones);
+        let levels = sizes.len();
+        let share = 1.0 / merged.max(1) as f32;
+        for k in 0..levels {
+            bands[k]
+                .par_chunks_mut(CHANNELS)
+                .zip(weights[k].par_iter())
+                .zip(plain[k].par_chunks(CHANNELS))
+                .for_each(|((px, &w), flat)| {
+                    // Below the smallest normal float the ratio is not
+                    // a ratio any more: the numerator has underflowed
+                    // with the denominator.
+                    if w > f32::MIN_POSITIVE {
+                        let inv = 1.0 / w;
+                        for v in px.iter_mut() {
+                            *v *= inv;
+                        }
+                    } else {
+                        for (v, f) in px.iter_mut().zip(flat) {
+                            *v = f * share;
+                        }
+                    }
+                });
+        }
+        drop(plain);
+        drop(weights);
+        let mut out = bands.pop().expect("a pyramid has a top");
+        for k in (0..levels - 1).rev() {
+            let (w, h) = sizes[k];
+            let (cw, ch) = sizes[k + 1];
+            let up = expand(&out, cw, ch, w, h, CHANNELS);
+            out = bands.pop().expect("one band a level");
+            out.par_iter_mut()
+                .zip(up.par_iter())
+                .for_each(|(o, u)| *o += u);
+        }
+        (out, coverage)
+    }
 }
 
 /// Every frame's link to its neighbor, chained outward from the
@@ -766,38 +978,42 @@ struct Chain {
     dropped: Vec<Option<Dropped>>,
 }
 
-/// Two planes are held at a time and no more: the frame the chain has
-/// reached and the one being fitted to it.
-fn fit_all(
-    frames: &[&[f32]],
+/// The chain over `n` frames, each frame's luminance asked of `lum` as
+/// the chain reaches it: up from the reference, then down. Two planes
+/// are held at a time beside the reference's, which both directions
+/// start from: the frame the chain has reached and the one being
+/// fitted to it.
+fn fit_chain<E>(
+    n: usize,
     width: usize,
     height: usize,
-    luma: [f32; 3],
     reference: usize,
+    reference_lum: &[f32],
     options: &Options,
-) -> Chain {
-    let n = frames.len();
+    mut lum: impl FnMut(usize) -> std::result::Result<Vec<f32>, E>,
+) -> std::result::Result<Chain, E> {
     let mut chain = Chain {
         against: vec![None; n],
         fits: vec![None; n],
         onto: vec![Transform::IDENTITY; n],
         dropped: vec![None; n],
     };
+    let limit = options.max_motion * (width as f64).hypot(height as f64);
     let up: Vec<usize> = (reference + 1..n).collect();
     let down: Vec<usize> = (0..reference).rev().collect();
     for order in [up, down] {
         // The last frame this way whose link held, and the link that
         // got there: one focus step looks much like the next, so the
-        // previous answer is most of the next one's.
+        // previous answer is most of the next one's. No plane of its
+        // own while it is the reference.
         let mut anchor = reference;
-        let mut anchor_lum = luminance_of(frames[reference], luma);
+        let mut anchor_lum: Option<Vec<f32>> = None;
         let mut seed = Transform::IDENTITY;
         for i in order {
             chain.against[i] = Some(anchor);
-            let moving = luminance_of(frames[i], luma);
-            let limit = options.max_motion * (width as f64).hypot(height as f64);
+            let moving = lum(i)?;
             match register::fit_from(
-                &anchor_lum,
+                anchor_lum.as_deref().unwrap_or(reference_lum),
                 &moving,
                 width,
                 height,
@@ -824,14 +1040,14 @@ fn fit_all(
                         chain.onto[i] = fit.transform.compose(&chain.onto[anchor]);
                         seed = fit.transform;
                         anchor = i;
-                        anchor_lum = moving;
+                        anchor_lum = Some(moving);
                     }
                 }
                 Err(e) => chain.dropped[i] = Some(Dropped::NoFit(e.to_string())),
             }
         }
     }
-    chain
+    Ok(chain)
 }
 
 /// The level sizes, full resolution first.
@@ -1767,6 +1983,179 @@ mod tests {
             Options::default().reference,
             "the default is the middle frame"
         );
+    }
+
+    /// Bit for bit what the merge that held every frame gave: the
+    /// samples by their bits and the report whole, across references,
+    /// selectivities, a dropped frame, and both luminance weightings.
+    #[test]
+    fn the_merge_in_passes_is_the_merge_that_held_every_frame() {
+        let (width, height) = (240usize, 180);
+        let (five, _) = depth_stack(width, height, 5);
+        let (mut four, _) = depth_stack(width, height, 4);
+        // A frame of another scene: its link fails, and the chain goes
+        // on from the last frame that held.
+        four[1] = frame_of(width, height, |x, y| texture(x + 913.0, y + 377.0, 0.0));
+        let base = Options::default();
+        let cases = [
+            ("five, middle", &five, base),
+            (
+                "five, sharpest",
+                &five,
+                Options {
+                    reference: Reference::Sharpest,
+                    ..base
+                },
+            ),
+            (
+                "five, frame 0",
+                &five,
+                Options {
+                    reference: Reference::Index(0),
+                    ..base
+                },
+            ),
+            (
+                "five, frame 4, selectivity 3",
+                &five,
+                Options {
+                    reference: Reference::Index(4),
+                    selectivity: 3.0,
+                    ..base
+                },
+            ),
+            (
+                "five, selectivity 0",
+                &five,
+                Options {
+                    selectivity: 0.0,
+                    ..base
+                },
+            ),
+            ("four, one dropped", &four, base),
+        ];
+        for (name, frames, options) in cases {
+            for luma in [WORKING_LUMA, CAMERA_LUMA] {
+                let samples: Vec<&[f32]> = frames.iter().map(|f| f.data.as_slice()).collect();
+                let (want, want_report) =
+                    in_memory::merge(&samples, width, height, luma, &options).expect("held");
+                let (got, got_report) =
+                    merge(&samples, width, height, luma, &options).expect("in passes");
+                assert_eq!(got_report, want_report, "{name}");
+                assert!(
+                    got.iter()
+                        .map(|v| v.to_bits())
+                        .eq(want.iter().map(|v| v.to_bits())),
+                    "{name}: the samples differ"
+                );
+            }
+        }
+        assert_eq!(
+            stack(&four, &base).unwrap().1.used(),
+            3,
+            "the fixture drops a frame"
+        );
+    }
+
+    /// Read rather than handed over: the same merge, each frame read
+    /// once to place it and once to blend it, said in that order; with
+    /// the sharpest frame as the reference, a scoring pass first.
+    #[test]
+    fn a_stack_read_frame_by_frame_is_the_stack_handed_over() {
+        let (width, height) = (240usize, 180);
+        let (frames, _) = depth_stack(width, height, 5);
+        let camera: Vec<CameraImage> = frames
+            .iter()
+            .map(|f| CameraImage::from_data(width, height, f.data.clone()).unwrap())
+            .collect();
+        for (reference, passes) in [(Reference::Middle, 2), (Reference::Sharpest, 3)] {
+            let options = Options {
+                reference,
+                ..Options::default()
+            };
+            let (want, want_report) = stack_camera(&camera, &options).expect("handed over");
+            let mut reads = vec![0usize; camera.len()];
+            let mut steps = Vec::new();
+            let (got, got_report) = stack_camera_from(
+                camera.len(),
+                |k| {
+                    reads[k] += 1;
+                    Ok::<_, Error>(camera[k].clone())
+                },
+                |s| steps.push(s),
+                &options,
+            )
+            .expect("read");
+            assert_eq!(got_report, want_report);
+            assert!(
+                got.data
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .eq(want.data.iter().map(|v| v.to_bits()))
+            );
+            assert_eq!(reads, vec![passes; camera.len()], "{reference:?}");
+            let n = camera.len();
+            let mut said: Vec<Step> = (1..=n)
+                .map(|index| Step::Reading { index, of: n })
+                .collect();
+            said.push(Step::Placing);
+            said.extend((1..=n).map(|index| Step::Blending { index, of: n }));
+            assert_eq!(steps, said, "{reference:?}");
+        }
+    }
+
+    /// A frame that fails to read on the second pass ends the merge
+    /// with its error; one of another size is refused by name.
+    #[test]
+    fn a_frame_that_fails_its_second_read_ends_the_merge() {
+        let (width, height) = (120usize, 90);
+        let (frames, _) = depth_stack(width, height, 3);
+        let camera: Vec<CameraImage> = frames
+            .iter()
+            .map(|f| CameraImage::from_data(width, height, f.data.clone()).unwrap())
+            .collect();
+        let mut reads = 0;
+        let e = stack_camera_from(
+            3,
+            |k| {
+                reads += 1;
+                if reads > 3 {
+                    Err(Error::Decode("gone".into()))
+                } else {
+                    Ok(camera[k].clone())
+                }
+            },
+            |_| {},
+            &Options::default(),
+        )
+        .expect_err("cut short");
+        assert!(matches!(e, Error::Decode(_)), "{e}");
+        let small = CameraImage::from_data(60, 45, vec![0.5; 60 * 45 * 3]).unwrap();
+        let e = stack_camera_from(
+            3,
+            |k| {
+                Ok::<_, Error>(if k == 2 {
+                    small.clone()
+                } else {
+                    camera[k].clone()
+                })
+            },
+            |_| {},
+            &Options::default(),
+        )
+        .expect_err("two sizes");
+        assert!(
+            e.to_string()
+                .contains("frame 1 is 120x90 and frame 2 is 60x45"),
+            "{e}"
+        );
+        let none = stack_camera_from(
+            0,
+            |_| Ok::<_, Error>(small.clone()),
+            |_| {},
+            &Options::default(),
+        );
+        assert!(matches!(none, Err(Error::Unsupported(_))));
     }
 
     /// Not a check, a measurement: `cargo test --release -p

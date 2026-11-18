@@ -1439,7 +1439,19 @@ pub fn adopt(
     sidecar: &mut greycard_edit::Sidecar,
     camera: impl FnOnce() -> Option<Orientation>,
 ) -> Adoption {
-    adopt_beside(&beside(frame), sidecar, camera)
+    adopt_said(frame, sidecar, camera, true)
+}
+
+/// [`adopt`], with `say` whether an XMP that will not read or parse is
+/// said in the log: not for a reader that only looks ahead
+/// (`on_disk::peek_sidecar`), whose frame's own read says it.
+pub fn adopt_said(
+    frame: &Path,
+    sidecar: &mut greycard_edit::Sidecar,
+    camera: impl FnOnce() -> Option<Orientation>,
+    say: bool,
+) -> Adoption {
+    adopt_beside_said(&beside(frame), sidecar, camera, say)
 }
 
 /// [`adopt`] from what [`beside`] found, for a caller that has it.
@@ -1465,7 +1477,17 @@ pub fn adopt_beside(
     sidecar: &mut greycard_edit::Sidecar,
     camera: impl FnOnce() -> Option<Orientation>,
 ) -> Adoption {
-    let mut took = adopt_own(found.own.as_deref(), sidecar, camera);
+    adopt_beside_said(found, sidecar, camera, true)
+}
+
+/// [`adopt_beside`], with `say` as [`adopt_said`] has it.
+fn adopt_beside_said(
+    found: &Beside,
+    sidecar: &mut greycard_edit::Sidecar,
+    camera: impl FnOnce() -> Option<Orientation>,
+    say: bool,
+) -> Adoption {
+    let mut took = adopt_own(found.own.as_deref(), sidecar, camera, say);
     if let Some(shared) = &found.shared {
         let now = shared.culled();
         let was = sidecar.xmp_shared.take();
@@ -1530,6 +1552,7 @@ fn adopt_own(
     path: Option<&Path>,
     sidecar: &mut greycard_edit::Sidecar,
     camera: impl FnOnce() -> Option<Orientation>,
+    say: bool,
 ) -> Adoption {
     let mut took = Adoption::default();
     let Some(path) = path else {
@@ -1540,7 +1563,12 @@ fn adopt_own(
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) => {
-            log::warn!("{}: {e}", path.display());
+            crate::on_disk::said(
+                say,
+                module_path!(),
+                log::Level::Warn,
+                format!("{}: {e}", path.display()),
+            );
             return took;
         }
     };
@@ -1551,7 +1579,12 @@ fn adopt_own(
     let packet = match read(&String::from_utf8_lossy(&bytes)) {
         Ok(p) => p,
         Err(e) => {
-            log::warn!("{}: {e}; the sidecar's meta stands", path.display());
+            crate::on_disk::said(
+                say,
+                module_path!(),
+                log::Level::Warn,
+                format!("{}: {e}; the sidecar's meta stands", path.display()),
+            );
             return took;
         }
     };

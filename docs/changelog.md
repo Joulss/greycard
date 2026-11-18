@@ -172,6 +172,20 @@ design note behind it.
 
 ### Fixes
 
+- A focus stack's memory no longer grows with its frames: a hundred
+  24-megapixel frames merge in about 2.4 GB (issue 134)
+  ([§709](https://github.com/jessolmstead/greycard/blob/master/docs/notes/709-a-focus-stack-read-in-passes.md)).
+- Opening a frame no longer walks the whole camera-profile folder, which
+  held the window for most of a second with thousands of profiles
+  ([§708](https://github.com/jessolmstead/greycard/blob/master/docs/notes/708-the-profile-listing-held-between-opens.md)).
+- Stepping through frames that already have edits is quicker: the next ones
+  are developed ahead, as unedited ones were
+  ([§707](https://github.com/jessolmstead/greycard/blob/master/docs/notes/707-edited-neighbors-read-first-for-the-prefetch.md)).
+- A double-click on a mask's Temperature or Tint puts that slider back to
+  the picture's value, and no longer switches the mask's white balance off.
+- Going back to a frame under a camera profile is quick again: its base
+  was made anew at every return
+  ([§706](https://github.com/jessolmstead/greycard/blob/master/docs/notes/706-the-shelf-under-a-camera-profile.md)).
 - In the compare view the wheel zooms about what is under the pointer, in
   the frame it is over.
 - The frame open in Cull is remembered for the next run, as the one open in

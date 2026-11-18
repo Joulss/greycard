@@ -2894,8 +2894,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
         &mut base,
         &mut shelf,
         (Some(key.clone()), None),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         None,
         None,
     );
@@ -2908,8 +2907,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
         &mut base,
         &mut shelf,
         (None, Some((&key, &Input::Raw(reread.clone())))),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         None,
         None,
     );
@@ -2940,14 +2938,229 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
         &mut base,
         &mut shelf,
         (Some(key.clone()), Some((&key, &Input::Raw(frame.clone())))),
-        &warmer,
-        0,
+        (&warmer, 0, &|_| false),
         None,
         None,
     );
     assert!(base.is_none());
     develop_turned(&frame, &warmer, 0, &mut base);
     assert!(!Arc::ptr_eq(&base.as_ref().unwrap().image, &made));
+}
+
+/// A camera profile in `dir` named `name`, its color matrix led by
+/// `red`: another `red` is another profile's tables.
+fn write_profile(dir: &std::path::Path, name: &str, red: f64) {
+    use greycard_core::dcp::{Dcp, DcpCalibration, EmbedPolicy, HueSatMap};
+    let dcp = Dcp {
+        name: Some(name.into()),
+        unique_camera_model: Some("Test Cam".into()),
+        copyright: Some("public domain".into()),
+        calibration_signature: None,
+        embed_policy: EmbedPolicy::AllowCopying,
+        primary: DcpCalibration {
+            illuminant: 17,
+            color_matrix: [red, -0.1, -0.1, -0.4, 1.3, 0.1, 0.0, -0.2, 0.9],
+            forward_matrix: None,
+            hue_sat_map: Some(HueSatMap::identity(6, 2, 1)),
+        },
+        secondary: None,
+        baseline_exposure_offset: None,
+        look: None,
+        tone_curve: None,
+    };
+    std::fs::write(dir.join(format!("{name}.dcp")), dcp.to_bytes()).unwrap();
+}
+
+/// The profile directory `dir` the lists of this test's thread read.
+fn profiles_in(dir: Option<&std::path::Path>) {
+    crate::stages::TEST_STORES.with(|s| {
+        *s.borrow_mut() = dir.map(|d| greycard_edit_io::Stores {
+            profiles: Some(d.to_path_buf()),
+            looks: None,
+        })
+    });
+}
+
+/// Two frames under an edit that names a camera profile, opened in
+/// turn and returned to: each return takes its base back from the
+/// shelf, though the profile cache let go of the profile between
+/// (`profiles::forget` here, standing for a cache past its count or a
+/// file rewritten), so the develop reads the same file again into
+/// another pointer. The shelf
+/// holds one base a file, never the one it was given back beside a
+/// newer one. A profile rewritten with other tables is another base.
+#[test]
+fn a_base_under_a_camera_profile_is_taken_back_after_the_directory_is_listed() {
+    use super::engine::swap_base;
+    use super::shelf::{Budget, FileKey, Shelf};
+    let dir = crate::testing::scratch_dir("shelf-profile");
+    write_profile(&dir, "Test Cam Neutral", 0.8);
+    profiles_in(Some(&dir));
+    let mut edit = Edit::default();
+    edit.camera.profile = greycard_edit::camera::ProfileChoice::Named("Test Cam Neutral".into());
+    let a = Arc::new(aberrated_frame(120, 80));
+    let b = Arc::new(aberrated_frame(64, 48));
+    let (ka, kb) = (shelf_key("a.CR2", &a), shelf_key("b.CR2", &b));
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    let mut base = None;
+    develop_turned(&a, &edit, 0, &mut base);
+    let made_a = base.as_ref().expect("a base").image.clone();
+    // An open of `to` from `from`, as the worker's: the base in hand
+    // shelved and the coming one looked for, then the profile cache
+    // let go of, then the develop. Whether the base was
+    // taken from the shelf, and the picture.
+    let open = |base: &mut Option<FrameKept>,
+                shelf: &mut Shelf,
+                from: &FileKey,
+                to: (&FileKey, &Arc<RawFrame>)| {
+        swap_base(
+            base,
+            shelf,
+            (Some(from.clone()), Some((to.0, &Input::Raw(to.1.clone())))),
+            (&edit, 0, &|_| false),
+            None,
+            None,
+        );
+        greycard_edit_io::profiles::forget();
+        let taken = base.as_ref().is_some_and(|b| b.from_shelf);
+        let picture = develop_turned(to.1, &edit, 0, base);
+        (taken, picture)
+    };
+    assert!(!open(&mut base, &mut shelf, &ka, (&kb, &b)).0, "B is new");
+    let made_b = base.as_ref().expect("a base").image.clone();
+    let (taken, back_a) = open(&mut base, &mut shelf, &kb, (&ka, &a));
+    assert!(taken, "A from the shelf");
+    assert!(Arc::ptr_eq(&base.as_ref().unwrap().image, &made_a));
+    assert!(
+        open(&mut base, &mut shelf, &ka, (&kb, &b)).0,
+        "B from the shelf"
+    );
+    assert!(Arc::ptr_eq(&base.as_ref().unwrap().image, &made_b));
+    assert_eq!(shelf.len(), 1, "A's base alone on the shelf");
+
+    // A's base made again from nothing, after another listing, and
+    // shelved beside the one already there: it replaces it.
+    let mut again = None;
+    greycard_edit_io::profiles::forget();
+    let fresh = develop_turned(&a, &edit, 0, &mut again);
+    assert!(!Arc::ptr_eq(&again.as_ref().unwrap().image, &made_a));
+    // The base taken back, and the picture developed from it, are the
+    // ones a fresh develop under the profile makes, to the bit; and the
+    // profile is in them, not the file's own.
+    assert!(again.as_ref().unwrap().image.data == made_a.data);
+    assert!(fresh.data == back_a.data);
+    let own = develop_turned(&a, &Edit::default(), 0, &mut None);
+    assert!(own.data != fresh.data, "the profile is applied");
+    assert!(shelf.put(ka.clone(), again.take().unwrap(), false));
+    assert_eq!(shelf.len(), 1, "one base for one file under one edit");
+
+    // The profile rewritten with other tables: A's base is not its.
+    write_profile(&dir, "Test Cam Neutral", 0.9);
+    greycard_edit_io::profiles::forget();
+    assert!(
+        !open(&mut base, &mut shelf, &kb, (&ka, &a)).0,
+        "another profile"
+    );
+    assert!(!Arc::ptr_eq(&base.as_ref().unwrap().image, &made_a));
+    profiles_in(None);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The open frame's base under a camera profile is kept across a
+/// listing of the profile directory, which lets go of the profile read
+/// before it: a slider move after the listing develops from the base in
+/// hand, not from a base made again.
+#[test]
+fn the_base_in_hand_under_a_camera_profile_outlives_a_listing() {
+    let dir = crate::testing::scratch_dir("hand-profile");
+    write_profile(&dir, "Test Cam Neutral", 0.8);
+    profiles_in(Some(&dir));
+    let mut edit = Edit::default();
+    edit.camera.profile = greycard_edit::camera::ProfileChoice::Named("Test Cam Neutral".into());
+    let frame = Arc::new(aberrated_frame(120, 80));
+    let mut base = None;
+    develop_turned(&frame, &edit, 0, &mut base);
+    let made = base.as_ref().expect("a base").image.clone();
+    greycard_edit_io::profiles::forget();
+    let mut moved = edit.clone();
+    moved.light.exposure += 0.5;
+    develop_turned(&frame, &moved, 0, &mut base);
+    assert!(
+        Arc::ptr_eq(&base.as_ref().unwrap().image, &made),
+        "kept, not made again"
+    );
+    profiles_in(None);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A frame whose edit asks for the learned denoiser, with the model not
+/// to be had: its base is the engine's own path standing in, shelved
+/// when the frame is left and taken back on the return, the same
+/// picture a fresh develop makes; the shelf holds one base of it.
+#[test]
+fn a_base_standing_in_for_the_learned_denoiser_is_taken_back() {
+    use super::engine::{stands_in, swap_base};
+    use super::shelf::{Budget, FileKey, Shelf};
+    let mut edit = Edit::default();
+    edit.noise.enabled = true;
+    edit.noise.learned = greycard_edit::Learned::Fast;
+    edit.noise.learned_strength = 0.5;
+    // A store of its own with nothing in it: the machine's may hold
+    // the model.
+    let ai = || Ai::for_test(greycard_ai::Store::at("no-store"), Vec::new());
+    let develop_turned =
+        |frame: &Arc<RawFrame>, edit: &Edit, turn: u8, base: &mut Option<FrameKept>| {
+            let deliver: Deliver = Arc::new(|_| {});
+            let (outcome, image) = develop_job(
+                &Input::Raw(frame.clone()),
+                edit,
+                turn,
+                1,
+                base,
+                &mut ai(),
+                None,
+                None,
+                &mut None,
+                &deliver,
+            );
+            assert!(matches!(outcome, Outcome::Developed { .. }));
+            image.expect("a picture on the CPU")
+        };
+    assert!(stands_in(&ai(), &edit), "no model in the test's store");
+    let a = Arc::new(aberrated_frame(120, 80));
+    let b = Arc::new(aberrated_frame(64, 48));
+    let (ka, kb) = (shelf_key("a.CR2", &a), shelf_key("b.CR2", &b));
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    let mut base = None;
+    let first = develop_turned(&a, &edit, 0, &mut base);
+    let made = base.as_ref().expect("a base").image.clone();
+    assert!(base.as_ref().unwrap().meta.stood_in.is_some());
+    let open = |base: &mut Option<FrameKept>,
+                shelf: &mut Shelf,
+                from: &FileKey,
+                to: (&FileKey, &Arc<RawFrame>)| {
+        swap_base(
+            base,
+            shelf,
+            (Some(from.clone()), Some((to.0, &Input::Raw(to.1.clone())))),
+            (&edit, 0, &|e| stands_in(&ai(), e)),
+            None,
+            None,
+        );
+        let taken = base.as_ref().is_some_and(|b| b.from_shelf);
+        let picture = develop_turned(to.1, &edit, 0, base);
+        (taken, picture)
+    };
+    assert!(!open(&mut base, &mut shelf, &ka, (&kb, &b)).0, "B is new");
+    let (taken, again) = open(&mut base, &mut shelf, &kb, (&ka, &a));
+    assert!(taken, "A from the shelf");
+    assert!(Arc::ptr_eq(&base.as_ref().unwrap().image, &made));
+    assert!(again.data == first.data);
+    assert!(
+        open(&mut base, &mut shelf, &ka, (&kb, &b)).0,
+        "B from the shelf"
+    );
+    assert_eq!(shelf.len(), 1, "A's base alone on the shelf");
 }
 
 /// On the GPU, a base shelved lets go of what it held on the device
@@ -2988,8 +3201,7 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
         &mut base,
         &mut shelf,
         (Some(key.clone()), None),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         gpu.as_ref(),
         None,
     );
@@ -2998,8 +3210,7 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
         &mut base,
         &mut shelf,
         (None, Some((&key, &Input::Raw(frame.clone())))),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         gpu.as_ref(),
         None,
     );
@@ -3046,6 +3257,7 @@ fn neighbor_at(path: &std::path::Path, edit: Edit, side: Side) -> Neighbor {
         seed_blend: false,
         side,
         steps: 1,
+        read_first: None,
     }
 }
 
@@ -3102,8 +3314,7 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
         &mut base,
         &mut shelf,
         (None, Some((&key, &input))),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         None,
         None,
     );
@@ -3802,6 +4013,11 @@ fn a_new_open_drops_the_far_prefetches() {
 /// shelf counts at 275 MB, but 1100 at 45 MP. On the
 /// GPU when there is one: lavapipe under the recipe proves the walk
 /// runs there, but its times are not a real card's.
+///
+/// WRITES SIDECARS. With `GREYCARD_WALK_EDITED` set (`before` or
+/// `after`), every raw in `GREYCARD_WALK_DIR` without a sidecar gets one
+/// written beside it, under a 6500 K white: point it only at a copy of
+/// the raws. It refuses a folder under ~/Pictures or /mnt.
 #[test]
 #[ignore = "a measurement over real raws"]
 fn walk_timing() {
@@ -3809,6 +4025,17 @@ fn walk_timing() {
         eprintln!("GREYCARD_WALK_DIR is not set");
         return;
     };
+    if std::env::var_os("GREYCARD_WALK_EDITED").is_some() {
+        let at = std::fs::canonicalize(&dir).expect("the walk's folder");
+        let pictures = std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join("Pictures"))
+            .and_then(|p| std::fs::canonicalize(p).ok());
+        assert!(
+            !at.starts_with("/mnt") && !pictures.is_some_and(|p| at.starts_with(p)),
+            "GREYCARD_WALK_EDITED writes sidecars: not in {}; walk a copy",
+            at.display()
+        );
+    }
     let gaps: Vec<u64> = std::env::var("GREYCARD_WALK_GAPS_MS")
         .unwrap_or_default()
         .split(',')
@@ -3818,7 +4045,7 @@ fn walk_timing() {
     let mut p: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("the walk's folder")
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| !is_picture_path(p) && p.is_file())
+        .filter(|p| greycard_core::decode::is_raw_path(p) && p.is_file())
         .collect();
     p.sort();
     for path in &p {
@@ -3844,11 +4071,42 @@ fn walk_timing() {
         Some((d, q)) => worker.set_gpu(d, q),
         None => skipped("the walk's timing"),
     }
+    // Frames with sidecars of their own, which the window holds standing
+    // in from the index's rows: "before" sends none of them as
+    // neighbors, as the window did, and "after" sends them to be read
+    // first. Each open goes under its sidecar's edit, as the window's
+    // own read gives it.
+    // A raw with no sidecar is given one under a warm white, so its base
+    // is not the default's: point the walk at a copy of the raws.
+    let edited = std::env::var("GREYCARD_WALK_EDITED").ok();
+    if edited.is_some() {
+        for path in &p {
+            if greycard_edit::Sidecar::find(path).is_none() {
+                write_sidecar(path, white_at(6500.0), 0);
+            }
+        }
+    }
     let mut times = Vec::new();
     for (i, path) in p.iter().enumerate() {
         let generation = i as u64 + 1;
         let sent = Instant::now();
-        worker.send(open_default(path, generation));
+        let open = match &edited {
+            Some(_) => {
+                let (sidecar, _) = greycard_edit_io::on_disk::read_sidecar_said(path);
+                Job::Open {
+                    path: path.clone(),
+                    version: None,
+                    edit: sidecar.line.current.clone(),
+                    generation,
+                    seed_blend: false,
+                    turn: sidecar.turn,
+                    stance_known: false,
+                    learned: Vec::new(),
+                }
+            }
+            None => open_default(path, generation),
+        };
+        worker.send(open);
         let near = [
             (i + 1, Side::Next, 1),
             (i.wrapping_sub(1), Side::Previous, 1),
@@ -3859,7 +4117,14 @@ fn walk_timing() {
             generation,
             Heading::steady(Side::Next),
             near.iter()
-                .filter_map(|&(at, side, steps)| p.get(at).map(|q| deep_at(q, side, steps)))
+                .filter_map(|&(at, side, steps)| match edited.as_deref() {
+                    Some("before") => None,
+                    Some(_) => p.get(at).map(|q| Neighbor {
+                        steps,
+                        ..read_first_at(q, None, side)
+                    }),
+                    None => p.get(at).map(|q| deep_at(q, side, steps)),
+                })
                 .collect(),
         );
         loop {
@@ -6222,8 +6487,7 @@ fn a_frame_taken_back_from_the_shelf_still_says_the_card() {
         &mut base,
         &mut shelf,
         (Some(a.clone()), None),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         None,
         None,
     );
@@ -6233,8 +6497,7 @@ fn a_frame_taken_back_from_the_shelf_still_says_the_card() {
         &mut base,
         &mut shelf,
         (Some(b), Some((&a, &Input::Raw(frame.clone())))),
-        &edit,
-        0,
+        (&edit, 0, &|_| false),
         None,
         None,
     );
@@ -7629,6 +7892,756 @@ fn an_open_running_when_its_file_moves_is_followed_by_the_open_again() {
     );
     worker.send(develop_of(&to, Edit::default(), 3));
     assert!(matches!(next_said(&said, 1)[..], [Said::Developed(3, ..)]));
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A white balance off the default, which a base is made under.
+fn white_at(temperature: f64) -> Edit {
+    Edit {
+        white_balance: greycard_edit::WhiteBalance::Custom {
+            temperature,
+            tint: 0.0,
+        },
+        ..Edit::default()
+    }
+}
+
+/// The sidecar of `raw` written beside it, its own line under `edit`
+/// and the frame at `turn`.
+fn write_sidecar(raw: &std::path::Path, edit: Edit, turn: u8) {
+    let mut sidecar = greycard_edit::Sidecar {
+        line: greycard_edit::Line::of(edit),
+        turn,
+        ..greycard_edit::Sidecar::default()
+    };
+    sidecar
+        .save_in(raw, greycard_edit::Placement::Beside)
+        .expect("the sidecar written");
+}
+
+/// A neighbor the window sends to be read first: the placeholders a
+/// stand-in's row gives, and the cell's version.
+fn read_first_at(path: &std::path::Path, version: Option<&str>, side: Side) -> Neighbor {
+    Neighbor {
+        read_first: Some(super::ReadFirst {
+            version: version.map(Arc::from),
+        }),
+        ..neighbor_at(path, Edit::default(), side)
+    }
+}
+
+/// `read_first` with nothing remembered of sidecars that did not serve.
+fn peek(n: &Neighbor, asked: &dyn Fn() -> bool) -> super::prefetch::Peeked {
+    super::prefetch::read_first(n, &mut super::prefetch::Peeks::default(), asked)
+}
+
+/// Every file in `dir` with its bytes and its modified time.
+fn folder_as_it_is(dir: &std::path::Path) -> Vec<(PathBuf, Vec<u8>, std::time::SystemTime)> {
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .expect("the folder")
+        .map(|e| {
+            let path = e.expect("an entry").path();
+            let bytes = std::fs::read(&path).expect("its bytes");
+            let modified = path
+                .metadata()
+                .and_then(|m| m.modified())
+                .expect("its time");
+            (path, bytes, modified)
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// The open of `path` under `edit` at `turn` as the worker makes it
+/// after `shelf` (the key from the file and its decode, the base taken
+/// back or not), developed; whether the base came from the shelf, and
+/// the picture beside a fresh develop's of the same file.
+fn open_after(
+    path: &std::path::Path,
+    edit: &Edit,
+    turn: u8,
+    shelf: &mut super::shelf::Shelf,
+) -> (bool, Arc<WorkingImage>, Arc<WorkingImage>) {
+    use super::engine::swap_base;
+    use super::shelf::FileKey;
+    let (input, _) = open(path).expect("our DNG decodes");
+    let key = FileKey::of(path).expect("on the disk").decoded(&input);
+    let mut base = None;
+    swap_base(
+        &mut base,
+        shelf,
+        (None, Some((&key, &input))),
+        (edit, turn, &|_| false),
+        None,
+        None,
+    );
+    let from_shelf = base.as_ref().is_some_and(|b| b.from_shelf);
+    let deliver: Deliver = Arc::new(|_| {});
+    let develop = |base: &mut Option<FrameKept>| {
+        develop_job(
+            &input,
+            edit,
+            turn,
+            1,
+            base,
+            &mut Ai::new(),
+            None,
+            None,
+            &mut None,
+            &deliver,
+        )
+        .1
+        .expect("a picture on the CPU")
+    };
+    let back = develop(&mut base);
+    let fresh = develop(&mut None);
+    (from_shelf, back, fresh)
+}
+
+/// A neighbor whose edit the window does not hold is read first: the
+/// worker takes the edit, the turn, and the seed from its sidecar, makes
+/// its base under them, and the open of it, under the edit the window's
+/// own read then gives, takes that base from the shelf and develops to
+/// the picture a fresh develop makes, to the bit. Nothing is written:
+/// the folder, an XMP with a Lightroom develop beside the sidecar
+/// included, is as it was to the byte and the time.
+#[test]
+fn an_edited_neighbor_is_read_first_and_its_open_takes_the_base() {
+    use super::prefetch::{Ahead, Fetched, Peeked, prefetch, said};
+    use super::shelf::{Budget, Shelf};
+    let (dir, paths) = dngs("prefetch-read-first", &["pf-rf-B.dng"], 96, 64);
+    let b = &paths[0];
+    let warm = white_at(6500.0);
+    write_sidecar(b, warm.clone(), 1);
+    // A Lightroom develop beside it, which the window's reader would
+    // take over a sidecar with no edit of ours, and write.
+    std::fs::write(
+        greycard_edit_io::xmp::short_path(b),
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   xmp:Rating="3" crs:ProcessVersion="11.0" crs:WhiteBalance="As Shot"
+   crs:Exposure2012="+1.00" crs:HasSettings="True"/>
+ </rdf:RDF>
+</x:xmpmeta>"#,
+    )
+    .expect("the XMP written");
+    let before = folder_as_it_is(&dir);
+
+    let n = read_first_at(b, None, Side::Next);
+    let Peeked::Ready(ready) = peek(&n, &|| false) else {
+        panic!("read");
+    };
+    assert_eq!(ready.edit, warm, "the sidecar's edit, not the placeholder");
+    assert_eq!(ready.turn, 1);
+    assert!(!ready.seed_blend, "an edited line is not seeded");
+    assert!(ready.read_first.is_none());
+    assert!(
+        said("pf-rf-B.dng")
+            .iter()
+            .any(|l| l.starts_with("the next frame, pf-rf-B.dng: its sidecar read first, in ")),
+        "{:?}",
+        said("pf-rf-B.dng")
+    );
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    assert_eq!(
+        prefetch(&ready, None, &[], &mut shelf, &mut None, None, &|_| {
+            Ahead::Nothing
+        }),
+        Fetched::Landed
+    );
+    assert_eq!(shelf.len(), 1);
+    assert_eq!(folder_as_it_is(&dir), before, "nothing written");
+
+    let (from_shelf, back, fresh) = open_after(b, &warm, 1, &mut shelf);
+    assert!(from_shelf, "taken back");
+    assert!(back.data == fresh.data, "bit for bit a fresh develop's");
+    // Made under the placeholder, as before the read, it would have
+    // been another base.
+    let mut placeholder = Shelf::new(Budget::Bytes(1 << 30));
+    prefetch(&n, None, &[], &mut placeholder, &mut None, None, &|_| {
+        Ahead::Nothing
+    });
+    assert!(!open_after(b, &warm, 1, &mut placeholder).0);
+    assert_eq!(folder_as_it_is(&dir), before, "nothing written");
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The same frame with a sidecar holding no edit of ours and the same
+/// Lightroom develop beside it: the window's reader takes the develop
+/// and writes the sidecar; the worker's read writes nothing.
+#[test]
+fn the_read_first_takes_no_lightroom_develop() {
+    use super::prefetch::Peeked;
+    let (dir, paths) = dngs("prefetch-read-lr", &["pf-rf-lr-B.dng"], 64, 48);
+    let b = &paths[0];
+    write_sidecar(b, Edit::default(), 0);
+    std::fs::write(
+        greycard_edit_io::xmp::short_path(b),
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   crs:ProcessVersion="11.0" crs:WhiteBalance="As Shot"
+   crs:Exposure2012="+1.00" crs:HasSettings="True"/>
+ </rdf:RDF>
+</x:xmpmeta>"#,
+    )
+    .expect("the XMP written");
+    let before = folder_as_it_is(&dir);
+    assert!(matches!(
+        peek(&read_first_at(b, None, Side::Next), &|| false),
+        Peeked::Ready(_)
+    ));
+    assert_eq!(folder_as_it_is(&dir), before, "nothing written");
+    // The window's reader, for the contrast: it writes.
+    greycard_edit_io::on_disk::load_sidecar_said(
+        b,
+        Some(greycard_edit::Placement::Beside),
+        greycard_edit_io::on_disk::Fresh::default(),
+    );
+    assert_ne!(folder_as_it_is(&dir), before, "the window's read takes it");
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A virtual copy's cell is read first from its own line: the version's
+/// edit, not the file's own, and its open takes the base.
+#[test]
+fn a_virtual_copy_s_line_is_the_one_read_first() {
+    use super::prefetch::{Ahead, Fetched, Peeked, prefetch};
+    use super::shelf::{Budget, Shelf};
+    let (dir, paths) = dngs("prefetch-read-copy", &["pf-rf-copy-B.dng"], 96, 64);
+    let b = &paths[0];
+    let (cool, warm) = (white_at(4000.0), white_at(6500.0));
+    let mut sidecar = greycard_edit::Sidecar {
+        line: greycard_edit::Line::of(cool.clone()),
+        ..greycard_edit::Sidecar::default()
+    };
+    let id = sidecar
+        .new_version(None, Some("Warm"))
+        .expect("a version made");
+    sidecar.line_mut(Some(&id)).expect("the version").current = warm.clone();
+    sidecar
+        .save_in(b, greycard_edit::Placement::Beside)
+        .expect("written");
+
+    let read = |version: Option<&str>| match peek(&read_first_at(b, version, Side::Next), &|| false)
+    {
+        Peeked::Ready(ready) => ready,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(read(None).edit, cool, "the file's own line");
+    let copy = read(Some(&id));
+    assert_eq!(copy.edit, warm, "the version's line");
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    assert_eq!(
+        prefetch(&copy, None, &[], &mut shelf, &mut None, None, &|_| {
+            Ahead::Nothing
+        }),
+        Fetched::Landed
+    );
+    let (from_shelf, back, fresh) = open_after(b, &warm, 0, &mut shelf);
+    assert!(from_shelf);
+    assert!(back.data == fresh.data);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A sidecar that does not read, one that is not there, or one without
+/// the cell's version is skipped and said; nothing is decoded or made.
+#[test]
+fn an_unreadable_sidecar_is_skipped() {
+    use super::prefetch::{Peeked, said};
+    let (dir, paths) = dngs("prefetch-read-bad", &["pf-rf-bad-B.dng"], 64, 48);
+    let b = &paths[0];
+    let n = read_first_at(b, None, Side::Previous);
+    assert!(matches!(
+        peek(&n, &|| false),
+        Peeked::Skipped(why) if why == "its sidecar is not there"
+    ));
+    let gcd = greycard_edit::Sidecar::path_in(b, greycard_edit::Placement::Beside);
+    std::fs::write(&gcd, b"{ not json").expect("written");
+    let before = folder_as_it_is(&dir);
+    assert!(matches!(
+        peek(&n, &|| false),
+        Peeked::Skipped(why) if why.starts_with("its sidecar does not read: ")
+    ));
+    assert!(
+        said("pf-rf-bad-B.dng").iter().any(|l| l.starts_with(
+            "the prefetch of the previous frame, pf-rf-bad-B.dng, skipped: \
+             its sidecar does not read: "
+        )),
+        "{:?}",
+        said("pf-rf-bad-B.dng")
+    );
+    assert_eq!(folder_as_it_is(&dir), before, "never written over");
+    write_sidecar(b, white_at(6500.0), 0);
+    assert!(matches!(
+        peek(&read_first_at(b, Some("gone"), Side::Previous), &|| false),
+        Peeked::Skipped(why) if why == "its sidecar has no such version"
+    ));
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A sidecar whose edit asks for the learned denoiser is read, and then
+/// skipped as any such neighbor is.
+#[test]
+fn a_learned_edit_read_first_is_skipped() {
+    use super::prefetch::{Ahead, Fetched, Peeked, prefetch};
+    use super::shelf::{Budget, Shelf};
+    let (dir, paths) = dngs("prefetch-read-learned", &["pf-rf-ln-B.dng"], 64, 48);
+    let b = &paths[0];
+    let learned = Edit {
+        noise: Noise {
+            learned: greycard_edit::Learned::Fast,
+            ..Noise::default()
+        },
+        ..Edit::default()
+    };
+    write_sidecar(b, learned, 0);
+    let Peeked::Ready(ready) = peek(&read_first_at(b, None, Side::Next), &|| false) else {
+        panic!("read");
+    };
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    assert_eq!(
+        prefetch(&ready, None, &[], &mut shelf, &mut None, None, &|_| {
+            Ahead::Nothing
+        }),
+        Fetched::Skipped("its edit asks for the learned denoiser".into())
+    );
+    assert_eq!(shelf.len(), 0);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A sidecar changed between the worker's read and the open: the base
+/// made under the old edit (read, and shelved under it) is not the
+/// open's, which develops afresh, to the picture a fresh develop of the
+/// new edit makes.
+#[test]
+fn a_sidecar_changed_after_the_read_misses_the_shelf() {
+    use super::prefetch::{Ahead, Fetched, Peeked, prefetch};
+    use super::shelf::{Budget, FileKey, Shelf};
+    let (dir, paths) = dngs("prefetch-read-moved", &["pf-rf-mv-B.dng"], 96, 64);
+    let b = &paths[0];
+    let warm = white_at(6500.0);
+    write_sidecar(b, warm.clone(), 0);
+    let Peeked::Ready(ready) = peek(&read_first_at(b, None, Side::Next), &|| false) else {
+        panic!("read");
+    };
+    assert_eq!(ready.edit, warm, "read");
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    assert_eq!(
+        prefetch(&ready, None, &[], &mut shelf, &mut None, None, &|_| {
+            Ahead::Nothing
+        }),
+        Fetched::Landed
+    );
+    let stat = FileKey::of(b).expect("on the disk").stat;
+    assert!(
+        shelf.holds((b, &stat), &warm, false, 0, false, None),
+        "the old sidecar's base shelved"
+    );
+    // Another hand writes it; the window's read at the open gives this.
+    let cool = white_at(4000.0);
+    write_sidecar(b, cool.clone(), 0);
+    let (from_shelf, back, fresh) = open_after(b, &cool, 0, &mut shelf);
+    assert!(!from_shelf, "the old edit's base is not handed out");
+    assert!(back.data == fresh.data);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The read gives way to anything asked of the worker, before it reads
+/// (nothing read) and after (before the decode).
+#[test]
+fn the_read_first_gives_way_before_and_after_the_read() {
+    use super::prefetch::{Peeked, said};
+    let (dir, paths) = dngs("prefetch-read-way", &["pf-rf-way-B.dng"], 64, 48);
+    let b = &paths[0];
+    write_sidecar(b, white_at(6500.0), 0);
+    let n = read_first_at(b, None, Side::Next);
+    assert!(matches!(peek(&n, &|| true), Peeked::GaveWay));
+    assert!(
+        !said("pf-rf-way-B.dng")
+            .iter()
+            .any(|l| l.contains("read first")),
+        "not read"
+    );
+    let calls = std::cell::Cell::new(0);
+    let second = || {
+        calls.set(calls.get() + 1);
+        calls.get() == 2
+    };
+    assert!(matches!(peek(&n, &second), Peeked::GaveWay));
+    assert_eq!(calls.get(), 2);
+    let lines = said("pf-rf-way-B.dng");
+    assert!(lines.iter().any(|l| l
+        == "the prefetch of the next frame, pf-rf-way-B.dng, abandoned before its sidecar's read: \
+            the worker was asked for something"));
+    assert!(lines.iter().any(|l| l
+        == "the prefetch of the next frame, pf-rf-way-B.dng, abandoned after its sidecar's read: \
+            the worker was asked for something"));
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// What the read asks is anything at all queued, the open of any frame
+/// and a save among them; nothing queued, nothing.
+#[test]
+fn the_read_first_asks_whether_anything_is_queued() {
+    use super::prefetch::asked;
+    let mut q = Queue::default();
+    assert!(!asked(&q, true));
+    assert!(asked(&q, false), "the editor left");
+    q.develop = Some(open_default(std::path::Path::new("b.dng"), 2));
+    assert!(asked(&q, true), "an open, even of its own frame");
+    q.develop = None;
+    q.keeps.push_back(Job::Keep {
+        frame: Frame::file("a.dng"),
+        edit: Edit::default(),
+        turn: 0,
+        iso: None,
+    });
+    assert!(asked(&q, true), "a save");
+    q.keeps.clear();
+    q.mask_picture = Some(Job::MaskPicture {
+        edit: Box::new(Edit::default()),
+        generation: 1,
+    });
+    assert!(asked(&q, true), "the refined masks' picture");
+    q.mask_picture = None;
+    q.gpu_lost = Some(true);
+    assert!(asked(&q, true), "the device lost");
+    q.gpu_lost = None;
+    // Masks settling: not while they wait, once they are due.
+    q.settling = Some(super::masks::Settling {
+        due: Instant::now() + std::time::Duration::from_secs(60),
+        asks: Vec::new(),
+    });
+    assert!(!asked(&q, true), "settling");
+    q.settling = Some(super::masks::Settling {
+        due: Instant::now() - std::time::Duration::from_millis(1),
+        asks: Vec::new(),
+    });
+    assert!(asked(&q, true), "settled");
+}
+
+/// A line never developed is read first with its seed still to come,
+/// as the window's open asks once it has read it: the file's own at the
+/// default, at any turn (a mirrored row's), and a version made from the
+/// original before the raw was opened. An edited version is not.
+#[test]
+fn a_line_never_developed_is_read_first_with_its_seed_to_come() {
+    use super::prefetch::Peeked;
+    let (dir, paths) = dngs("prefetch-read-seed", &["pf-rf-seed-B.dng"], 64, 48);
+    let b = &paths[0];
+    let mut sidecar = greycard_edit::Sidecar {
+        turn: 2,
+        ..greycard_edit::Sidecar::default()
+    };
+    let fresh = sidecar.new_version_from_original(Edit::default(), Some("Fresh"));
+    let edited = sidecar
+        .new_version(None, Some("Warm"))
+        .expect("a version made");
+    sidecar
+        .line_mut(Some(&edited))
+        .expect("the version")
+        .current = white_at(6500.0);
+    sidecar
+        .save_in(b, greycard_edit::Placement::Beside)
+        .expect("written");
+    let read = |version: Option<&str>| match peek(&read_first_at(b, version, Side::Next), &|| false)
+    {
+        Peeked::Ready(ready) => (ready.seed_blend, ready.turn),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(read(None), (true, 2), "the file's own, turned");
+    assert_eq!(read(Some(&fresh)), (true, 2), "a version never developed");
+    assert_eq!(read(Some(&edited)), (false, 2), "an edited version");
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A sidecar that did not serve is said once and not read again while
+/// it stands as it was; written anew, it is read again.
+#[test]
+fn an_unreadable_sidecar_is_not_read_again_until_it_changes() {
+    use super::prefetch::{Peeked, Peeks, read_first, said};
+    let (dir, paths) = dngs("prefetch-read-once", &["pf-rf-once-B.dng"], 64, 48);
+    let b = &paths[0];
+    let gcd = greycard_edit::Sidecar::path_in(b, greycard_edit::Placement::Beside);
+    std::fs::write(&gcd, b"{ not json").expect("written");
+    let n = read_first_at(b, None, Side::Next);
+    let mut unread = Peeks::default();
+    let skips = || {
+        said("pf-rf-once-B.dng")
+            .iter()
+            .filter(|l| l.contains("skipped: its sidecar does not read"))
+            .count()
+    };
+    for _ in 0..3 {
+        assert!(matches!(
+            read_first(&n, &mut unread, &|| false),
+            Peeked::Skipped(_)
+        ));
+    }
+    assert_eq!(skips(), 1, "said once");
+    // Written anew, by another hand: read, and taken.
+    std::fs::remove_file(&gcd).expect("removed");
+    write_sidecar(b, white_at(6500.0), 0);
+    assert!(matches!(
+        read_first(&n, &mut unread, &|| false),
+        Peeked::Ready(r) if r.edit == white_at(6500.0)
+    ));
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A neighbor in a folder the window's check says is on an automount
+/// not mounted yet, or (once the share is mounted) on a network mount, a
+/// folder opened outside any root among them, is not touched at all: no
+/// sidecar looked for, none read. Said once a folder. One in a local
+/// folder is read.
+#[test]
+fn a_neighbor_on_a_network_mount_is_not_read_first() {
+    use super::prefetch::{Peeked, Peeks, read_first, said, touches};
+    let (dir, paths) = dngs(
+        "prefetch-read-nfs",
+        &["pf-rf-nfs-B.dng", "pf-rf-nfs-C.dng"],
+        64,
+        48,
+    );
+    write_sidecar(&paths[0], white_at(6500.0), 0);
+    write_sidecar(&paths[1], white_at(6500.0), 0);
+    thread_local! {
+        static SHARE: std::cell::RefCell<(PathBuf, &'static str)> =
+            const { std::cell::RefCell::new((PathBuf::new(), "")) };
+    }
+    fn on_share(folder: &std::path::Path) -> Option<String> {
+        SHARE.with(|s| {
+            let (share, what) = &*s.borrow();
+            (share == folder).then(|| what.to_string())
+        })
+    }
+    SHARE.with(|s| *s.borrow_mut() = (dir.clone(), "an automount not mounted yet"));
+    let mut peeks = Peeks::default();
+    peeks.set_remote(on_share);
+    let before = touches();
+    assert!(matches!(
+        read_first(&read_first_at(&paths[0], None, Side::Next), &mut peeks, &|| false),
+        Peeked::Skipped(why) if why == "its folder is on an automount not mounted yet"
+    ));
+    // The share mounted by another hand: seen at once.
+    SHARE.with(|s| s.borrow_mut().1 = "a network mount (nfs4)");
+    for p in &paths {
+        assert!(matches!(
+            read_first(&read_first_at(p, None, Side::Next), &mut peeks, &|| false),
+            Peeked::Skipped(why) if why == "its folder is on a network mount (nfs4)"
+        ));
+    }
+    assert_eq!(touches(), before, "nothing of the frames touched");
+    let lines: Vec<String> = ["pf-rf-nfs-B.dng", "pf-rf-nfs-C.dng"]
+        .iter()
+        .flat_map(|n| said(n))
+        .collect();
+    assert_eq!(
+        lines,
+        vec![
+            "the prefetch of the next frame, pf-rf-nfs-B.dng, skipped: \
+             its folder is on an automount not mounted yet"
+        ],
+        "said once a folder, nothing read"
+    );
+    // The folder local: read.
+    SHARE.with(|s| s.borrow_mut().0 = PathBuf::from("/elsewhere"));
+    assert!(matches!(
+        read_first(
+            &read_first_at(&paths[0], None, Side::Next),
+            &mut peeks,
+            &|| false
+        ),
+        Peeked::Ready(_)
+    ));
+    assert!(touches() > before, "read");
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The worker asks the check handed over (`Worker::set_remote_check`)
+/// of a read-first neighbor's folder before it reads it, and passes the
+/// neighbor over when the check says so.
+#[test]
+fn the_worker_asks_the_check_it_was_handed_of_a_read_first_neighbor() {
+    use super::prefetch::{QUIET, said};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static ASKED: AtomicUsize = AtomicUsize::new(0);
+    fn on_share(_folder: &std::path::Path) -> Option<String> {
+        ASKED.fetch_add(1, Ordering::SeqCst);
+        Some("a network mount (nfs4)".into())
+    }
+    let (dir, paths) = dngs(
+        "prefetch-read-check",
+        &["pf-rf-chk-A.dng", "pf-rf-chk-B.dng"],
+        64,
+        48,
+    );
+    write_sidecar(&paths[1], white_at(6500.0), 0);
+    let (worker, rx) = walking_worker();
+    worker.set_remote_check(on_share);
+    assert_eq!(worker.remote_checks().0, 1);
+    worker.send(open_default(&paths[0], 1));
+    worker.neighbors(
+        1,
+        Heading::steady(Side::Next),
+        vec![read_first_at(&paths[1], None, Side::Next)],
+    );
+    assert_eq!(
+        rx.recv_timeout(std::time::Duration::from_secs(60))
+            .expect("the open lands"),
+        1
+    );
+    until("B passed over", &|| {
+        said("pf-rf-chk-B.dng")
+            .iter()
+            .any(|l| l.ends_with("its folder is on a network mount (nfs4)"))
+    });
+    std::thread::sleep(QUIET * 10);
+    assert!(ASKED.load(Ordering::SeqCst) >= 1);
+    assert!(
+        !said("pf-rf-chk-B.dng")
+            .iter()
+            .any(|l| l.contains("read first") || l.starts_with("prefetched")),
+        "never read or made"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A device lost while the worker is idle, not yet taken up: the open
+/// frame's neighbors wait, none begun and given way to over and over.
+#[test]
+fn the_worker_begins_no_prefetch_while_a_lost_device_waits() {
+    use super::prefetch::{QUIET, said};
+    let (dir, paths) = dngs("prefetch-lost", &["pf-lost-A.dng", "pf-lost-B.dng"], 64, 48);
+    let (worker, rx) = walking_worker();
+    worker.send(open_default(&paths[0], 1));
+    assert_eq!(
+        rx.recv_timeout(std::time::Duration::from_secs(60))
+            .expect("the open lands"),
+        1
+    );
+    // The open's develop is delivered before the worker is back at its
+    // wait; a loss told in between is taken up at once, and the
+    // prefetch then begins as it should. So let it settle first.
+    std::thread::sleep(QUIET * 4);
+    (worker.gpu_lost_teller())(false);
+    worker.neighbors(
+        1,
+        Heading::steady(Side::Next),
+        vec![neighbor_at(&paths[1], Edit::default(), Side::Next)],
+    );
+    std::thread::sleep(QUIET * 20);
+    assert!(said("pf-lost-B.dng").is_empty(), "not begun");
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A read-first neighbor that gave way after its read (to the refined
+/// masks' picture asked meanwhile) goes back on its list, is read again
+/// once the worker is quiet, and is made.
+#[test]
+fn a_read_first_neighbor_that_gave_way_is_read_again_and_made() {
+    use super::prefetch::{AtCheck, at_next_check, said};
+    let (dir, paths) = dngs(
+        "prefetch-read-again",
+        &["pf-rf-again-A.dng", "pf-rf-again-B.dng"],
+        96,
+        64,
+    );
+    write_sidecar(&paths[1], white_at(6500.0), 0);
+    let (at_tx, at_rx) = std::sync::mpsc::channel();
+    let (go_tx, go_rx) = std::sync::mpsc::channel();
+    at_next_check(&paths[1], AtCheck::Hold(at_tx, go_rx));
+    let (worker, rx) = walking_worker();
+    let wait = std::time::Duration::from_secs(60);
+    worker.send(open_default(&paths[0], 1));
+    worker.neighbors(
+        1,
+        Heading::steady(Side::Next),
+        vec![read_first_at(&paths[1], None, Side::Next)],
+    );
+    assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 1);
+    assert_eq!(at_rx.recv_timeout(wait).expect("held"), "sidecar's read");
+    worker.send(Job::MaskPicture {
+        edit: Box::new(Edit::default()),
+        generation: 1,
+    });
+    go_tx.send(()).unwrap();
+    until("B made after giving way", &|| {
+        said("pf-rf-again-B.dng")
+            .iter()
+            .any(|l| l.starts_with("prefetched pf-rf-again-B.dng"))
+    });
+    let lines = said("pf-rf-again-B.dng");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("abandoned after its sidecar's read")),
+        "{lines:?}"
+    );
+    assert_eq!(
+        lines.iter().filter(|l| l.contains("read first")).count(),
+        2,
+        "read again: {lines:?}"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The worker on its thread reads an edited neighbor first in its idle
+/// slot and makes its base; the open of it, under the sidecar's edit and
+/// turn, takes the base from the shelf.
+#[test]
+fn the_worker_reads_an_edited_neighbor_first_and_its_open_takes_the_base() {
+    use super::prefetch::said;
+    let (dir, paths) = dngs(
+        "prefetch-read-run",
+        &["pf-rf-run-A.dng", "pf-rf-run-B.dng"],
+        96,
+        64,
+    );
+    let warm = white_at(6500.0);
+    write_sidecar(&paths[1], warm.clone(), 1);
+    let (worker, rx) = walking_worker();
+    let wait = std::time::Duration::from_secs(60);
+    worker.send(open_default(&paths[0], 1));
+    worker.neighbors(
+        1,
+        Heading::steady(Side::Next),
+        vec![read_first_at(&paths[1], None, Side::Next)],
+    );
+    assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 1);
+    until("B prefetched", &|| {
+        said("pf-rf-run-B.dng")
+            .iter()
+            .any(|l| l.starts_with("prefetched pf-rf-run-B.dng"))
+    });
+    worker.send(Job::Open {
+        path: paths[1].clone(),
+        version: None,
+        edit: warm,
+        generation: 2,
+        seed_blend: false,
+        turn: 1,
+        stance_known: false,
+        learned: Vec::new(),
+    });
+    assert_eq!(rx.recv_timeout(wait).expect("B lands"), 2);
+    assert!(
+        said("pf-rf-run-B.dng")
+            .iter()
+            .any(|l| l == "the base of pf-rf-run-B.dng from the shelf"),
+        "{:?}",
+        said("pf-rf-run-B.dng")
+    );
     worker.stop();
     crate::testing::remove_dir_retry(&dir);
 }

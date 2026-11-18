@@ -163,6 +163,33 @@ fn watched(st: &State) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// The prefetch's check of what a folder is on is the mounts' own,
+/// handed to the worker as the window is wired, and again with each
+/// watcher build that lands.
+#[test]
+fn the_prefetch_s_mount_check_is_handed_over_at_start_and_with_each_build() {
+    let dir = scratch("remote-check");
+    let a = dir.join("a");
+    std::fs::create_dir_all(&a).unwrap();
+    let (app, state, worker) = watched_window(&dir, std::slice::from_ref(&a));
+    let (handed, check) = worker.remote_checks();
+    assert_eq!(handed, 1, "handed over as the window is wired");
+    let check = check.expect("a check");
+    for folder in [Path::new("/"), Path::new("."), a.as_path()] {
+        assert_eq!(
+            check(folder),
+            greycard_ui::mounts::not_to_peek(folder),
+            "the mounts' own: {}",
+            folder.display()
+        );
+    }
+    watch(&mut state.borrow_mut(), &app);
+    let plan = builds().pop().expect("a build asked for");
+    assert!(build_in_place(&mut state.borrow_mut(), plan));
+    assert_eq!(worker.remote_checks().0, 2, "handed over again");
+    leave(&state, &dir);
+}
+
 /// The watcher is built off the window's thread, and a build for a
 /// set of roots that has changed since it was asked for is dropped
 /// when it lands, not put over the newer one.

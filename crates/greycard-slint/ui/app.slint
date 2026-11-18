@@ -2016,9 +2016,10 @@ export component App inherits Window {
     // Its switch: turned on, it brings back the light it kept, or
     // starts at the global's white when there is none.
     callback local-wb-toggled();
-    // A double-click on its Temperature or Tint: the light forgotten,
-    // the switch off, the mask following the global.
-    callback local-wb-reset();
+    // A double-click on its Temperature or Tint ("temperature",
+    // "tint"): that slider alone back to the global's white, or with
+    // Follow global on to no offset.
+    callback local-wb-slider-reset(string);
     in-out property <bool> denoise: false;
     in-out property <float> denoise-strength: 1.5;
     // The learned denoiser's tier by name, "off" for the engine's own.
@@ -4502,7 +4503,7 @@ export component App inherits Window {
                                     switched => { root.local-wb-toggled(); }
                                     relative <=> root.local-wb-relative;
                                     relative-toggled => { root.local-wb-relative-toggled(); }
-                                    local-reset => { root.local-wb-reset(); }
+                                    wb-slider-reset(w) => { root.local-wb-slider-reset(w); }
                                     collapsed-wb <=> root.collapsed-wb;
                                     opened-alone => { root.alone-with-masks(); }
                                     picking <=> root.picking;

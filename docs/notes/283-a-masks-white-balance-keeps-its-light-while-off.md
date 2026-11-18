@@ -15,6 +15,10 @@ is the global's. Switched on, the same light comes back. A mask that
 has never had one (new, or reset) still starts at the global's white,
 As shot read as the kelvin and Duv it means, so nothing jumps.
 
+(Changed 2026-11-17: the double-click now puts that one slider back
+to the global's value, or to 0 under Follow global, and leaves the
+switch on; forgetting the light waits on the section header's reset.)
+
 We added no button. The slider reset gesture, a double-click on the
 mask's Temperature or Tint while the switch is on, forgets the light:
 both, since they are one setting, the switch goes off, the mask follows

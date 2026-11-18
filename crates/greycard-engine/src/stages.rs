@@ -428,8 +428,6 @@ impl PartialEq for PrepareOptions {
             orientation,
         } = &self.settings;
         let b = &other.settings;
-        // A camera profile is read once and kept, so the same file is
-        // the same pointer; a hundred kilobytes is not compared.
         same_profile(profile, &b.profile)
             && *profile_look == b.profile_look
             && *look_baseline == b.look_baseline
@@ -447,12 +445,27 @@ impl PartialEq for PrepareOptions {
     }
 }
 
+/// Whether two camera profiles are one: the same pointer, or the same
+/// tables. The profile cache can let go of a profile between two
+/// develops (its file rewritten, the cache past its count, or
+/// `profiles::forget`), so the same tables read again are another
+/// pointer; a key by pointer alone would make every base made before
+/// another's, and a frame returned to would never take its base back.
+/// The tables are compared only when the pointers differ, which is
+/// after the cache let go;
+/// a 90 by 30 by 30 map is about a megabyte, a profile with two maps
+/// and a look table about three, and the compare took 3 to 3.5 ms in
+/// a debug build, against a base of a second and more.
 fn same_profile(a: &Option<Arc<Profile>>, b: &Option<Arc<Profile>>) -> bool {
     match (a, b) {
-        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (Some(a), Some(b)) => one_profile(a, b),
         (None, None) => true,
         _ => false,
     }
+}
+
+fn one_profile(a: &Arc<Profile>, b: &Arc<Profile>) -> bool {
+    Arc::ptr_eq(a, b) || **a == **b
 }
 
 /// A DNG's rectilinear warps and where the develop's crop sits in the
@@ -555,13 +568,14 @@ impl Delta {
     }
 }
 
-/// A camera profile compared by pointer.
+/// A camera profile compared by pointer first, then by its tables
+/// ([`same_profile`]).
 #[derive(Debug, Clone)]
 pub struct ProfileRef(pub Arc<Profile>);
 
 impl PartialEq for ProfileRef {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        one_profile(&self.0, &other.0)
     }
 }
 
@@ -955,6 +969,24 @@ fn look_read_at(edit: &Edit, facts: &Facts, profile_curve: bool) -> f32 {
     }
 }
 
+/// The profile and look directories a list reads its camera profile
+/// through: the user's, or in a test the ones it set (`TEST_STORES`).
+fn stores() -> greycard_edit_io::Stores {
+    #[cfg(test)]
+    if let Some(stores) = TEST_STORES.with(|s| s.borrow().clone()) {
+        return stores;
+    }
+    greycard_edit_io::Stores::user()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The directories a test's lists read on its own thread, in place
+    /// of the user's.
+    pub(crate) static TEST_STORES: std::cell::RefCell<Option<greycard_edit_io::Stores>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// The steps of `edit`'s develop for `purpose` on the frame `facts`
 /// describe, with the lens corrections `lenses` holds for it.
 pub fn stages(
@@ -973,7 +1005,7 @@ pub fn stages(
         1
     };
     let mut s = Steps::default();
-    let mut settings = edit.settings(&greycard_edit_io::Stores::user());
+    let mut settings = edit.settings(&stores());
     // Only where a look table may go on, so the list of an edit with
     // none (and its base, which keeps no baseline then) is as it was.
     if edit.camera.applies_look_table() {
@@ -1236,7 +1268,7 @@ fn merge_input(edit: &Edit, merge: &MergeInput, facts: &Facts) -> Steps {
     let InputKind::Raw { pattern, warp, .. } = &facts.input else {
         return s;
     };
-    let settings = edit.settings(&greycard_edit_io::Stores::user());
+    let settings = edit.settings(&stores());
     s.op(Stage::Prepare(Box::new(PrepareOptions {
         settings: DevelopSettings {
             white_point: merge
@@ -1485,6 +1517,9 @@ mod tests {
     /// command line uses too) has it.
     #[test]
     fn the_look_table_is_read_at_the_baseline_and_a_merges_headroom() {
+        // No profile directory: the named profile is not read from the
+        // user's, and the baseline does not depend on it.
+        TEST_STORES.with(|s| *s.borrow_mut() = Some(greycard_edit_io::Stores::default()));
         let read_at = |edit: &Edit, facts: &Facts| {
             stages(edit, &Purpose::Viewport, facts, None)
                 .ops()

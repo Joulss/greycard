@@ -1057,6 +1057,7 @@ impl State {
                 lens_options: Vec::new(),
                 lens_frame: None,
                 profiles: Vec::new(),
+                profiles_kept: Default::default(),
                 camera: (String::new(), String::new()),
                 other_names: Vec::new(),
                 looks: Vec::new(),
@@ -1177,6 +1178,11 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>
     report::install(app, &state);
     update::install(app, &state);
 
+    // A neighbor in a folder on a network mount or an automount not yet
+    // mounted is not read ahead: the check handed over from the start,
+    // so a folder opened outside the roots, or before the roots' look
+    // lands, is asked of too.
+    worker.set_remote_check(greycard_ui::mounts::not_to_peek);
     // Deliveries from the worker need the state and the worker too.
     STATE.with(|s| *s.borrow_mut() = Some(state));
     WORKER.with(|w| *w.borrow_mut() = Some(worker));

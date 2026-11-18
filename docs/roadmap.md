@@ -7,6 +7,11 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] rawler's TIFF reader sizes a value by its count before reading
+      it: one flipped count in a CR3's maker note asked for 28 GB, so a
+      corrupt or crafted raw can take the decode down. Wants raising
+      upstream with a bound against the file's length (found fuzzing
+      the Canon mode reader, 2026-11-17)
 - [ ] The XMP beside a raw is read whole, with no bound, by the
       open's adoption (`xmp::adopt_own`) and the index's pass; the
       take's own read stops at 64 MB (§705)
@@ -22,6 +27,20 @@ the reasoning lives in `docs/notes.md`.
       widened parity sweep's 8,000 edits (seeds 2, 17, and 20), all
       under a profile tone curve flat at black and at white; a real
       card is within 1.1 on the same edits; cause not found (§702)
+- [ ] A camera profile with a NaN inside a hue and saturation map or
+      a look table is unequal to itself and never matches its
+      shelved base (§706)
+- [ ] Dragging the crop's bottom handle past the filmstrip's
+      hide and show arrow makes the arrow flash from side to side
+      as the pointer crosses it; the arrow should stay put while a
+      crop handle is held
+- [ ] Whites down brightens a few pixels on real exports: on 746 of
+      750 frame and setting pairs some pixel comes out brighter, up
+      to 42 of 65,535 on Channels and 9,663 (about 200 pixels) on AgX
+      at -3.5 (found reviewing issue 132's Whites)
+- [ ] A NaN, an infinity, or a negative channel renders black on the
+      GPU and in color on the CPU, and on lavapipe the black reaches
+      the pixels beside it
 - [ ] A frame chosen in the Library grid or on the lightbox's sheet
       is not remembered for the next run: only a frame Cull's loupe
       drew or a develop landed is
@@ -230,30 +249,32 @@ the reasoning lives in `docs/notes.md`.
       and eased where the picture is out of focus (parallax). CR2
       ignores the index. Wants frames with blown highlights; RawDB
       has R7 dual files (discussion 59, 2026-11-14)
-- [ ] Whites' reach over display white: on a night frame with neon
-      signs at Exposure +1, the lettering and its glow sit 1 to 2
-      stops over white, and Highlights at -2 takes under half a stop
-      off them (§250's ease past the 99th percentile costs 0.4 of
-      that). Measured on the reporter's raw: the letters are clipped
-      on every channel and read only by their edge against a glow
-      measured in red alone; Highlights -2 with Whites -2 renders them
-      today, faintly; a range to -3 or no ease-off does nothing alone.
-      Decided: Highlights keeps its span and the top stays Whites'
-      (unlike Lightroom, where Highlights is the catch-all). So the
-      work is Whites' reach over white without flattening the 85th
-      to 95th percentiles (Whites at -3 took 0.77 stops off them),
-      and the guide saying to reach for Whites on a light source
-      (issue 132, 2026-11-14)
-- [ ] Highlights alone makes a hotspot stand out more: its ease past
-      the frame's 99th percentile (§250) gives a flash hotspot on skin
-      less of the slider than the skin round it (about 0.25 against
-      0.42 on a studio flash frame), so with Whites at 0 the lightness
-      between hotspot and skin grows from 10.6 to 18.1 L* as
-      Highlights goes to -2, and the display curve's shoulder letting
-      go adds to it. A slider named for highlights must never raise a
-      highlight's contrast: the ease reshaped or tied to the region's
-      reading so hotspot and surround take one gain, checked on the
-      Whites shoulder trial's grid of faces (issue 132, 2026-11-14)
+- [ ] Whites' reach over display white (issue 132): a soft-knee roll
+      over white under Whites down (design D, branch `whites-d`) is
+      reviewed and waits on a trial in the app. It takes lights off
+      white with no texture lost (804 cells: median 1.00, worst 0.85)
+      and is small by design: a light 1 to 2 stops over gets 8 levels.
+      Four wider designs were tried and dropped: each brightened under
+      a shift, flattened bright subjects, or darkened near-white
+      pixels as Exposure rose
+- [ ] Highlights cannot make clipped light visibly come back (issue
+      132, fifteen rounds, 2026-11-17). A region pull reaching over
+      white recovers large areas (a sun's disc, a sky) but the trade
+      is structural: a gain read wide keeps texture and halos (5 to 13
+      levels; darktable's tone equalizer pays it), a gain that follows
+      edges flattens what is inside (16 to 48 of 804 cells under
+      0.75). The display shoulder is not the lever either: no curve
+      adds more than 1 to 2 levels to recovered content, and headroom
+      over white costs the white itself. What is left is
+      reconstruction before the curve (the learned trial below), and
+      for a user today a luminance mask with Exposure down
+- [ ] A hotspot on skin under Highlights alone: decided 2026-11-17
+      that hotspots are Whites' to tame, not Highlights'. Measured on
+      108 faces: of the 3.4 L* the hotspot's lead grows at Highlights
+      -2, 2.6 is the display curve's shoulder and 0.09 the ease
+      (§250); with Whites down design D shrinks the lead on 18 to 37
+      faces and grows it on at most 2. The guide should say to reach
+      for Whites on a hotspot (issue 132)
 - [ ] A kept picture of an angled edit sits up to a quarter pixel off
       the full develop: the reduced develop rounds the frame's size at
       its own scale (`frame_of` in `edited_pictures::make`) where the
@@ -367,6 +388,11 @@ On a fanless laptop the fit view follows a slider without a wait,
 the sharpen included, and the first Subject mask is there in ten
 seconds.
 
+- [ ] The prefetch's mount check on a Mac (§707): `getfsstat` is
+      untested there; open a folder on a share and one on a local
+      disk and read the log's prefetch lines
+- [ ] The window still walks the look folder on every open
+      (`looks::list()`); hold it as the profile listing is held (§708)
 - [ ] The SAM 3 encoder's session takes 46 s to build on WebGPU (the provider's shader compile, not cached across sessions); a tester with People masks pays it per picture the card is given back (issue 92, §611)
 - [ ] The GPU dual's last traffic (§606): the mosaic goes up twice
       for the AMaZE dual (183 MiB at 45 MP), and the automatic
@@ -781,16 +807,10 @@ brackets and the panorama to shoot for testing are in
       denoised per frame and merged again like a bracket (§573);
       changes every stack the command line writes, so a decision of
       its own
-- [ ] Progress inside a focus stack's merge: the status line sits on
-      "placing the frames" for the whole of it (§573)
 - [ ] A NoiseProfile on a focus stack's DNG, as the HDR merge writes
       one (§573)
-- [ ] A focus stack holds every frame at once, 40 bytes a pixel, so
-      16 GB refuses 21 frames of 24 megapixels where 30 to 100 is
-      ordinary: the frames read in passes, so the count stops
-      mattering (issue 134, 2026-11-12)
-- [ ] The focus stack's memory bound against available rather than
-      physical memory, once a reader exists (§573)
+- [ ] The focus stack's available-memory readers run on a Mac and on
+      Windows: compile-checked only (§709)
 - [ ] Focus breathing in a focus stack: each frame scaled to the
       reference before the merge, the scale fitted with the alignment
       (issue 134, 2026-11-13)
@@ -1055,6 +1075,9 @@ clears or a tester asks for it.
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits
+- [ ] A key that adds the selected frames to the export queue with
+      the sheet's choices as they stand, as Ctrl+E exports them; the
+      key is not chosen yet
 - [ ] The export queue's rest (§213): a queued set reordered or sent
       elsewhere, and the queued frames marked in the strip and the
       grid; the Folder row, the list, removal, Export the queue, and
@@ -1277,6 +1300,10 @@ clears or a tester asks for it.
       with a RAM check, and the file in the registry (issue 153)
 - [ ] A crop copied to other frames, and the crop's numbers shown so
       one can be typed (discussion 59, 2026-11-12)
+- [ ] A question to answer: what a middle click's sync should do
+      with masks. Today it takes the last sync's or paste's checks:
+      all, none, or the clicked frame's masks of the same names as
+      the ones last checked
 - [ ] A reset on each section's header, on Develop, Crop, and a
       mask's sections (discussion 59, 2026-11-12); double-click
       resets one slider and Reset all the tab today
@@ -1284,6 +1311,8 @@ clears or a tester asks for it.
       its smallest reach, which smooths a speckled range mask at once
       (discussion 59, 2026-11-12); waits on a measurement
 - [ ] Camera tethering
+- [ ] Red-eye correction (issue 175): click an eye, or the eyes found
+      by the Parts mask, and the red pupil goes dark and neutral
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
 - [ ] Learned highlight reconstruction, a trial for 0.13.0: the
@@ -1298,6 +1327,15 @@ clears or a tester asks for it.
       opposed in every one of 103 comparisons and is not ported
       (§686). It invents, so it is an option, off by
       default; the classical fill stays the default
+- [ ] A generative fill trained for clipped highlights: the frame
+      darkened two stops so the clip is a flat patch in an ordinary
+      picture, a fill model trained to paint it, pairs made by
+      clipping well-exposed raws; the object remover failed at this
+      because it is trained to remove. Judged by eye, blind, not by
+      error against the truth; an option like the generative remove
+- [ ] Highlight fills judged blind by eye beside the benchmark's
+      error: no fill can match what the sensor never recorded, and
+      the smoothness bar may reject fills that look right
 - [ ] Maybe: MCP
 - [ ] Maybe: Depth mapping for blur
 - [ ] Maybe: a Fill painted but not generated kept in the sidecar, as

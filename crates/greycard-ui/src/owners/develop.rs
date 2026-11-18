@@ -329,7 +329,10 @@ pub(crate) struct Develop {
     pub(crate) lens_frame: Option<crate::versions::Key>,
     /// The camera profiles the profile directory holds, and the open
     /// file's camera, for the panel's list and its warning.
+    /// Replaced through `panel::assets::set_profiles`, which lets go
+    /// of what `profiles_kept` worked out from the last list.
     pub(crate) profiles: Vec<greycard_edit::camera::Entry>,
+    pub(crate) profiles_kept: panel::assets::ProfilesKept,
     pub(crate) camera: (String, String),
     /// The other names the open file's camera is sold under.
     pub(crate) other_names: Vec<String>,

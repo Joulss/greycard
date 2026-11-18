@@ -6288,11 +6288,12 @@ pub(crate) mod tests {
         );
         assert!((app.get_local_tint() as f64 - shot.duv).abs() < 1e-4);
         // A custom global is taken as it stands, by a mask with no
-        // light of its own: one reset.
+        // light of its own, as a mask with none is shown.
         app.set_as_shot(false);
         app.set_temperature(4100.0);
         app.set_tint(0.003);
-        app.invoke_local_wb_reset();
+        crate::panel::edit::show_local_white(greycard_edit::LocalWhite::Off, &app);
+        assert!(!app.get_local_wb_on() && !app.get_local_wb_kept());
         app.set_local_wb_on(true);
         app.invoke_local_wb_toggled();
         assert_eq!(app.get_local_temperature(), 4100.0);
@@ -6339,8 +6340,9 @@ pub(crate) mod tests {
     /// A mask's white balance switched off keeps its light, and on
     /// again brings it back rather than the global's, so the switch
     /// compares the two; each switch is a step. A double-click on its
-    /// Temperature or Tint forgets the light: the switch goes off, the
-    /// mask follows the global, and the next switch on starts there.
+    /// Temperature or Tint puts that slider alone back at the global's
+    /// white, a step, the switch left on; both back, the mask is the
+    /// global's.
     #[test]
     fn a_masks_white_balance_keeps_its_light_while_switched_off() {
         use greycard_edit::LocalWhite;
@@ -6427,30 +6429,60 @@ pub(crate) mod tests {
         settle();
         assert_eq!(stored(), lamp);
 
-        // The reset gesture: the light forgotten, both at once, the
-        // switch off, the sliders at the global's white.
+        // A double-click on Temperature: that slider alone back to the
+        // global's white, As shot read as the kelvin it means; the
+        // tint, the switch, and Follow global stay. One step.
         let before = steps();
-        app.invoke_local_wb_reset();
+        app.invoke_local_wb_slider_reset("temperature".into());
         settle();
-        assert!(!app.get_local_wb_on());
-        assert!(!app.get_local_wb_kept());
-        assert_eq!(stored(), LocalWhite::Off);
-        assert_eq!(steps(), before + 1, "a reset is a step");
+        assert!(app.get_local_wb_on() && app.get_local_wb_kept());
+        assert!(!app.get_local_wb_relative());
         assert!((app.get_local_temperature() as f64 - shot.cct).abs() < 1.0);
-        // And on again, it starts at the global's, as a new mask does.
-        app.set_as_shot(false);
-        app.set_temperature(6100.0);
-        app.set_tint(0.001);
-        app.set_local_wb_on(true);
+        assert_eq!(app.get_local_tint(), -0.004);
+        assert_eq!(steps(), before + 1, "a reset is a step");
+        // On Tint: the global's tint, the temperature left.
+        let temperature = app.get_local_temperature();
+        app.invoke_local_wb_slider_reset("tint".into());
+        settle();
+        assert_eq!(app.get_local_temperature(), temperature);
+        assert!((app.get_local_tint() as f64 - shot.duv).abs() < 1e-4);
+        assert!(app.get_local_wb_on());
+        assert_eq!(steps(), before + 2, "a reset is a step");
+        // Both back: the light under the mask is the global's, so the
+        // mask's matrix on the picture is the one following the global
+        // makes, none.
+        let shift = crate::panel::color::local_white_shift(
+            &mut state.borrow_mut(),
+            (true, app.get_temperature(), app.get_tint()),
+        )
+        .expect("a raw's");
+        let m = shift.local(&stored()).expect("a light");
+        for (i, row) in m.iter().enumerate() {
+            for (j, v) in row.iter().enumerate() {
+                let identity = if i == j { 1.0 } else { 0.0 };
+                assert!((v - identity).abs() < 1e-3, "{m:?}");
+            }
+        }
+        // Switched off, the sliders take no hand: a reset reaching the
+        // panel anyway leaves the kept light.
+        app.set_local_temperature(3300.0);
+        app.invoke_view_changed();
+        app.set_local_wb_on(false);
         app.invoke_local_wb_toggled();
-        assert_eq!(app.get_local_temperature(), 6100.0);
-        assert_eq!(app.get_local_tint(), 0.001);
+        settle();
+        let before = (steps(), stored());
+        app.invoke_local_wb_slider_reset("temperature".into());
+        settle();
+        assert!(!app.get_local_wb_on() && app.get_local_wb_kept());
+        assert_eq!(app.get_local_temperature(), 3300.0);
+        assert_eq!((steps(), stored()), before);
     }
 
     /// Follow global turns the mask's sliders into the offset from the
     /// global's white and back, at the global as it stands, so nothing
     /// moves; the dropper stores the light it finds less the global's;
-    /// a shown edit brings the switch back; and the reset forgets it.
+    /// a shown edit brings the switch back; and a double-click puts one
+    /// offset back to none.
     #[test]
     fn follow_global_turns_a_masks_light_into_an_offset_and_back() {
         use greycard_edit::LocalWhite;
@@ -6530,11 +6562,37 @@ pub(crate) mod tests {
         assert!(app.get_local_wb_relative() && app.get_local_wb_kept());
         assert!(!app.get_local_wb_on());
         assert_eq!(app.get_local_temperature(), 40.0);
-        // The reset forgets the offset with the light: off, absolute.
+        // On, a double-click puts that offset alone back to none, the
+        // other and Follow global left.
         app.set_local_wb_on(true);
-        app.invoke_local_wb_reset();
-        assert!(!app.get_local_wb_relative());
-        assert_eq!(stored(&app), LocalWhite::Off);
+        app.invoke_local_wb_toggled();
+        app.set_local_tint(0.002);
+        app.invoke_local_wb_slider_reset("temperature".into());
+        assert!(app.get_local_wb_on() && app.get_local_wb_relative());
+        assert_eq!(
+            stored(&app),
+            LocalWhite::Relative {
+                mired: 0.0,
+                tint: 0.002f32 as f64
+            }
+        );
+        app.set_local_temperature(40.0);
+        app.invoke_local_wb_slider_reset("tint".into());
+        assert_eq!(
+            stored(&app),
+            LocalWhite::Relative {
+                mired: 40.0,
+                tint: 0.0
+            }
+        );
+        app.invoke_local_wb_slider_reset("temperature".into());
+        assert_eq!(
+            stored(&app),
+            LocalWhite::Relative {
+                mired: 0.0,
+                tint: 0.0
+            }
+        );
     }
 
     /// A window with a 6000 by 4000 picture on the viewport, centered,

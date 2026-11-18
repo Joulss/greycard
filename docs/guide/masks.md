@@ -381,9 +381,9 @@ jumps.
   under the mask takes the global white; on again, the mask's own
   light comes back. Use it to compare the two.
 - **Double-click** **Temperature** or **Tint** while the section is on
-  to forget the mask's light. The section switches off, **Follow
-  global** goes off with it, and the mask follows the global white
-  again; the next time you switch it on it starts there.
+  to put that slider alone back to the global white's value, or with
+  **Follow global** on, to no offset. The other slider stays where it
+  is, and the section stays on.
 
 There is no **As shot** or **Auto** here. With **Follow global** off,
 the values are a light: a mask set to 3200 K stays a 3200 K lamp when

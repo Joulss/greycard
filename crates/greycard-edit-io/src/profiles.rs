@@ -8,8 +8,10 @@
 //! under it ([`greycard_edit::camera::ProfileChoice::Named`]): a file
 //! at the top by its bare file name, as before there were subfolders.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::SystemTime;
 
@@ -23,11 +25,23 @@ use greycard_edit::camera::{EXTENSION, Entry};
 /// directory — `~/.local/share` on Linux, `~/Library/Application
 /// Support` on macOS, `%APPDATA%` on Windows (notes §106).
 pub fn store_dir() -> Option<PathBuf> {
+    if let Some(dir) = STORE.get() {
+        return Some(dir.clone());
+    }
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .or_else(dirs::data_dir)?;
     Some(base.join("greycard").join("profiles"))
+}
+
+static STORE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// The profile directory for the rest of this process, in place of
+/// [`store_dir`]'s own: for a test harness, which must never read the
+/// user's. The first call holds; later ones change nothing.
+pub fn use_store(dir: PathBuf) {
+    let _ = STORE.set(dir);
 }
 
 /// Where a profile of this name is kept. A name that is not a path
@@ -125,15 +139,24 @@ const BOUNDS: Bounds = Bounds {
 /// to one place) is walked once. A hidden folder, a folder that will
 /// not read, and a name the edit could not hold are passed over, the
 /// last two with a word in the log.
-fn walk(root: &Path, bounds: Bounds) -> Vec<(String, PathBuf)> {
+///
+/// Each folder read is noted in `folders` with its clock as the walk
+/// found it, the root even when it is not there: a profile added,
+/// removed, or renamed in a folder moves that folder's clock, which is
+/// how [`refresh_in`] tells a listing is out of date without a look at
+/// every file.
+fn walk(root: &Path, bounds: Bounds, folders: &mut Vec<Folder>) -> Vec<(String, PathBuf)> {
+    WALKS.with(|w| w.set(w.get() + 1));
     let mut out = Vec::new();
     let Ok(real) = std::fs::canonicalize(root) else {
+        folders.push(Folder::now(root));
         return out;
     };
     let mut visited = HashSet::from([real]);
     let mut queue = VecDeque::from([(root.to_path_buf(), String::new(), 0usize)]);
     let mut examined = 0usize;
     while let Some((dir, under, depth)) = queue.pop_front() {
+        folders.push(Folder::now(&dir));
         let read = match std::fs::read_dir(&dir) {
             Ok(read) => read,
             Err(e) => {
@@ -262,6 +285,23 @@ struct Header {
 static HEADERS: LazyLock<Mutex<HashMap<PathBuf, Header>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Whether the file at `path`, whose header was read, has another
+/// length or clock now, or is gone. A file whose header was never read
+/// is not a listed profile, and says nothing.
+fn header_moved(path: &Path) -> bool {
+    let Some((len, stamp)) = HEADERS
+        .lock()
+        .ok()
+        .and_then(|h| h.get(path).map(|h| (h.len, h.stamp)))
+    else {
+        return false;
+    };
+    match std::fs::metadata(path) {
+        Ok(m) => m.len() != len || m.modified().ok() != stamp,
+        Err(_) => true,
+    }
+}
+
 /// What the file at `path` says about itself: its header, read once
 /// and kept until the file's length or its clock changes.
 fn header(path: &Path) -> Option<DcpInfo> {
@@ -294,51 +334,179 @@ fn header(path: &Path) -> Option<DcpInfo> {
     info
 }
 
-/// Every profile in the directory and its subfolders, by name.
+/// A folder a walk read, and its clock as the walk found it: `None`
+/// for one that was not there.
+#[derive(Clone)]
+struct Folder {
+    path: PathBuf,
+    stamp: Option<SystemTime>,
+}
+
+impl Folder {
+    fn now(path: &Path) -> Folder {
+        Folder {
+            path: path.to_path_buf(),
+            stamp: std::fs::metadata(path).and_then(|m| m.modified()).ok(),
+        }
+    }
+
+    /// Whether the folder's clock has moved since, or it has come or
+    /// gone: something in it was added, removed, or renamed.
+    fn moved(&self) -> bool {
+        Folder::now(&self.path).stamp != self.stamp
+    }
+}
+
+/// The directory's profiles as last walked, kept for the window to
+/// show without walking it again.
+#[derive(Clone, Debug)]
+pub struct Listing {
+    /// Changes when, and only when, a walk finds a different list:
+    /// the window compares it to know whether to show the list again.
+    pub generation: u64,
+    pub entries: Arc<Vec<Entry>>,
+}
+
+/// A listing and the folders its walk read.
+struct Held {
+    listing: Listing,
+    folders: Arc<Vec<Folder>>,
+}
+
+/// The listing of each directory walked: in the editor, the one
+/// directory.
+static HELD: LazyLock<Mutex<HashMap<PathBuf, Held>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+/// One walk at a time, so two asked together walk once.
+static WALKING: Mutex<()> = Mutex::new(());
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    /// The walks made on this thread, for a test to count.
+    static WALKS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// How many times the directory has been walked on this thread: a
+/// test's count of what a step costs, not a clock.
+pub fn walks_here() -> usize {
+    WALKS.with(Cell::get)
+}
+
+/// Every profile in the directory and its subfolders, by name: the
+/// listing held when there is one, else a walk made now.
 ///
 /// Only each file's header is read — its name, its camera and its
 /// copyright — not its tables, and only once while the file stays as
-/// it was: the directory is walked again on every listing, which is
-/// each file opened, so a listing of a tree already read is the walk
-/// and a look at each file's length and clock. The profile that is
-/// chosen is read in full by [`load`], once. A file that will not read
-/// is passed over with a word in the log. Two that are one profile
-/// under two file names are paired by [`pair_up`].
+/// it was. The profile that is chosen is read in full by [`load`],
+/// once. A file that will not read is passed over with a word in the
+/// log. Two that are one profile under two file names are paired by
+/// [`pair_up`].
+///
+/// The window shows [`held`] and asks [`refresh`] on a thread of its
+/// own; this is for a caller that needs the list in hand and may wait
+/// for it, as the command line does.
 pub fn list() -> Vec<Entry> {
-    // A listing is also the moment to let go of what was read before
-    // it: a profile that has been replaced or is no longer wanted has
-    // no claim on the memory its tables take.
-    forget();
-    match store_dir() {
-        Some(dir) => list_in(&dir),
-        None => Vec::new(),
-    }
+    let Some(dir) = store_dir() else {
+        return Vec::new();
+    };
+    held_in(&dir)
+        .unwrap_or_else(|| refresh_in(&dir, false, &[]))
+        .entries
+        .to_vec()
 }
 
-/// Read every profile's header ahead of the first [`list`], so the
-/// window's first listing of a large tree (a copy of Adobe's, its
-/// headers not yet in the disk's cache) is a look at each file rather
-/// than a read of it. For a thread of its own at the start; a listing
-/// that comes first reads what it needs itself.
-pub fn warm() {
-    if let Some(dir) = store_dir() {
-        let t = std::time::Instant::now();
-        let n = list_in(&dir).len();
-        log::info!(
-            "camera profiles: {n} under {} read in {:.0?}",
-            dir.display(),
-            t.elapsed()
+/// The listing held for the directory, never a walk: `None` until the
+/// first walk of it is done.
+pub fn held() -> Option<Listing> {
+    held_in(&store_dir()?)
+}
+
+/// [`held`] of the directory `dir`.
+pub fn held_in(dir: &Path) -> Option<Listing> {
+    let held = HELD.lock().ok()?;
+    held.get(dir).map(|h| h.listing.clone())
+}
+
+/// The directory's listing, walked again when `force` is set, when
+/// none is held, or when any folder the last walk read has had
+/// something added, removed, or renamed in it since (its clock moved).
+/// Otherwise the held listing, at the cost of a look at each folder,
+/// not at each file. A walk that finds the same list keeps the same
+/// generation. It can take a while: for a thread, not the window's.
+///
+/// `files` are listed profiles to look at too, their length and clock
+/// against the ones their header was read under: a profile rewritten
+/// in place moves no folder's clock, so the ones on show are named
+/// here, and a walk reads again the headers of those that changed.
+pub fn refresh(force: bool, files: &[PathBuf]) -> Option<Listing> {
+    Some(refresh_in(&store_dir()?, force, files))
+}
+
+/// [`refresh`] of the directory `dir`.
+pub fn refresh_in(dir: &Path, force: bool, files: &[PathBuf]) -> Listing {
+    let _turn = WALKING.lock().unwrap_or_else(|e| e.into_inner());
+    // Taken out of the lock, so the window's [`held`] never waits on
+    // the look at the folders.
+    let before = HELD
+        .lock()
+        .ok()
+        .and_then(|h| h.get(dir).map(|h| (h.listing.clone(), h.folders.clone())));
+    let previous = match before {
+        Some((listing, folders))
+            if !force
+                && !folders.iter().any(Folder::moved)
+                && !files.iter().any(|f| header_moved(f)) =>
+        {
+            return listing;
+        }
+        Some((listing, _)) => Some(listing),
+        None => None,
+    };
+    let mut folders = Vec::new();
+    let entries = list_within(dir, BOUNDS, &mut folders);
+    let listing = match previous {
+        Some(p) if *p.entries == entries => p,
+        _ => Listing {
+            generation: GENERATION.fetch_add(1, Ordering::Relaxed) + 1,
+            entries: Arc::new(entries),
+        },
+    };
+    if let Ok(mut held) = HELD.lock() {
+        held.insert(
+            dir.to_path_buf(),
+            Held {
+                listing: listing.clone(),
+                folders: Arc::new(folders),
+            },
         );
     }
+    let_go_of_changed();
+    listing
 }
 
-/// [`list`] of the directory `dir`.
+/// Read every profile's header ahead of the window's first look, on a
+/// thread of its own at the start: the listing the window then shows
+/// is held, and the first open of a large tree (a copy of Adobe's, its
+/// headers not yet in the disk's cache) waits on nothing.
+pub fn warm() -> Option<Listing> {
+    let dir = store_dir()?;
+    let t = std::time::Instant::now();
+    let listing = refresh_in(&dir, true, &[]);
+    log::info!(
+        "camera profiles: {} under {} read in {:.0?}",
+        listing.entries.len(),
+        dir.display(),
+        t.elapsed()
+    );
+    Some(listing)
+}
+
+/// Every profile in the directory `dir`, walked now and not held.
 pub fn list_in(dir: &Path) -> Vec<Entry> {
-    list_within(dir, BOUNDS)
+    list_within(dir, BOUNDS, &mut Vec::new())
 }
 
-fn list_within(dir: &Path, bounds: Bounds) -> Vec<Entry> {
-    let found = walk(dir, bounds);
+fn list_within(dir: &Path, bounds: Bounds, folders: &mut Vec<Folder>) -> Vec<Entry> {
+    let found = walk(dir, bounds, folders);
     let seen: HashSet<&Path> = found.iter().map(|(_, p)| p.as_path()).collect();
     let mut out: Vec<Entry> = found
         .iter()
@@ -505,6 +673,60 @@ pub fn load(path: &Path) -> Option<Arc<Profile>> {
 pub fn forget() {
     if let Ok(mut cache) = CACHE.lock() {
         cache.clear();
+    }
+}
+
+/// Let go of each profile read whose file has changed since, or gone,
+/// and of a missing one that has come: a profile replaced on disk has
+/// no claim on the memory its old tables take, and one that stands as
+/// it was keeps its `Arc`, so a develop that holds it reads nothing.
+/// [`load`] reads a changed file again whether or not this ran; this
+/// is the memory's side, done at each walk of the directory.
+///
+/// The files are looked at with the cache let go of, so a share that
+/// hangs holds this walk, not a develop's [`load`]; an entry read again
+/// meanwhile is not the one looked at, and is kept.
+fn let_go_of_changed() {
+    // A file's clock and length as read, `None` for one missing.
+    type Stamp = Option<(Option<SystemTime>, u64)>;
+    // What each entry was read under: `None` for missing.
+    let held: Vec<(PathBuf, Stamp)> = match CACHE.lock() {
+        Ok(cache) => cache
+            .iter()
+            .map(|(path, cached)| {
+                let was = match cached {
+                    Cached::Missing => None,
+                    Cached::Read { stamp, len, .. } => Some((*stamp, *len)),
+                };
+                (path.clone(), was)
+            })
+            .collect(),
+        Err(_) => return,
+    };
+    let changed: Vec<(PathBuf, Stamp)> = held
+        .into_iter()
+        .filter(|(path, was)| {
+            let now = std::fs::metadata(path)
+                .ok()
+                .map(|m| (m.modified().ok(), m.len()));
+            now != *was
+        })
+        .collect();
+    if changed.is_empty() {
+        return;
+    }
+    let Ok(mut cache) = CACHE.lock() else {
+        return;
+    };
+    for (path, was) in changed {
+        let same = match (cache.get(&path), was) {
+            (Some(Cached::Missing), None) => true,
+            (Some(Cached::Read { stamp, len, .. }), Some((s, l))) => *stamp == s && *len == l,
+            _ => false,
+        };
+        if same {
+            cache.remove(&path);
+        }
     }
 }
 
@@ -911,7 +1133,10 @@ mod tests {
             std::fs::create_dir_all(&at).unwrap();
         }
         let names = |b: Bounds| -> Vec<String> {
-            let mut n: Vec<String> = list_within(&dir, b).into_iter().map(|e| e.name).collect();
+            let mut n: Vec<String> = list_within(&dir, b, &mut Vec::new())
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
             n.sort();
             n
         };
@@ -1096,5 +1321,222 @@ mod tests {
         if kept.is_none() {
             greycard_core::testing::remove_dir_retry(&dir);
         }
+    }
+
+    /// Wait until the file system stamps a new file later than `path`'s
+    /// own clock, so a change made to it next moves that clock: a few
+    /// milliseconds where the clock is fine, up to its step where it is
+    /// coarse (two seconds on FAT, one on HFS+). The probe is written
+    /// beside the folder `path` is or is in, never in it.
+    fn a_moment(path: &Path) {
+        let was = std::fs::metadata(path).unwrap().modified().unwrap();
+        let folder = match path.is_dir() {
+            true => path,
+            false => path.parent().unwrap(),
+        };
+        let probe = folder.with_extension("probe");
+        for _ in 0..300 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::fs::write(&probe, b"").unwrap();
+            let now = std::fs::metadata(&probe).unwrap().modified().unwrap();
+            std::fs::remove_file(&probe).unwrap();
+            if now > was {
+                return;
+            }
+        }
+        panic!("the clock at {} did not move", path.display());
+    }
+
+    /// The listing held is shown without a walk; a refresh looks at
+    /// the folders and walks only when one of them changed, in a
+    /// subfolder as at the top, and a walk that finds the same list
+    /// keeps its generation.
+    #[test]
+    fn a_refresh_walks_only_when_a_folder_changed() {
+        let dir = scratch("refresh");
+        adobe_tree(&dir);
+        let walks = walks_here();
+        assert!(held_in(&dir).is_none(), "nothing held before a walk");
+        let first = refresh_in(&dir, false, &[]);
+        assert_eq!(walks_here(), walks + 1);
+        assert_eq!(first.entries.len(), 7);
+        // Held, and looked at again: no walk, the same list.
+        assert_eq!(held_in(&dir).unwrap().generation, first.generation);
+        let again = refresh_in(&dir, false, &[]);
+        assert_eq!(walks_here(), walks + 1, "nothing changed, nothing walked");
+        assert!(Arc::ptr_eq(&again.entries, &first.entries));
+
+        // A profile added in a camera's folder: walked, and listed.
+        let nikon = dir.join("Camera").join("Nikon Z 8");
+        a_moment(&nikon);
+        a_profile(&nikon.join("Added.dcp"), "Added", "NIKON Z 8", 4);
+        assert_eq!(held_in(&dir).unwrap().generation, first.generation);
+        let added = refresh_in(&dir, false, &[]);
+        assert_eq!(walks_here(), walks + 2);
+        assert_ne!(added.generation, first.generation);
+        assert!(
+            added
+                .entries
+                .iter()
+                .any(|e| e.name == "Camera/Nikon Z 8/Added")
+        );
+
+        // Walked again by force over the same files: the same list,
+        // the same generation.
+        let forced = refresh_in(&dir, true, &[]);
+        assert_eq!(walks_here(), walks + 3);
+        assert_eq!(forced.generation, added.generation);
+
+        // Removed: walked, and gone.
+        a_moment(&nikon);
+        std::fs::remove_file(nikon.join("Added.dcp")).unwrap();
+        let removed = refresh_in(&dir, false, &[]);
+        assert_eq!(walks_here(), walks + 4);
+        assert_ne!(removed.generation, added.generation);
+        assert_eq!(removed.entries.len(), 7);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A profile rewritten in place, its length the same, moves no
+    /// folder's clock: a refresh that names it reads its header again,
+    /// one that does not leaves it.
+    #[test]
+    fn a_profile_rewritten_in_place_is_read_again_when_named() {
+        let dir = scratch("in-place");
+        let path = dir.join("p.dcp");
+        a_profile(&path, "Alpha", "Cam", 4);
+        let first = refresh_in(&dir, false, &[]);
+        assert_eq!(first.entries[0].label(), "Alpha");
+        let len = std::fs::metadata(&path).unwrap().len();
+        a_moment(&path);
+        a_profile(&path, "Bravo", "Cam", 4);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), len);
+        let walks = walks_here();
+        let unnamed = refresh_in(&dir, false, &[]);
+        assert_eq!(unnamed.entries[0].label(), "Alpha", "no folder moved");
+        assert_eq!(walks_here(), walks);
+        let named = refresh_in(&dir, false, std::slice::from_ref(&path));
+        assert_eq!(walks_here(), walks + 1);
+        assert_eq!(named.entries[0].label(), "Bravo");
+        assert_ne!(named.generation, first.generation);
+        // Named again, unchanged: no walk.
+        refresh_in(&dir, false, std::slice::from_ref(&path));
+        assert_eq!(walks_here(), walks + 1);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A directory not there yet is noticed when it comes.
+    #[test]
+    fn a_directory_made_later_is_noticed() {
+        let dir = scratch("later").join("profiles");
+        assert!(refresh_in(&dir, false, &[]).entries.is_empty());
+        std::fs::create_dir_all(&dir).unwrap();
+        a_profile(&dir.join("New.dcp"), "New", "Cam", 4);
+        let listed = refresh_in(&dir, false, &[]);
+        assert_eq!(listed.entries.len(), 1);
+        greycard_core::testing::remove_dir_retry(dir.parent().unwrap());
+    }
+
+    /// A walk lets go of a profile read whose file was replaced, which
+    /// the next develop reads afresh, and keeps the one that stands as
+    /// it was, pointer and all.
+    #[test]
+    fn a_walk_keeps_the_profiles_that_did_not_change() {
+        let _turn = ONE_AT_A_TIME.lock();
+        let dir = scratch("kept");
+        let (kept, replaced) = (dir.join("Kept.dcp"), dir.join("Replaced.dcp"));
+        a_profile(&kept, "Kept", "Cam", 4);
+        a_profile(&replaced, "Replaced", "Cam", 4);
+        let (k, r) = (load(&kept).unwrap(), load(&replaced).unwrap());
+        refresh_in(&dir, false, &[]);
+        assert!(Arc::ptr_eq(&k, &load(&kept).unwrap()));
+        assert!(Arc::ptr_eq(&r, &load(&replaced).unwrap()));
+
+        a_moment(&replaced);
+        a_profile(&replaced, "Replaced", "Cam", 8);
+        refresh_in(&dir, true, &[]);
+        assert!(
+            !CACHE.lock().unwrap().contains_key(&replaced),
+            "the replaced profile's tables are let go"
+        );
+        assert!(Arc::ptr_eq(&k, &load(&kept).unwrap()));
+        let read = load(&replaced).unwrap();
+        assert!(!Arc::ptr_eq(&r, &read));
+        assert_eq!(read.maps.as_ref().unwrap().primary.hue_divisions, 8);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// What an open costs: before, a walk of the directory and the
+    /// panel's camera filter two or three times; now, the held listing
+    /// and the filter once. A tree of 4,400 small profiles in 440
+    /// folders, on the disk under target/. `cargo test -p
+    /// greycard-edit-io -- --ignored --nocapture an_open_timed`.
+    #[test]
+    #[ignore]
+    fn an_open_timed() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/greycard-dcp-open-timed");
+        if !dir.join("Camera").exists() {
+            for c in 0..440 {
+                let at = dir.join("Camera").join(format!("Camera {c:03}"));
+                std::fs::create_dir_all(&at).unwrap();
+                for p in 0..10 {
+                    let path = at.join(format!("Profile {p}.dcp"));
+                    a_profile(&path, &format!("Profile {p}"), &format!("Maker Cam {c}"), 4);
+                }
+            }
+        }
+        let others = Vec::new();
+        let body = Body::new("Maker", "Cam 7", &others);
+        let filter = |entries: &[Entry]| {
+            let (shown, hidden) =
+                listed(entries, EMBEDDED).fold((0, 0), |(s, h), e| match e.fits(body) {
+                    true => (s + 1, h),
+                    false => (s, h + 1),
+                });
+            assert_eq!((shown, hidden), (10, 4390));
+        };
+        let timed = |f: &mut dyn FnMut()| {
+            let t = std::time::Instant::now();
+            f();
+            t.elapsed()
+        };
+        HEADERS.lock().unwrap().clear();
+        let cold = timed(&mut || assert_eq!(refresh_in(&dir, true, &[]).entries.len(), 4400));
+        let walk = timed(&mut || assert_eq!(list_in(&dir).len(), 4400));
+        let check = timed(&mut || {
+            refresh_in(&dir, false, &[]);
+        });
+        // An open's look off the window's thread: the folders, and the
+        // files of the ten profiles on show.
+        let shown: Vec<PathBuf> = (0..10)
+            .map(|p| {
+                dir.join("Camera/Camera 007")
+                    .join(format!("Profile {p}.dcp"))
+            })
+            .collect();
+        let look = timed(&mut || {
+            refresh_in(&dir, false, &shown);
+        });
+        // The section opened: a walk by force, the headers unchanged.
+        let forced = timed(&mut || {
+            refresh_in(&dir, true, &[]);
+        });
+        let one = timed(&mut || filter(&held_in(&dir).unwrap().entries));
+        let before = timed(&mut || {
+            let entries = list_in(&dir);
+            for _ in 0..3 {
+                filter(&entries);
+            }
+        });
+        let now = timed(&mut || {
+            let held = held_in(&dir).unwrap();
+            filter(&held.entries);
+        });
+        println!(
+            "4400 profiles in 440 folders: first walk {cold:?}, a walk after {walk:?}, a look at \
+             the folders {check:?}, an open's look {look:?}, the section's walk {forced:?}, one \
+             filter {one:?}; an open before {before:?}, now {now:?}"
+        );
     }
 }

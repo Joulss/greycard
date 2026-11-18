@@ -717,3 +717,7 @@ in its section; the roadmap and the changelog only point at it.
 - [§703. Spacing evened across the panels](notes/703-spacing-evened-across-the-panels.md) (2026-11-16)
 - [§704. The GPU marker held to the renderer's setup](notes/704-the-gpu-marker-held-to-the-renderers-setup.md) (2026-11-16)
 - [§705. Lightroom's .lrtemplate presets](notes/705-lightrooms-lrtemplate-presets.md) (2026-11-16)
+- [§706. The shelf under a camera profile](notes/706-the-shelf-under-a-camera-profile.md) (2026-11-16)
+- [§707. Edited neighbors read first for the prefetch](notes/707-edited-neighbors-read-first-for-the-prefetch.md) (2026-11-17)
+- [§708. The profile listing held between opens](notes/708-the-profile-listing-held-between-opens.md) (2026-11-17)
+- [§709. A focus stack read in passes](notes/709-a-focus-stack-read-in-passes.md) (2026-11-17)

@@ -815,23 +815,29 @@ fn panel_global(st: &mut State, app: &App) -> Option<greycard_core::TempTint> {
     global_white(st, key)
 }
 
-/// Where a mask's sliders start that hold no light of their own: the
-/// global's white, held to their range; as an offset, none.
+/// A mask's sliders at the global's white: its temperature and tint
+/// held to their range, or as an offset, none. None without a global
+/// to read (a raw whose As shot is not yet known).
+fn at_global(st: &mut State, app: &App) -> Option<(f32, f32)> {
+    if app.get_local_wb_relative() {
+        return Some((0.0, 0.0));
+    }
+    let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
+    global_temp_tint(st, key)
+        .map(|(temperature, tint)| (temperature.clamp(2000.0, 12000.0), tint.clamp(-0.05, 0.05)))
+}
+
+/// Where a mask's sliders start that hold no light of their own:
+/// [`at_global`], or where they stand without a global.
 fn start_at_global(st: &mut State, app: &App) {
     // A picture's mask names no light: its white is an offset from the
     // picture's, and Follow global is not offered.
     if app.get_picture_open() {
         app.set_local_wb_relative(true);
     }
-    if app.get_local_wb_relative() {
-        app.set_local_temperature(0.0);
-        app.set_local_tint(0.0);
-        return;
-    }
-    let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
-    if let Some((temperature, tint)) = global_temp_tint(st, key) {
-        app.set_local_temperature(temperature.clamp(2000.0, 12000.0));
-        app.set_local_tint(tint.clamp(-0.05, 0.05));
+    if let Some((temperature, tint)) = at_global(st, app) {
+        app.set_local_temperature(temperature);
+        app.set_local_tint(tint);
     }
 }
 
@@ -865,16 +871,13 @@ pub(crate) fn local_from_light(
 }
 
 /// The sliders' temperature and tint once `which` ("temperature" or
-/// "tint") is put back to the camera's own, the other kept; none for
-/// a name that is neither.
-pub(crate) fn slider_reset(
-    panel: (f32, f32),
-    camera: (f32, f32),
-    which: &str,
-) -> Option<(f32, f32)> {
+/// "tint") is put back to `home`'s, the other kept; none for a name
+/// that is neither. The global's home is the camera's white, a mask's
+/// the global's.
+pub(crate) fn slider_reset(panel: (f32, f32), home: (f32, f32), which: &str) -> Option<(f32, f32)> {
     match which {
-        "temperature" => Some((camera.0, panel.1)),
-        "tint" => Some((panel.0, camera.1)),
+        "temperature" => Some((home.0, panel.1)),
+        "tint" => Some((panel.0, home.1)),
         _ => None,
     }
 }
@@ -1091,7 +1094,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
     // A mask's own white balance switched. Off, the sliders keep the
     // light they name, as every switched-off section keeps its values,
     // so the switch compares the two. On, that light comes back; with
-    // none kept (a mask new, or reset) it starts where the global
+    // none kept (a mask new) it starts where the global
     // stands, As shot read as the kelvin and Duv it means, so the
     // picture under the mask holds still until a slider moves.
     {
@@ -1112,23 +1115,31 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
             app.invoke_view_changed();
         });
     }
-    // A double-click on its Temperature or Tint: both are one light,
-    // so both are forgotten, the switch goes off and the mask follows
-    // the global; the sliders show the global's white, where the next
-    // switch on starts, and Follow global goes off with the rest.
+    // A double-click on a mask's Temperature or Tint: that slider
+    // alone back to where the global's white puts it (`at_global`):
+    // the global's own value as a light, none as an offset. The other
+    // slider, the switch, and Follow global are left as they are. One
+    // step, as a move is. Switched off, the sliders take no hand, so
+    // nothing; without a global to read, nothing, as a switch on with
+    // none leaves them where they stand.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_local_wb_reset(move || {
+        app.on_local_wb_slider_reset(move |which| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            if white_refused(&state.borrow(), &app) {
+            if white_refused(&state.borrow(), &app) || !app.get_local_wb_on() {
                 return;
             }
-            app.set_local_wb_on(false);
-            app.set_local_wb_kept(false);
-            app.set_local_wb_relative(false);
-            start_at_global(&mut state.borrow_mut(), &app);
+            let Some(global) = at_global(&mut state.borrow_mut(), &app) else {
+                return;
+            };
+            let panel = (app.get_local_temperature(), app.get_local_tint());
+            let Some((temperature, tint)) = slider_reset(panel, global, which.as_str()) else {
+                return;
+            };
+            app.set_local_temperature(temperature);
+            app.set_local_tint(tint);
             app.invoke_view_changed();
         });
     }
@@ -2988,7 +2999,7 @@ mod tests {
         app.invoke_local_wb_toggled();
         m.settle();
         assert_eq!(m.moved(), before, "the switch");
-        app.invoke_local_wb_reset();
+        app.invoke_local_wb_slider_reset("temperature".into());
         m.settle();
         assert_eq!(m.moved(), before, "the reset");
         assert_eq!(mask_white(), MASK_ARRIVED);
@@ -3009,6 +3020,49 @@ mod tests {
         m.drag("Temperature");
         assert_ne!(m.moved(), before);
         assert_ne!(mask_white(), MASK_ARRIVED);
+    }
+
+    /// A double-click on a mask's Temperature, then its Tint, through
+    /// the window: each slider alone back to the global's white, the
+    /// switch left on, one step each.
+    #[test]
+    fn a_double_click_puts_a_masks_slider_back_to_the_globals() {
+        let m = mono("mask-white-reset", true);
+        let app = &m.app;
+        m.open(1);
+        app.set_panel_tab("Masks".into());
+        app.invoke_tab_changed("Masks".into());
+        app.invoke_target_changed(1);
+        m.settle();
+        assert!(app.get_local_wb_on());
+        let steps = || {
+            let st = m.state.borrow();
+            st.line(st.current.unwrap()).unwrap().history.len()
+        };
+        let WhiteBalance::Custom {
+            temperature: global_temperature,
+            tint: global_tint,
+        } = ARRIVED
+        else {
+            unreachable!()
+        };
+        let LocalWhite::Absolute {
+            tint: mask_tint, ..
+        } = MASK_ARRIVED
+        else {
+            unreachable!()
+        };
+        let before = steps();
+        m.double_click("Temperature");
+        assert!(app.get_local_wb_on() && app.get_local_wb_kept());
+        assert_eq!(app.get_local_temperature() as f64, global_temperature);
+        assert_eq!(app.get_local_tint() as f64, mask_tint);
+        assert_eq!(steps(), before + 1);
+        m.double_click("Tint");
+        assert!(app.get_local_wb_on());
+        assert_eq!(app.get_local_temperature() as f64, global_temperature);
+        assert_eq!(app.get_local_tint() as f64, global_tint);
+        assert_eq!(steps(), before + 2);
     }
 
     /// How the open frame came to be known monochrome while a white

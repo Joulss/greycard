@@ -1022,6 +1022,27 @@ impl Kept {
         }
     }
 
+    /// Whether the base kept here and the one `other` keeps are the
+    /// same but for the learned denoiser: made by the same steps once
+    /// the learned denoiser is taken out of each, as the engine's own
+    /// path stands in for it ([`Steps::without_learned`]).
+    pub fn same_base_but_learned(&self, other: &Kept) -> bool {
+        let steps = |k: &Kept| {
+            k.points.iter().find(|p| p.keep == Keep::Base).map(|p| {
+                Steps {
+                    steps: p.steps.clone(),
+                    skipped: Vec::new(),
+                }
+                .without_learned()
+                .steps
+            })
+        };
+        match (steps(self), steps(other)) {
+            (Some(a), Some(b)) => same_picture(&a, &b),
+            _ => false,
+        }
+    }
+
     /// Let go of the refined masks' picture: the edit refines no mask.
     pub fn forget_mask_picture(&mut self) {
         self.mask_picture = None;
@@ -1361,7 +1382,7 @@ fn walk_held(
 /// [`Steps::without_learned`]'s list: the steps it drops dropped, the
 /// demosaic standing in for the learned denoiser at the place the plan
 /// gave the denoiser ([`places`]).
-fn replan(steps: &Steps, plan: &[Place]) -> Vec<Place> {
+pub(crate) fn replan(steps: &Steps, plan: &[Place]) -> Vec<Place> {
     steps
         .steps
         .iter()

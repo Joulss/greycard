@@ -48,11 +48,9 @@ export component WhiteBalanceSection inherits Section {
     // As shot switched: on, the sliders go back to the camera's white.
     callback as-shot-toggled();
     // A double-click on Temperature or Tint ("temperature", "tint"):
-    // that slider alone back to the camera's value.
+    // that slider alone back to the camera's value, or on a mask's to
+    // the global's white, or with Follow global on to no offset.
     callback wb-slider-reset(string);
-    // A mask's: a double-click on Temperature or Tint forgets the
-    // light it names, both at once, and the mask follows the global.
-    callback local-reset();
     // A mask's: the sliders an offset from the global's white, which
     // the light under the mask then moves with, rather than a light:
     // the temperature in mired, the tint in Duv.
@@ -108,13 +106,7 @@ export component WhiteBalanceSection inherits Section {
             root.develop-changed();
         }
         owner-resets: true;
-        reset => {
-            if (root.local) {
-                root.local-reset();
-            } else {
-                root.wb-slider-reset("temperature");
-            }
-        }
+        reset => { root.wb-slider-reset("temperature"); }
     }
     EditSlider {
         label: @tr("Tint");
@@ -135,13 +127,7 @@ export component WhiteBalanceSection inherits Section {
             root.develop-changed();
         }
         owner-resets: true;
-        reset => {
-            if (root.local) {
-                root.local-reset();
-            } else {
-                root.wb-slider-reset("tint");
-            }
-        }
+        reset => { root.wb-slider-reset("tint"); }
     }
     HorizontalLayout {
         padding-top: Theme.space-1;

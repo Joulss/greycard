@@ -86,6 +86,10 @@ pub(crate) fn drawing_backend() {
 /// focused, on a backend that opens no window.
 pub(crate) fn window(count: usize) -> App {
     backend();
+    // A camera profile directory of the tests' own, never the user's.
+    greycard_edit_io::profiles::use_store(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        format!("../../target/scratch/profiles-{}", std::process::id()),
+    ));
     let app = App::new().expect("the window builds");
     // English, whatever the machine's locale, which Slint would pick
     // for its bundled catalogs on its own.

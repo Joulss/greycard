@@ -2462,8 +2462,7 @@ mod tests {
             app.set_settings_copyright("© 2026 Zoë Ångström, all rights reserved".into());
             open_editing(&app);
             crate::testing::settle(&app);
-            let done = ElementHandle::find_by_accessible_label(&app, "Done")
-                .chain(ElementHandle::find_by_accessible_label(&app, "Terminé"))
+            let done = ElementHandle::find_by_element_id(&app, "SettingsSheet::done")
                 .next()
                 .expect("Done");
             let foot = done.absolute_position().y + done.size().height;
