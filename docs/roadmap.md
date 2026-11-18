@@ -7,6 +7,11 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] rawler's TIFF reader sizes a value by its count before reading
+      it: one flipped count in a CR3's maker note asked for 28 GB, so a
+      corrupt or crafted raw can take the decode down. Wants raising
+      upstream with a bound against the file's length (found fuzzing
+      the Canon mode reader, 2026-11-17)
 - [ ] The XMP beside a raw is read whole, with no bound, by the
       open's adoption (`xmp::adopt_own`) and the index's pass; the
       take's own read stops at 64 MB (§705)
